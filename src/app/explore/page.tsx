@@ -242,7 +242,6 @@ function ExploreContent() {
   // and expiry pruned every 12h. This call hits /api/scrape?preview=1 which serves cached if <2 days old.
   useEffect(() => {
     fetchLive({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openSummarize = async (opp: any) => {

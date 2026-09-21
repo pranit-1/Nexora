@@ -1,7 +1,6 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
-import { useTheme } from "@/context/ThemeProvider";
 import { useNotifications } from "@/hooks/useNotifications";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -10,7 +9,6 @@ import {
   LayoutDashboard,
   Wallet,
   Calendar as CalendarIcon,
-  MessageSquare,
   Bell,
   Building2,
   ShieldCheck,
@@ -25,7 +23,6 @@ import ThemeToggle from "@/components/ThemeToggle";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { currentUser, profile, updateUserProfile, loading } = useAuth();
   const { unreadCount } = useNotifications(currentUser?.uid);
-  const { isDark } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -75,7 +72,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (loading) return null;
 
-  const SidebarContent = () => (
+  const sidebarContent = (
     <>
       {/* Sidebar Header */}
       <div className="flex items-center gap-3 px-2 py-4 border-b border-border">
@@ -175,7 +172,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-background text-foreground flex transition-colors duration-300">
       {/* Sidebar - Desktop */}
       <aside className="hidden lg:flex lg:flex-col lg:w-72 bg-surface border-r border-border p-6 space-y-6 flex-shrink-0 transition-colors duration-300">
-        <SidebarContent />
+        {sidebarContent}
       </aside>
 
       {/* Main Content Area */}

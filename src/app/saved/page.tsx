@@ -8,7 +8,6 @@ import Footer from "@/components/Footer";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { Opportunity } from "@/lib/mockData";
 import { useOpportunities, formatDeadline } from "@/hooks/useOpportunities";
 import {
   Bookmark,

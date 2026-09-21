@@ -56,7 +56,7 @@ const faqs = [
   },
 ];
 
-function FAQItem({ q, a, index }: { q: string; a: string; index: number }) {
+function FAQItem({ q, a }: { q: string; a: string; index: number }) {
   const [open, setOpen] = useState(false);
 
   return (

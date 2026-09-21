@@ -1,5 +1,5 @@
 // ─── Scholarships & Fellowships scrapers ───────────────────────────────
-import { fetchText, fetchJson, loadCheerio, cleanText, absoluteUrl, parseDeadline, stripHtml } from "./utils";
+import { fetchText, loadCheerio, cleanText, absoluteUrl, stripHtml } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 
 // RSS-based scholarship feeds (trusted — autoApprove logic handled by caller)

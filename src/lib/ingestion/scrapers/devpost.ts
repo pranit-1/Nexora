@@ -24,7 +24,6 @@ export async function scrapeDevpost(): Promise<ScrapedOpportunity[]> {
         // Prize parsing: h.prize_amount may be like "$10,000" or ""
         const prize = h.prize_amount ? `Prize pool: ${h.prize_amount}` : "";
         const themes: string = (h.themes || []).map((t: any) => t.name).join(", ");
-        const dateStr: string = h.submission_period_dates || h.displayed_location || "";
 
         out.push({
           title: (h.title || "Untitled Hackathon").trim(),

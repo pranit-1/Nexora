@@ -5,7 +5,6 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { motion, type Variants } from "framer-motion";
 import {
-  BookOpen,
   Shield,
   FileText,
   HelpCircle,
@@ -14,7 +13,6 @@ import {
   ArrowRight,
   Sparkles,
   MessageCircle,
-  ExternalLink,
 } from "lucide-react";
 
 const containerVariants: Variants = {

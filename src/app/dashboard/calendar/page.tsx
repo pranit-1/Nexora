@@ -2,18 +2,15 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, addDoc, onSnapshot, getDoc, doc } from "firebase/firestore";
+import { collection, query, where, getDocs, addDoc, getDoc, doc } from "firebase/firestore";
 import { useState, useEffect, useMemo } from "react";
 import {
   Calendar,
   Plus,
   Clock,
-  Sparkles,
   RefreshCw,
-  AlertCircle,
   Loader2,
   CalendarDays,
-  Compass,
 } from "lucide-react";
 import { useOpportunities } from "@/hooks/useOpportunities";
 import type { CalendarEvent, CalendarEventType } from "@/lib/types";

@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, getDocs, updateDoc, doc, getDoc, onSnapshot } from "firebase/firestore";
+import { collection, query, getDocs, updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { isAllowedAdminEmail } from "@/lib/adminConfig";
@@ -15,13 +15,12 @@ import {
   CheckCircle,
   XCircle,
   FileSpreadsheet,
-  AlertTriangle,
   Loader2,
 } from "lucide-react";
 import type { OrgOpportunity, AdminStats, OrgRequest } from "@/lib/types";
 
 export default function AdminPage() {
-  const { currentUser, profile, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<AdminStats>({
     totalUsers: 0,
@@ -274,7 +273,7 @@ export default function AdminPage() {
                 <Building className="w-8 h-8 text-foreground-muted mx-auto mb-2" />
                 <h5 className="font-bold text-foreground text-xs">No requests yet</h5>
                 <p className="text-foreground-muted text-[10px] mt-1">
-                  When users request organization access, they'll show up here.
+                  When users request organization access, they&apos;ll show up here.
                 </p>
               </div>
             )}
@@ -444,7 +443,7 @@ export default function AdminPage() {
               </select>
               {isAllowedAdminEmail(selectedUser.email) && (
                 <p className="text-[10px] text-foreground-muted mt-1.5">
-                  This user's admin access is locked via the hardcoded allowlist and can't be changed here.
+                  This user&apos;s admin access is locked via the hardcoded allowlist and can&apos;t be changed here.
                 </p>
               )}
             </div>

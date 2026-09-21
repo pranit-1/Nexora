@@ -3,7 +3,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { useNotifications } from "@/hooks/useNotifications";
 import { db } from "@/lib/firebase";
-import { doc, updateDoc, deleteDoc, writeBatch, collection, getDocs } from "firebase/firestore";
+import { doc, updateDoc, deleteDoc, writeBatch } from "firebase/firestore";
 import { useState } from "react";
 import {
   Bell,

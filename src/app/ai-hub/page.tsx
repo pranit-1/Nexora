@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 
 export default function AIHub() {
-  const { currentUser, profile, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading } = useAuth();
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<
@@ -850,7 +850,7 @@ function InterviewTab() {
                     <ul className="space-y-1">
                       {feedback.followUpQuestions.map((q, i) => (
                         <li key={i} className="text-xs text-foreground italic">
-                          "{q}"
+                          &quot;{q}&quot;
                         </li>
                       ))}
                     </ul>

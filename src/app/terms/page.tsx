@@ -4,7 +4,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import Link from "next/link";
 import { motion, type Variants } from "framer-motion";
-import { FileText, ArrowLeft, Mail, Phone } from "lucide-react";
+import { FileText, ArrowLeft } from "lucide-react";
 
 const containerVariants: Variants = {
   hidden: {},

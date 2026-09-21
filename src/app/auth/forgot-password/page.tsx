@@ -44,7 +44,7 @@ export default function ForgotPassword() {
         </Link>
         <h2 className="text-center text-3xl font-extrabold text-foreground">Reset Password</h2>
         <p className="mt-2 text-center text-sm text-slate-500">
-          We'll send you an email with instructions to set a new password.
+          We&apos;ll send you an email with instructions to set a new password.
         </p>
       </div>
 

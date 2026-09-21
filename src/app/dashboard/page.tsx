@@ -15,12 +15,7 @@ import {
   Bell,
   Clock,
   ArrowRight,
-  User,
-  Users,
-  GraduationCap,
   Briefcase,
-  Trophy,
-  Loader2,
   Trash2
 } from "lucide-react";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
@@ -415,7 +410,7 @@ export default function Dashboard() {
                 </motion.div>
                 <h5 className="text-slate-900 dark:text-slate-200 font-bold text-xs mb-0.5">No active alerts</h5>
                 <p className="text-slate-500 dark:text-slate-600 text-[10px] leading-relaxed">
-                  Click "Set Reminder" on any opportunity page to receive alerts.
+                  Click &quot;Set Reminder&quot; on any opportunity page to receive alerts.
                 </p>
               </motion.div>
             )}

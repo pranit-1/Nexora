@@ -16,8 +16,6 @@ import {
   updateDoc,
   arrayUnion,
   arrayRemove,
-  collection,
-  addDoc,
   increment
 } from "firebase/firestore";
 import {
@@ -68,7 +66,7 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const { id } = use(params);
   const { currentUser } = useAuth();
-  const { opportunities, loading: oppsLoading } = useOpportunities();
+  const { opportunities } = useOpportunities();
 
   const [opp, setOpp] = useState<Opportunity | null>(null);
   const [isSaved, setIsSaved] = useState(false);

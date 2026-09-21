@@ -16,7 +16,6 @@ import {
   XCircle,
   Sparkles,
   Loader2,
-  Calendar,
 } from "lucide-react";
 import type { OrgOpportunity, OrgOpportunityStatus, OrgRequest } from "@/lib/types";
 
@@ -211,8 +210,8 @@ export default function OrgDashboardPage() {
           <h1 className="text-xl font-extrabold text-foreground">Request under review</h1>
           <p className="text-sm text-foreground-muted">
             Your request to register <strong>{orgRequest.orgName}</strong> as an organization
-            partner is pending admin approval. You'll get organization dashboard access as soon
-            as it's approved.
+            partner is pending admin approval. You&apos;ll get organization dashboard access as soon
+            as it&apos;s approved.
           </p>
         </div>
       );
@@ -226,7 +225,7 @@ export default function OrgDashboardPage() {
           </div>
           <h1 className="text-xl font-extrabold text-foreground">Request not approved</h1>
           <p className="text-sm text-foreground-muted">
-            Your request for <strong>{orgRequest.orgName}</strong> wasn't approved. If you believe
+            Your request for <strong>{orgRequest.orgName}</strong> wasn&apos;t approved. If you believe
             this was a mistake, you can submit a new request below.
           </p>
           <button

@@ -146,7 +146,7 @@ export async function POST(request: Request) {
       const buf = await res.arrayBuffer();
       const contentType = res.headers.get("content-type") || "";
       text = stripHtml(decodeBody(buf, contentType));
-    } catch (e: any) {
+    } catch {
       text = "";
     }
 

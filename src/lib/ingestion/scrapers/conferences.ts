@@ -83,7 +83,7 @@ export async function scrapeConferences(): Promise<ScrapedOpportunity[]> {
       const seen = new Set<string>();
 
       // Try generic article/card selectors
-      let cards = $("article, .card, [class*='card'], .event, [class*='event'], .conference-card, a[href*='/conference'], a[href*='/event']");
+      const cards = $("article, .card, [class*='card'], .event, [class*='event'], .conference-card, a[href*='/conference'], a[href*='/event']");
       // If nothing, fallback to all links with meaningful text
       if (cards.length === 0) {
         const links: { title: string; href: string }[] = [];

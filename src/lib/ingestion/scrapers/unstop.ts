@@ -4,7 +4,7 @@
 //  2. Fallback to cheerio selectors for server-rendered parts
 //  3. If both fail, return RawListing via stripHtml for AI normalization
 
-import { fetchText, loadCheerio, cleanText, stripHtml, absoluteUrl, parseDeadline } from "./utils";
+import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 
 const BASE = "https://unstop.com";
