@@ -116,29 +116,21 @@ export default function WalletPage() {
 
     setUploading(true);
     try {
-      const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-      const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
-
-      if (!cloudName || !uploadPreset || cloudName === "your_cloud_name" || uploadPreset === "your_unsigned_preset") {
-        throw new Error("Cloudinary environment variables are not configured yet. Please configure them in .env.local");
-      }
-
       const formData = new FormData();
       formData.append("file", selectedFile);
-      formData.append("upload_preset", uploadPreset);
       formData.append("folder", `wallet/${currentUser.uid}`);
 
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+      const res = await fetch("/api/wallet/upload", {
         method: "POST",
         body: formData,
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error?.message || "Failed to upload file to Cloudinary.");
+        throw new Error(data.error || "Failed to upload file to Cloudinary.");
       }
 
-      const data = await res.json();
       const downloadURL = data.secure_url;
       const filePath = data.public_id;
 
