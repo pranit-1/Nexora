@@ -38,6 +38,17 @@ const listVariants: Variants = {
   show: { transition: { staggerChildren: 0.07 } },
 };
 
+function detectCategory(file: File): WalletCategory {
+  const name = file.name.toLowerCase();
+  if (/(^|[^a-z])(resume|cv)([^a-z]|$)/.test(name)) return "Resume";
+  if (/(aadhar|aadhaar|adhaar|pan( card)?|passport|driving|license|voter( id)?|\bid\b)/.test(name)) return "ID Documents";
+  if (/(certificate|certified|certif|completion|course)/.test(name)) return "Certificates";
+  if (/(award|honou?r|achievement|scholarship)/.test(name)) return "Awards";
+  if (/(portfolio)/.test(name)) return "Portfolio";
+  if (/(project|case study)/.test(name)) return "Projects";
+  return "Other";
+}
+
 /* ── Animated Count-up ─────────────────────────────────────── */
 function CountUp({ to, suffix = "" }: { to: number; suffix?: string }) {
   const [value, setValue] = useState(0);
@@ -70,7 +81,7 @@ export default function WalletPage() {
   // Upload form state
   const [uploading, setUploading] = useState(false);
   const [docName, setDocName] = useState("");
-  const [docCategory, setDocCategory] = useState<WalletCategory>("Resume");
+  const [docCategory, setDocCategory] = useState<WalletCategory>("Other");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -208,6 +219,7 @@ export default function WalletPage() {
     "Projects",
     "Portfolio",
     "ID Documents",
+    "Other",
   ];
 
   const filteredDocs =
@@ -291,23 +303,6 @@ export default function WalletPage() {
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-foreground-muted uppercase tracking-wider">
-                Asset Category
-              </label>
-              <select
-                value={docCategory}
-                onChange={(e) => setDocCategory(e.target.value as WalletCategory)}
-                className="w-full text-xs p-3 border border-border rounded-xl outline-none bg-background text-foreground focus:border-primary transition-all"
-              >
-                {categories.slice(1).map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Drag & Drop Box */}
             <motion.div
               animate={{
@@ -328,6 +323,7 @@ export default function WalletPage() {
                 if (file) {
                   setSelectedFile(file);
                   setDocName(file.name.split(".")[0]);
+                  setDocCategory(detectCategory(file));
                 }
               }}
               className="border border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-surface-raised transition-colors"
@@ -340,6 +336,7 @@ export default function WalletPage() {
                   if (e.target.files && e.target.files[0]) {
                     setSelectedFile(e.target.files[0]);
                     setDocName(e.target.files[0].name.split(".")[0]);
+                    setDocCategory(detectCategory(e.target.files[0]));
                   }
                 }}
               />
@@ -373,6 +370,12 @@ export default function WalletPage() {
                 </AnimatePresence>
               </label>
             </motion.div>
+
+            {selectedFile && (
+              <p className="text-[10px] font-semibold text-primary">
+                Auto-detected category: {docCategory}
+              </p>
+            )}
 
             <motion.button
               type="submit"

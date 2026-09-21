@@ -9,7 +9,8 @@ export type WalletCategory =
   | "Awards"
   | "Projects"
   | "Portfolio"
-  | "ID Documents";
+  | "ID Documents"
+  | "Other";
 
 export interface WalletDocument {
   id: string;
