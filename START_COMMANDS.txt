@@ -1,0 +1,84 @@
+NEXORA — START COMMANDS (Windows PowerShell)
+========================================
+Project root: C:\Users\NIKHIL RAWAT\OneDrive\Desktop\Nikhil PROJECT\Cipher\NEXORA
+
+1) FIRST TIME SETUP (run once)
+------------------------------
+npm install
+cd backend; npm install; cd ..
+
+# env already has .env.local with Firebase + 3 OpenRouter keys (KEY_1 active)
+# if missing, copy from .env.example and fill:
+# copy .env.example .env.local
+
+2) DAILY START — SINGLE PORT (recommended)
+-----------------------------------------
+# Frontend + storage + 2-day scrape + 12h expiry all in one Next.js process
+npm run dev
+# open http://localhost:3000
+# explore auto-loads solid ledger from storage/scraped-opportunities.json (no re-scrape)
+# check: http://localhost:3000/api/scrape?preview=1  -> {mode:"preview-cached"}
+
+# If port 3000 busy:
+Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
+npm run dev
+
+3) SCRAPE CONTROLS (optional)
+-----------------------------
+# Use solid ledger (400 cap). Auto-refresh every 2 days at 09:00, expiry sweep every 12h
+# via src/instrumentation.ts — no manual needed after npm run dev
+
+# Force fresh scrape (ignore cache):
+curl "http://localhost:3000/api/scrape?preview=1&force=1"
+
+# Specific source:
+curl "http://localhost:3000/api/scrape?preview=1&source=internshala"
+# sources: devpost, unstop, internshala, jobs, scholarships, conferences, fellowships, generic
+
+# Trigger expiry prune only:
+# (runs automatically every 12h, or call scrape without force after 12h)
+
+4) POPUP SUMMARIZE (key 1)
+--------------------------
+# Click any card in /explore -> popup fetches full page + AI via POST /api/summarize
+# uses OPENROUTER_API_KEY_1 (OPENROUTER_ACTIVE_KEY_INDEX=1) from .env.local
+# test manually:
+curl -X POST "http://localhost:3000/api/summarize" -H "Content-Type: application/json" -d "{\"url\":\"https://example.com\",\"title\":\"Test\",\"orgName\":\"TestOrg\"}"
+
+5) BUILD & PRODUCTION CHECK
+---------------------------
+npm run build
+npm run start
+# production: http://localhost:3000 (with .next)
+
+# Clean build if EPERM/locked:
+Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue
+npm run build
+
+6) STORAGE
+----------
+# Solid ledger file (DO NOT delete unless you want fresh scrape):
+storage/scraped-opportunities.json  (400 entries, dedup by applyLink, expired auto-removed)
+# view size:
+Get-ChildItem storage\scraped-opportunities.json | Format-List Length,LastWriteTime
+
+7) BACKEND (optional, not needed for single-port)
+-------------------------------------------------
+# Only if you run Express separately:
+cd backend
+npm run dev   # -> http://localhost:4000  (cron hits localhost:3000/api/scrape)
+cd ..
+
+8) GIT
+------
+git status
+git add .
+git commit -m "update"
+git push
+
+TIPS
+----
+- Explore needs NO manual Refresh — it auto-loads cached ledger on mount (silent fetch).
+- Keys are 3 in .env.local (KEY_1 active, auto-rotates on 429 in src/lib/aiProviders/openrouter.ts:22).
+- Design tokens: src/lib/designTokens.ts | Fonts: Fraunces + Sora via src/app/layout.tsx

@@ -1,0 +1,137 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdminEmail() {
+      return isSignedIn() && request.auth.token.email in [
+        "nikhil2005114@gmail.com",
+        "teamcipher.work@gmail.com",
+        "priyanshusrivastav850@gmail.com",
+        "deepikanshp@gmail.com"
+      ];
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdminEmail();
+      allow create: if isOwner(uid) &&
+        (request.resource.data.role == "user" || isAdminEmail());
+      allow update: if isAdminEmail() ||
+        (isOwner(uid) &&
+          request.resource.data.role == resource.data.role);
+      allow delete: if isAdminEmail();
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /org_opportunities/{oppId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /opportunities/{oppId} {
+      allow read: if true;
+      allow create, update, delete: if isAdminEmail();
+    }
+
+    match /org_requests/{uid} {
+      allow read: if isOwner(uid) || isAdminEmail();
+      allow create: if isOwner(uid) &&
+        request.resource.data.uid == uid &&
+        request.resource.data.status == "pending";
+      allow update: if isAdminEmail() ||
+        (isOwner(uid) &&
+          resource.data.status == "rejected" &&
+          request.resource.data.status == "pending");
+      allow delete: if isAdminEmail();
+    }
+
+    match /ingestion_logs/{logId} {
+      allow read: if isAdminEmail();
+      allow write: if false;
+    }
+
+    match /bookmarks/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/saved/{itemId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /wallet/{docId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /applications/{docId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /calendar_events/{docId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /reminders/{docId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /resume_analyses/{docId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /interviews/{docId} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{uid}/tracker/{trackerId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/wallet/{docId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /chat_history/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /notifications/{uid}/items/{itemId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/notifications/{notifId} {
+      allow read, update: if isOwner(uid);
+      allow create: if isSignedIn();
+      allow delete: if isOwner(uid) || isAdminEmail();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

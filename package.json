@@ -1,0 +1,43 @@
+{
+  "name": "nexora-platform",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:all": "concurrently --names frontend,backend --prefix-colors blue,green \"npm run dev\" \"cd backend && npm run dev\"",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "scrape": "node scripts/scrape-local.mjs",
+    "scrape:preview": "node scripts/scrape-local.mjs --preview",
+    "scrape:devpost": "node scripts/scrape-local.mjs --preview --source=devpost",
+    "scrape:jobs": "node scripts/scrape-local.mjs --preview --source=jobs"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^3.10.0",
+    "cheerio": "^1.2.0",
+    "firebase": "^11.9.0",
+    "firebase-admin": "^14.1.0",
+    "framer-motion": "^12.0.0",
+    "lucide-react": "^0.523.0",
+    "mammoth": "^1.8.0",
+    "next": "16.2.10",
+    "node-cron": "^4.6.0",
+    "pdfjs-dist": "^4.7.76",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-hook-form": "^7.57.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

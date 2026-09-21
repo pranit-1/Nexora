@@ -1,0 +1,427 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useAuth } from "@/context/AuthContext";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, getDocs, collection, query, where, deleteDoc } from "firebase/firestore";
+import { Opportunity } from "@/lib/mockData";
+import { useOpportunities, formatDeadline } from "@/hooks/useOpportunities";
+import {
+  Sparkles,
+  Bookmark,
+  Calendar,
+  Bell,
+  Clock,
+  ArrowRight,
+  User,
+  Users,
+  GraduationCap,
+  Briefcase,
+  Trophy,
+  Loader2,
+  Trash2
+} from "lucide-react";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
+
+const sectionVariants: Variants = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
+};
+
+const containerVariants: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } },
+};
+
+const gridStaggerVariants: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.06 } },
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 14, scale: 0.98 },
+  show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.32, ease: "easeOut" } },
+  exit: { opacity: 0, x: -12, transition: { duration: 0.18 } },
+};
+
+function SkeletonDashboard() {
+  return (
+    <div className="space-y-8">
+      <div className="flex justify-between items-center bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 p-8 rounded-3xl shadow-sm">
+        <div className="space-y-3">
+          <div className="skeleton h-3 w-40" />
+          <div className="skeleton h-7 w-56" />
+          <div className="skeleton h-3 w-32" />
+        </div>
+        <div className="skeleton h-14 w-40 rounded-2xl" />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="skeleton h-36 rounded-3xl" />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="skeleton h-20 rounded-3xl" />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="skeleton h-20 rounded-2xl" />
+          ))}
+        </div>
+        <div className="skeleton h-64 rounded-3xl" />
+      </div>
+    </div>
+  );
+}
+
+interface Reminder {
+  id: string;
+  opportunityId: string;
+  opportunityTitle: string;
+  deadline: string;
+}
+
+export default function Dashboard() {
+  const { currentUser, profile, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const { opportunities } = useOpportunities();
+
+  const [savedOpps, setSavedOpps] = useState<Opportunity[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!authLoading && !currentUser) {
+      router.push("/auth/login");
+    }
+  }, [currentUser, authLoading, router]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const fetchDashboardData = async () => {
+      try {
+        // 1. Fetch saved bookmarks
+        const bookmarkSnap = await getDoc(doc(db, "bookmarks", currentUser.uid));
+        if (bookmarkSnap.exists()) {
+          const savedIds: string[] = bookmarkSnap.data().opportunityIds || [];
+          const matches = opportunities.filter((o) => savedIds.includes(o.id));
+          setSavedOpps(matches);
+        }
+
+        // 2. Fetch reminders
+        // Direct document get since we set doc ID as {uid}_{oppId} or query
+        const q = query(collection(db, "reminders"), where("uid", "==", currentUser.uid));
+        const querySnap = await getDocs(q);
+        const remsList: Reminder[] = [];
+        querySnap.forEach((doc) => {
+          const data = doc.data();
+          remsList.push({
+            id: doc.id,
+            opportunityId: data.opportunityId,
+            opportunityTitle: data.opportunityTitle,
+            deadline: data.deadline,
+          });
+        });
+        setReminders(remsList);
+      } catch (error) {
+        console.error("Error loading dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [currentUser, opportunities]);
+
+  const deleteReminder = async (reminderId: string) => {
+    try {
+      await deleteDoc(doc(db, "reminders", reminderId));
+      setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+    } catch (error) {
+      console.error("Error deleting reminder:", error);
+    }
+  };
+
+  if (authLoading || loading) {
+    return <SkeletonDashboard />;
+  }
+
+  // Calculate upcoming deadlines count (within next 30 days)
+  const incomingDeadlinesCount = reminders.filter((r) => {
+    const deadlineTime = new Date(r.deadline).getTime();
+    const nowTime = new Date().getTime();
+    const diffDays = (deadlineTime - nowTime) / (1000 * 60 * 60 * 24);
+    return diffDays > 0 && diffDays <= 30;
+  }).length;
+
+  return (
+    <motion.div initial="hidden" animate="show" variants={containerVariants} className="space-y-8">
+      {/* Welcome Card & Badge Notifications */}
+      <motion.div
+        variants={sectionVariants}
+        className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 p-8 rounded-3xl shadow-sm transition-colors duration-300"
+      >
+        <div>
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-primary">
+            <Sparkles className="w-3.5 h-3.5" /> Workspace Dashboard
+          </span>
+          <h1 className="text-3xl font-extrabold text-foreground mt-1">
+            Hello, <span className="text-primary italic">{profile?.name || currentUser?.displayName || "NEXORA Scholar"}</span>
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">
+            {profile?.education ? `${profile.education} • ` : ""}{profile?.location || "NEXORA Platform"}
+          </p>
+        </div>
+
+        {/* Notification Badge */}
+        <Link href="/dashboard/notifications" className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 p-3 rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+          <div className="relative">
+            <Bell className="w-5 h-5 text-foreground" />
+            {incomingDeadlinesCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                {incomingDeadlinesCount}
+              </span>
+            )}
+          </div>
+          <div className="text-left">
+            <h5 className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Deadlines Pending</h5>
+            <p className="text-xs text-slate-700 dark:text-slate-400 font-semibold">
+              {incomingDeadlinesCount} closing this month
+            </p>
+          </div>
+        </Link>
+      </motion.div>
+
+      {/* Ecosystem Launchpad shortcuts */}
+      <motion.div variants={gridStaggerVariants} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { title: "Opportunity Wallet", desc: "Credentials vault", href: "/dashboard/wallet", icon: Bookmark, color: "from-primary to-indigo-600 text-white" },
+          { title: "Application Tracker", desc: "Pipeline tracking", href: "/dashboard/tracker", icon: Briefcase, color: "from-indigo-600 to-cyan-500 text-white" },
+          { title: "Calendar Hub", desc: "Deadlines & interviews", href: "/dashboard/calendar", icon: Calendar, color: "from-cyan-600 to-teal-500 text-white" },
+          { title: "AI Career Hub", desc: "Audit & coaching", href: "/ai-hub", icon: Sparkles, color: "from-violet-600 to-purple-500 text-white" },
+        ].map((mod) => (
+          <motion.div key={mod.title} variants={itemVariants} whileHover={{ y: -3 }}>
+            <Link
+              href={mod.href}
+              className="p-5 bg-surface border border-border rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between h-36 card-hover"
+            >
+              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${mod.color} flex items-center justify-center shadow-xs`}>
+                <mod.icon className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="font-bold text-foreground text-xs leading-none">{mod.title}</h4>
+                <p className="text-[10px] text-foreground-muted mt-1 font-semibold">{mod.desc}</p>
+              </div>
+            </Link>
+          </motion.div>
+        ))}
+      </motion.div>
+
+      {/* Quick Stats Grid */}
+      <motion.div variants={gridStaggerVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        {/* Bookmarks Stat */}
+        <motion.div variants={itemVariants} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-3xl shadow-sm flex items-center gap-4 transition-colors duration-300">
+          <div className="p-3 bg-primary/10 dark:bg-primary/15 text-primary rounded-2xl">
+            <Bookmark className="w-6 h-6" />
+          </div>
+          <div className="text-left">
+            <span className="block text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Bookmarked Hub</span>
+            <span className="text-xl font-extrabold text-slate-800 dark:text-slate-200">{savedOpps.length} saved</span>
+          </div>
+        </motion.div>
+
+        {/* Reminders Stat */}
+        <motion.div variants={itemVariants} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-3xl shadow-sm flex items-center gap-4 transition-colors duration-300">
+          <div className="p-3 bg-secondary/10 dark:bg-secondary/15 text-secondary rounded-2xl">
+            <Calendar className="w-6 h-6" />
+          </div>
+          <div className="text-left">
+            <span className="block text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Reminders Set</span>
+            <span className="text-xl font-extrabold text-slate-800 dark:text-slate-200">{reminders.length} alerts active</span>
+          </div>
+        </motion.div>
+
+        {/* Interest Stat */}
+        <motion.div variants={itemVariants} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-3xl shadow-sm flex items-center gap-4 transition-colors duration-300">
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 rounded-2xl">
+            <Briefcase className="w-6 h-6" />
+          </div>
+          <div className="text-left">
+            <span className="block text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Category Focus</span>
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-400 truncate max-w-[150px]">
+              {profile?.category || "None Set"}
+            </span>
+          </div>
+        </motion.div>
+      </motion.div>
+
+      {/* Bottom Grid: Saved & Deadlines */}
+      <motion.div variants={sectionVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Saved Opportunities List */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+              <Bookmark className="w-5 h-5 text-primary" /> Saved Opportunities
+            </h3>
+            <Link
+              href="/explore"
+              className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5"
+            >
+              Explore more <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          <motion.div
+            initial="hidden"
+            animate="show"
+            variants={gridStaggerVariants}
+            className="space-y-4"
+          >
+            <AnimatePresence>
+            {savedOpps.map((opp) => (
+              <motion.div
+                key={opp.id}
+                layout
+                variants={itemVariants}
+                initial="hidden"
+                animate="show"
+                exit="exit"
+                className="p-5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+              >
+                <div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                    {opp.category}
+                  </span>
+                  <h4 className="font-bold text-slate-800 dark:text-slate-200 text-sm mt-2 hover:text-primary transition-colors">
+                    <Link href={`/opportunity/${opp.id}`}>{opp.title}</Link>
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-500 font-medium mt-0.5">{opp.organization}</p>
+                </div>
+
+                <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-start">
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Deadline: {formatDeadline(opp.deadline)}
+                  </span>
+                  <Link
+                    href={`/opportunity/${opp.id}`}
+                    className="px-4 py-2 bg-slate-50 dark:bg-slate-800 hover:bg-primary hover:text-white dark:hover:bg-primary rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors"
+                  >
+                    Details
+                  </Link>
+                </div>
+              </motion.div>
+            ))}
+            </AnimatePresence>
+
+            {savedOpps.length === 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                className="text-center py-12 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-855 rounded-3xl"
+              >
+                <motion.div
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                  className="inline-flex"
+                >
+                  <Bookmark className="w-8 h-8 text-slate-400 dark:text-slate-700 mx-auto mb-2" />
+                </motion.div>
+                <h5 className="text-slate-800 dark:text-slate-200 font-bold mb-0.5">No saved opportunities yet</h5>
+                <p className="text-slate-500 dark:text-slate-500 text-xs">Bookmark opportunities on the explore screen to view them here.</p>
+              </motion.div>
+            )}
+          </motion.div>
+        </div>
+
+        {/* Deadline Reminders Alert Panel */}
+        <div className="space-y-6">
+          <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+            <Clock className="w-5 h-5 text-primary" /> Upcoming Reminders
+          </h3>
+
+          <motion.div
+            initial="hidden"
+            animate="show"
+            variants={gridStaggerVariants}
+            className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 p-6 rounded-3xl shadow-sm space-y-4 transition-colors duration-300"
+          >
+            <AnimatePresence>
+            {reminders.map((rem) => {
+              const daysLeft = Math.ceil(
+                (new Date(rem.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+              );
+              const isClosingSoon = daysLeft > 0 && daysLeft <= 30;
+
+              return (
+                <motion.div
+                  key={rem.id}
+                  layout
+                  variants={itemVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                  className="pb-4 border-b border-slate-50 dark:border-slate-800 last:border-0 last:pb-0"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <h5 className="font-bold text-xs text-slate-800 dark:text-slate-200 leading-snug hover:text-primary transition-colors">
+                        <Link href={`/opportunity/${rem.opportunityId}`}>{rem.opportunityTitle}</Link>
+                      </h5>
+                      <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        isClosingSoon
+                          ? "bg-red-50 dark:bg-red-950/20 text-red-650 dark:text-red-400 border border-red-100 dark:border-red-900/30"
+                          : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-400"
+                      }`}>
+                        {daysLeft > 0 ? `${daysLeft} days left` : "Deadline passed"}
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={() => deleteReminder(rem.id)}
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                      title="Remove Reminder"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+            </AnimatePresence>
+
+            {reminders.length === 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                className="text-center py-10"
+              >
+                <motion.div
+                  animate={{ rotate: [0, -10, 10, 0] }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                  className="inline-flex"
+                >
+                  <Bell className="w-8 h-8 text-slate-400 dark:text-slate-700 mx-auto mb-2" />
+                </motion.div>
+                <h5 className="text-slate-900 dark:text-slate-200 font-bold text-xs mb-0.5">No active alerts</h5>
+                <p className="text-slate-500 dark:text-slate-600 text-[10px] leading-relaxed">
+                  Click "Set Reminder" on any opportunity page to receive alerts.
+                </p>
+              </motion.div>
+            )}
+          </motion.div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
