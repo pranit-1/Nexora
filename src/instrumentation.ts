@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 export async function register() {
-  if (typeof window !== "undefined") return;
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
 
   if (process.env.NODE_ENV !== "production" || process.env.ENABLE_LOCAL_CRON === "1") {
