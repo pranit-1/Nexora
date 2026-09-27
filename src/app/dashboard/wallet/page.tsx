@@ -12,6 +12,8 @@ import {
   Trash2,
   Sparkles,
   Loader2,
+  X,
+  CheckCircle2,
 } from "lucide-react";
 import type { WalletDocument, WalletCategory } from "@/lib/types";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
@@ -78,11 +80,16 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<WalletCategory | "All">("All");
 
-  // Upload form state
+  // Multiple files upload queue
+  interface QueueItem {
+    id: string;
+    file: File;
+    name: string;
+    category: WalletCategory;
+  }
+  const [fileQueue, setFileQueue] = useState<QueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [docName, setDocName] = useState("");
-  const [docCategory, setDocCategory] = useState<WalletCategory>("Other");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   // AI Analysis state
@@ -105,55 +112,88 @@ export default function WalletPage() {
     return () => unsub();
   }, [currentUser]);
 
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser || !docName.trim()) return;
+  const addFilesToQueue = (files: FileList | File[]) => {
+    const newItems: QueueItem[] = Array.from(files).map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      file,
+      name: file.name.replace(/\.[^/.]+$/, ""),
+      category: detectCategory(file),
+    }));
+    setFileQueue((prev) => [...prev, ...newItems]);
+  };
 
-    if (!selectedFile) {
-      alert("Please select a file to upload.");
-      return;
-    }
+  const removeQueueItem = (id: string) => {
+    setFileQueue((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateQueueItemName = (id: string, name: string) => {
+    setFileQueue((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, name } : item))
+    );
+  };
+
+  const updateQueueItemCategory = (id: string, category: WalletCategory) => {
+    setFileQueue((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, category } : item))
+    );
+  };
+
+  const handleUploadAll = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || fileQueue.length === 0) return;
 
     setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      formData.append("folder", `wallet/${currentUser.uid}`);
+    let successCount = 0;
 
-      const res = await fetch("/api/wallet/upload", {
-        method: "POST",
-        body: formData,
+    for (let i = 0; i < fileQueue.length; i++) {
+      const item = fileQueue[i];
+      setUploadProgress({
+        current: i + 1,
+        total: fileQueue.length,
+        currentName: item.name,
       });
 
-      const data = await res.json();
+      try {
+        const formData = new FormData();
+        formData.append("file", item.file);
+        formData.append("folder", `wallet/${currentUser.uid}`);
 
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to upload file to Cloudinary.");
+        const res = await fetch("/api/wallet/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || `Failed to upload ${item.file.name}`);
+        }
+
+        const downloadURL = data.secure_url;
+        const filePath = data.public_id;
+
+        const newDoc = {
+          uid: currentUser.uid,
+          name: item.name.trim() || item.file.name,
+          category: item.category,
+          storagePath: filePath,
+          downloadURL,
+          sizeBytes: item.file.size,
+          mimeType: item.file.type,
+          uploadedAt: new Date().toISOString(),
+        };
+
+        await addDoc(collection(db, "wallet"), newDoc);
+        successCount++;
+      } catch (err: any) {
+        console.error("Upload error for file:", item.file.name, err);
+        alert(`Error uploading "${item.file.name}": ${err.message || "Upload failed"}`);
       }
-
-      const downloadURL = data.secure_url;
-      const filePath = data.public_id;
-
-      const newDoc = {
-        uid: currentUser.uid,
-        name: docName.trim(),
-        category: docCategory,
-        storagePath: filePath,
-        downloadURL,
-        sizeBytes: selectedFile.size,
-        mimeType: selectedFile.type,
-        uploadedAt: new Date().toISOString(),
-      };
-
-      await addDoc(collection(db, "wallet"), newDoc);
-      setDocName("");
-      setSelectedFile(null);
-    } catch (err: any) {
-      console.error("Upload error:", err);
-      alert(err.message || "Upload failed. Check your console logs.");
-    } finally {
-      setUploading(false);
     }
+
+    setUploading(false);
+    setUploadProgress(null);
+    setFileQueue([]);
   };
 
   const handleDelete = async (id: string) => {
@@ -277,103 +317,152 @@ export default function WalletPage() {
           className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-4 h-fit"
         >
           <h3 className="font-bold text-foreground text-sm flex items-center gap-1.5">
-            <UploadCloud className="w-4 h-4 text-primary" /> Upload Document
+            <UploadCloud className="w-4 h-4 text-primary" /> Upload Documents
           </h3>
 
-          <form onSubmit={handleUpload} className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-foreground-muted uppercase tracking-wider">
-                Document Name
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Software Engineering Resume 2026"
-                value={docName}
-                onChange={(e) => setDocName(e.target.value)}
-                required
-                className="w-full text-xs p-3 border border-border rounded-xl outline-none focus:border-primary bg-background text-foreground placeholder:text-foreground-muted transition-all"
-              />
-            </div>
-
+          <form onSubmit={handleUploadAll} className="space-y-4">
             {/* Drag & Drop Box */}
             <motion.div
               animate={{
                 borderColor: isDragging
                   ? "var(--primary)"
-                  : selectedFile
+                  : fileQueue.length > 0
                   ? "var(--success)"
                   : "var(--border)",
                 backgroundColor: isDragging ? "rgba(var(--primary-rgb, 178,58,92), 0.05)" : undefined,
               }}
               transition={{ duration: 0.2 }}
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
               onDragLeave={() => setIsDragging(false)}
               onDrop={(e) => {
                 e.preventDefault();
                 setIsDragging(false);
-                const file = e.dataTransfer.files[0];
-                if (file) {
-                  setSelectedFile(file);
-                  setDocName(file.name.split(".")[0]);
-                  setDocCategory(detectCategory(file));
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                  addFilesToQueue(e.dataTransfer.files);
                 }
               }}
               className="border border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-surface-raised transition-colors"
             >
               <input
                 type="file"
-                id="file-upload"
+                id="file-upload-multi"
+                multiple
                 className="hidden"
                 onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    setSelectedFile(e.target.files[0]);
-                    setDocName(e.target.files[0].name.split(".")[0]);
-                    setDocCategory(detectCategory(e.target.files[0]));
+                  if (e.target.files && e.target.files.length > 0) {
+                    addFilesToQueue(e.target.files);
+                    e.target.value = "";
                   }
                 }}
               />
-              <label htmlFor="file-upload" className="cursor-pointer space-y-1 block">
-                <AnimatePresence mode="wait">
-                  {selectedFile ? (
-                    <motion.div
-                      key="selected"
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      transition={{ type: "spring", stiffness: 400 }}
-                    >
-                      <UploadCloud className="w-8 h-8 text-success mx-auto" />
-                      <p className="text-[10px] font-semibold text-success">{selectedFile.name}</p>
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="empty"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                    >
-                      <UploadCloud className="w-8 h-8 text-foreground-muted mx-auto" />
-                      <p className="text-[10px] font-semibold text-foreground-muted">
-                        {isDragging ? "Drop to upload" : "Select or drag file to upload"}
-                      </p>
-                      <p className="text-[8px] text-foreground-muted">PDF, PNG, JPG up to 10MB</p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+              <label htmlFor="file-upload-multi" className="cursor-pointer space-y-1 block">
+                <UploadCloud className="w-8 h-8 text-foreground-muted mx-auto" />
+                <p className="text-[11px] font-semibold text-foreground">
+                  {isDragging ? "Drop files to add" : "Click to select or drag & drop files"}
+                </p>
+                <p className="text-[9px] text-foreground-muted">
+                  Supports multiple PDFs, images, resumes at once
+                </p>
               </label>
             </motion.div>
 
-            {selectedFile && (
-              <p className="text-[10px] font-semibold text-primary">
-                Auto-detected category: {docCategory}
-              </p>
+            {/* Queue Preview List */}
+            {fileQueue.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">
+                    Upload Queue ({fileQueue.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFileQueue([])}
+                    disabled={uploading}
+                    className="text-[10px] text-danger hover:underline font-semibold"
+                  >
+                    Clear All
+                  </button>
+                </div>
+
+                <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                  <AnimatePresence>
+                    {fileQueue.map((item, idx) => (
+                      <motion.div
+                        key={item.id}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="p-2.5 bg-background border border-border rounded-xl space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <input
+                            type="text"
+                            value={item.name}
+                            disabled={uploading}
+                            onChange={(e) => updateQueueItemName(item.id, e.target.value)}
+                            placeholder="Document name"
+                            className="text-xs font-semibold bg-transparent text-foreground outline-none border-b border-transparent focus:border-primary flex-1"
+                          />
+                          <button
+                            type="button"
+                            disabled={uploading}
+                            onClick={() => removeQueueItem(item.id)}
+                            className="p-1 text-foreground-muted hover:text-danger rounded-lg transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] text-foreground-muted">
+                          <select
+                            value={item.category}
+                            disabled={uploading}
+                            onChange={(e) =>
+                              updateQueueItemCategory(item.id, e.target.value as WalletCategory)
+                            }
+                            className="text-[10px] bg-surface border border-border rounded px-1.5 py-0.5 text-foreground outline-none"
+                          >
+                            {categories
+                              .filter((c) => c !== "All")
+                              .map((cat) => (
+                                <option key={cat} value={cat}>
+                                  {cat}
+                                </option>
+                              ))}
+                          </select>
+                          <span>{(item.file.size / 1024).toFixed(0)} KB</span>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+
+            {/* Upload Progress details */}
+            {uploadProgress && (
+              <div className="p-2.5 bg-primary/10 border border-primary/20 rounded-xl space-y-1">
+                <div className="flex justify-between text-[11px] font-bold text-primary">
+                  <span>
+                    Uploading {uploadProgress.current} of {uploadProgress.total}
+                  </span>
+                  <span>
+                    {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
+                  </span>
+                </div>
+                <p className="text-[10px] text-foreground-muted truncate">
+                  {uploadProgress.currentName}
+                </p>
+              </div>
             )}
 
             <motion.button
               type="submit"
-              disabled={uploading || !selectedFile}
-              whileHover={!uploading && selectedFile ? { scale: 1.03 } : {}}
-              whileTap={!uploading && selectedFile ? { scale: 0.96 } : {}}
+              disabled={uploading || fileQueue.length === 0}
+              whileHover={!uploading && fileQueue.length > 0 ? { scale: 1.02 } : {}}
+              whileTap={!uploading && fileQueue.length > 0 ? { scale: 0.98 } : {}}
               transition={{ type: "spring", stiffness: 380, damping: 18 }}
               className="w-full py-3 bg-primary hover:bg-primary-hover text-primary-foreground font-semibold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
@@ -395,7 +484,9 @@ export default function WalletPage() {
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                   >
-                    Upload Document
+                    {fileQueue.length > 0
+                      ? `Upload ${fileQueue.length} Document${fileQueue.length > 1 ? "s" : ""}`
+                      : "Upload Documents"}
                   </motion.span>
                 )}
               </AnimatePresence>

@@ -185,3 +185,31 @@ export interface AdminStats {
 // ─── USER ROLE ─────────────────────────────────────────────────────────────
 
 export type UserRole = "user" | "organization" | "admin";
+
+// ─── MARKETPLACE ───────────────────────────────────────────────────────────
+
+export type MarketplaceCategory =
+  | "All"
+  | "Study Notes"
+  | "Project Templates"
+  | "Freelance Services"
+  | "Mentorship"
+  | "Resume Templates"
+  | "Code Snippets"
+  | "Other";
+
+export interface MarketplaceListing {
+  id: string;
+  uid: string;
+  authorName: string;
+  authorEmail?: string;
+  title: string;
+  description: string;
+  category: MarketplaceCategory;
+  price: number; // 0 = Free
+  currency: string; // "INR"
+  tags: string[];
+  contactLink?: string;
+  likes: number;
+  createdAt: string;
+}
