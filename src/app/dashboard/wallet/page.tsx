@@ -40,15 +40,101 @@ const listVariants: Variants = {
   show: { transition: { staggerChildren: 0.07 } },
 };
 
-function detectCategory(file: File): WalletCategory {
-  const name = file.name.toLowerCase();
+function detectCategoryFromName(fileName: string): WalletCategory {
+  const name = fileName.toLowerCase();
   if (/(^|[^a-z])(resume|cv)([^a-z]|$)/.test(name)) return "Resume";
   if (/(aadhar|aadhaar|adhaar|pan( card)?|passport|driving|license|voter( id)?|\bid\b)/.test(name)) return "ID Documents";
   if (/(certificate|certified|certif|completion|course)/.test(name)) return "Certificates";
   if (/(award|honou?r|achievement|scholarship)/.test(name)) return "Awards";
-  if (/(result|marksheet|grade|report( card)?|transcript)/.test(name)) return "Results";
+  if (/(result|marksheet|grade|report( card)?|transcript|cgpa|gpa|sgpa)/.test(name)) return "Results";
   if (/(project|case study)/.test(name)) return "Projects";
   return "Other";
+}
+
+function detectCategoryFromContent(rawText: string): WalletCategory | null {
+  const text = rawText.toLowerCase();
+
+  // 1. Resume / CV indicators
+  if (
+    /(work experience|professional summary|curriculum vitae|objective|education\s+and\s+experience|technical skills|projects\s*:\s*|employment history)/.test(text) &&
+    /(skills|experience|education|summary|languages)/.test(text)
+  ) {
+    return "Resume";
+  }
+
+  // 2. Official ID Documents indicators
+  if (
+    /(government of india|income tax department|election commission|unique identification authority|permanent account number|father's name|date of birth|republic of india|driving licence|indian passport)/.test(text) ||
+    /\b[a-z]{5}[0-9]{4}[a-z]{1}\b/.test(text) || // PAN number pattern
+    /\b[0-9]{4}\s?[0-9]{4}\s?[0-9]{4}\b/.test(text) // Aadhaar pattern
+  ) {
+    return "ID Documents";
+  }
+
+  // 3. Academic Results / Marksheets / Transcripts
+  if (
+    /(statement of marks|marksheet|mark sheet|grade card|semester examination|credit points|sgpa|cgpa|passed with|provisional certificate|academic record|total marks|marks obtained)/.test(text)
+  ) {
+    return "Results";
+  }
+
+  // 4. Certificates of Completion / Participation / Course
+  if (
+    /(certificate of|has successfully completed|hereby certifies that|in recognition of|has participated in|completion of course|is awarded to)/.test(text)
+  ) {
+    return "Certificates";
+  }
+
+  // 5. Awards / Honours / Hackathon Winners
+  if (
+    /(winner|runner up|first prize|second prize|third prize|hackathon winner|hall of fame|in honour of|scholarship award|merit award)/.test(text)
+  ) {
+    return "Awards";
+  }
+
+  // 6. Project Reports / Case Studies
+  if (
+    /(abstract|problem statement|system architecture|methodology|future scope|github repository|tech stack|implementation details)/.test(text)
+  ) {
+    return "Projects";
+  }
+
+  return null;
+}
+
+async function extractDocumentText(file: File): Promise<string> {
+  try {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+
+    if (ext === "txt") {
+      return await file.text();
+    }
+
+    if (ext === "pdf") {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pageTexts: string[] = [];
+      const maxPages = Math.min(pdf.numPages, 3);
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        pageTexts.push(content.items.map((item: any) => item.str).join(" "));
+      }
+      return pageTexts.join("\n\n");
+    }
+
+    if (ext === "docx") {
+      const mammoth = await import("mammoth");
+      const arrayBuffer = await file.arrayBuffer();
+      const res = await mammoth.extractRawText({ arrayBuffer });
+      return res.value || "";
+    }
+  } catch (err) {
+    console.warn("Could not read text from file:", file.name, err);
+  }
+  return "";
 }
 
 /* ── Animated Count-up ─────────────────────────────────────── */
@@ -82,6 +168,8 @@ export default function WalletPage() {
 
   // Multiple files upload queue
   interface QueueItem {
+    reading?: boolean;
+    detectedByContent?: boolean;
     id: string;
     file: File;
     name: string;
@@ -112,14 +200,54 @@ export default function WalletPage() {
     return () => unsub();
   }, [currentUser]);
 
-  const addFilesToQueue = (files: FileList | File[]) => {
-    const newItems: QueueItem[] = Array.from(files).map((file) => ({
+  const addFilesToQueue = async (files: FileList | File[]) => {
+    const fileList = Array.from(files);
+
+    // 1. Initial queue with name-based detection and reading status
+    const initialItems: QueueItem[] = fileList.map((file) => ({
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       file,
       name: file.name.replace(/\.[^/.]+$/, ""),
-      category: detectCategory(file),
+      category: detectCategoryFromName(file.name),
+      reading: true,
+      detectedByContent: false,
     }));
-    setFileQueue((prev) => [...prev, ...newItems]);
+
+    setFileQueue((prev) => [...prev, ...initialItems]);
+
+    // 2. Read each document's actual text content asynchronously
+    for (const item of initialItems) {
+      try {
+        const text = await extractDocumentText(item.file);
+        let finalCategory = item.category;
+        let isContentDetected = false;
+
+        if (text && text.trim().length > 10) {
+          const contentCat = detectCategoryFromContent(text);
+          if (contentCat) {
+            finalCategory = contentCat;
+            isContentDetected = true;
+          }
+        }
+
+        setFileQueue((prev) =>
+          prev.map((q) =>
+            q.id === item.id
+              ? {
+                  ...q,
+                  category: finalCategory,
+                  reading: false,
+                  detectedByContent: isContentDetected,
+                }
+              : q
+          )
+        );
+      } catch (err) {
+        setFileQueue((prev) =>
+          prev.map((q) => (q.id === item.id ? { ...q, reading: false } : q))
+        );
+      }
+    }
   };
 
   const removeQueueItem = (id: string) => {
@@ -426,22 +554,33 @@ export default function WalletPage() {
                         </div>
 
                         <div className="flex items-center justify-between text-[10px] text-foreground-muted">
-                          <select
-                            value={item.category}
-                            disabled={uploading}
-                            onChange={(e) =>
-                              updateQueueItemCategory(item.id, e.target.value as WalletCategory)
-                            }
-                            className="text-[10px] bg-surface border border-border rounded px-1.5 py-0.5 text-foreground outline-none"
-                          >
-                            {categories
-                              .filter((c) => c !== "All")
-                              .map((cat) => (
-                                <option key={cat} value={cat}>
-                                  {cat}
-                                </option>
-                              ))}
-                          </select>
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={item.category}
+                              disabled={uploading}
+                              onChange={(e) =>
+                                updateQueueItemCategory(item.id, e.target.value as WalletCategory)
+                              }
+                              className="text-[10px] bg-surface border border-border rounded px-1.5 py-0.5 text-foreground outline-none"
+                            >
+                              {categories
+                                .filter((c) => c !== "All")
+                                .map((cat) => (
+                                  <option key={cat} value={cat}>
+                                    {cat}
+                                  </option>
+                                ))}
+                            </select>
+                            {item.reading ? (
+                              <span className="flex items-center gap-1 text-[9px] text-primary">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Reading...
+                              </span>
+                            ) : item.detectedByContent ? (
+                              <span className="flex items-center gap-0.5 text-[9px] text-success font-semibold" title="Classified by reading document content">
+                                <Sparkles className="w-2.5 h-2.5" /> Read
+                              </span>
+                            ) : null}
+                          </div>
                           <span>{(item.file.size / 1024).toFixed(0)} KB</span>
                         </div>
                       </motion.div>
