@@ -79,6 +79,7 @@ const CATEGORIES: MarketplaceCategory[] = [
   "Mentorship",
   "Resume Templates",
   "Code Snippets",
+  "Results & Marksheets",
   "Other",
 ];
 

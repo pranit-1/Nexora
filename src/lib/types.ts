@@ -8,8 +8,9 @@ export type WalletCategory =
   | "Certificates"
   | "Awards"
   | "Projects"
-  | "Portfolio"
+  | "Results"
   | "ID Documents"
+  | "Results & Marksheets"
   | "Other";
 
 export interface WalletDocument {
@@ -196,6 +197,7 @@ export type MarketplaceCategory =
   | "Mentorship"
   | "Resume Templates"
   | "Code Snippets"
+  | "Results & Marksheets"
   | "Other";
 
 export interface MarketplaceListing {

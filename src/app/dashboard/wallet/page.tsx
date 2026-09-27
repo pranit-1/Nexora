@@ -46,7 +46,7 @@ function detectCategory(file: File): WalletCategory {
   if (/(aadhar|aadhaar|adhaar|pan( card)?|passport|driving|license|voter( id)?|\bid\b)/.test(name)) return "ID Documents";
   if (/(certificate|certified|certif|completion|course)/.test(name)) return "Certificates";
   if (/(award|honou?r|achievement|scholarship)/.test(name)) return "Awards";
-  if (/(portfolio)/.test(name)) return "Portfolio";
+  if (/(result|marksheet|grade|report( card)?|transcript)/.test(name)) return "Results";
   if (/(project|case study)/.test(name)) return "Projects";
   return "Other";
 }
@@ -163,7 +163,17 @@ export default function WalletPage() {
           body: formData,
         });
 
-        const data = await res.json();
+        const resText = await res.text();
+        let data: any = {};
+        try {
+          data = JSON.parse(resText);
+        } catch {
+          throw new Error(
+            res.status === 413
+              ? "File too large for server payload limit (max ~4.5MB on Vercel)."
+              : `Server returned error (${res.status}): ${resText.slice(0, 100)}`
+          );
+        }
 
         if (!res.ok) {
           throw new Error(data.error || `Failed to upload ${item.file.name}`);
@@ -249,7 +259,7 @@ export default function WalletPage() {
     "Certificates",
     "Awards",
     "Projects",
-    "Portfolio",
+    "Results",
     "ID Documents",
     "Other",
   ];

@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     const base64Data = `data:${file.type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
 
     const uploadFormData = new FormData();
-    uploadFormData.append("file", base64Data);
+    uploadFormData.append("file", file);
     uploadFormData.append("folder", folder);
 
     // If apiKey & apiSecret are provided, sign the upload (most reliable and secure)
@@ -59,7 +59,16 @@ export async function POST(req: NextRequest) {
       }
     );
 
-    const data = await uploadRes.json();
+    const resText = await uploadRes.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(resText);
+    } catch {
+      return NextResponse.json(
+        { error: `Cloudinary response error (${uploadRes.status}): ${resText.slice(0, 150)}` },
+        { status: uploadRes.status || 500 }
+      );
+    }
 
     if (!uploadRes.ok) {
       return NextResponse.json(
