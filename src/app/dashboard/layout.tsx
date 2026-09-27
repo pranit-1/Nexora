@@ -8,7 +8,6 @@ import { useState } from "react";
 import {
   LayoutDashboard,
   Wallet,
-  ShoppingBag,
   Calendar as CalendarIcon,
   Bell,
   Building2,
@@ -34,7 +33,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navigation = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Opportunity Wallet", href: "/dashboard/wallet", icon: Wallet },
-    { name: "Marketplace", href: "/dashboard/marketplace", icon: ShoppingBag },
     { name: "Calendar Hub", href: "/dashboard/calendar", icon: CalendarIcon },
     { name: "AI Career Hub", href: "/ai-hub", icon: Sparkles },
     {
