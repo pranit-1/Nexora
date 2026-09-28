@@ -177,19 +177,23 @@ async function extractTextFromRemoteUrl(url: string, name: string): Promise<stri
 
 /* ── Animated Count-up ─────────────────────────────────────── */
 function CountUp({ to, suffix = "" }: { to: number; suffix?: string }) {
-  const [value, setValue] = useState(0);
-  const ref = useRef(false);
+  const [value, setValue] = useState(to);
+  const prevToRef = useRef(to);
 
   useEffect(() => {
-    if (ref.current || to === 0) return;
-    ref.current = true;
+    const from = prevToRef.current;
+    prevToRef.current = to;
+    if (from === to) {
+      setValue(to);
+      return;
+    }
+
     const start = performance.now();
-    const duration = 900;
+    const duration = 600;
     const frame = (now: number) => {
       const progress = Math.min((now - start) / duration, 1);
-      // easeOutExpo
       const eased = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      setValue(Math.round(eased * to));
+      setValue(Math.round(from + (to - from) * eased));
       if (progress < 1) requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
