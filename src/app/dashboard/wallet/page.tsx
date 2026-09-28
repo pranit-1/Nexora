@@ -510,8 +510,10 @@ export default function WalletPage() {
         setLinkInput("");
         void refreshPerformanceProfile(currentUser.uid);
       }
-    } catch {
-      setLinkError("That link could not be saved. Please try again.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[profile-links] add failed:", msg);
+      setLinkError(`Save failed: ${msg}`);
     } finally {
       setSavingLink(false);
     }

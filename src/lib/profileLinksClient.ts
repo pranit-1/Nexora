@@ -66,20 +66,26 @@ export async function addProfileLink(
 
 /** Links the user has already saved, used to block duplicates and offer imports. */
 export async function listProfileLinks(uid: string): Promise<ProfileLink[]> {
-  const snap = await getDocs(linksRef(uid));
-  return snap.docs
-    .map((d) => {
-      const data = d.data() as Partial<ProfileLink> & { addedAt?: unknown };
-      return {
-        id: d.id,
-        url: typeof data.url === "string" ? data.url : "",
-        kind: data.kind || "other",
-        label: typeof data.label === "string" ? data.label : undefined,
-        addedAt: typeof data.addedAt === "string" ? data.addedAt : undefined,
-        origin: data.origin === "document" ? "document" : "manual",
-      } as ProfileLink;
-    })
-    .filter((l) => l.url);
+  try {
+    const snap = await getDocs(linksRef(uid));
+    return snap.docs
+      .map((d) => {
+        const data = d.data() as Partial<ProfileLink> & { addedAt?: unknown };
+        return {
+          id: d.id,
+          url: typeof data.url === "string" ? data.url : "",
+          kind: data.kind || "other",
+          label: typeof data.label === "string" ? data.label : undefined,
+          addedAt: typeof data.addedAt === "string" ? data.addedAt : undefined,
+          origin: data.origin === "document" ? "document" : "manual",
+        } as ProfileLink;
+      })
+      .filter((l) => l.url);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[profile-links] list failed:", msg);
+    throw err;
+  }
 }
 
 async function hasLink(uid: string, url: string): Promise<boolean> {
