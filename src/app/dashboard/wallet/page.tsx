@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, where, addDoc, deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { collection, query, where, addDoc, deleteDoc, updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { useState, useEffect, useRef } from "react";
 import {
   Wallet,
@@ -14,6 +14,7 @@ import {
   Loader2,
   X,
   CheckCircle2,
+  RefreshCw,
 } from "lucide-react";
 import type { WalletDocument, WalletCategory } from "@/lib/types";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
@@ -137,6 +138,43 @@ async function extractDocumentText(file: File): Promise<string> {
   return "";
 }
 
+async function extractTextFromRemoteUrl(url: string, name: string): Promise<string> {
+  try {
+    const ext = name.split(".").pop()?.toLowerCase();
+    const res = await fetch(url);
+    if (!res.ok) return "";
+
+    if (ext === "txt") {
+      return await res.text();
+    }
+
+    if (ext === "pdf" || url.toLowerCase().includes(".pdf")) {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+      const arrayBuffer = await res.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pageTexts: string[] = [];
+      const maxPages = Math.min(pdf.numPages, 3);
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        pageTexts.push(content.items.map((item: any) => item.str).join(" "));
+      }
+      return pageTexts.join("\n\n");
+    }
+
+    if (ext === "docx") {
+      const mammoth = await import("mammoth");
+      const arrayBuffer = await res.arrayBuffer();
+      const docRes = await mammoth.extractRawText({ arrayBuffer });
+      return docRes.value || "";
+    }
+  } catch (err) {
+    console.warn("Could not extract remote text for:", name, err);
+  }
+  return "";
+}
+
 /* ── Animated Count-up ─────────────────────────────────────── */
 function CountUp({ to, suffix = "" }: { to: number; suffix?: string }) {
   const [value, setValue] = useState(0);
@@ -183,6 +221,11 @@ export default function WalletPage() {
   // AI Analysis state
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [aiReport, setAiReport] = useState<Record<string, string>>({});
+
+  // Re-scan state for existing documents
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanProgress, setRescanProgress] = useState<{ current: number; total: number } | null>(null);
+  const [updatingCatId, setUpdatingCatId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -381,6 +424,67 @@ export default function WalletPage() {
     }
   };
 
+  const handleUpdateDocCategory = async (docId: string, newCategory: WalletCategory) => {
+    try {
+      setUpdatingCatId(docId);
+      await updateDoc(doc(db, "wallet", docId), {
+        category: newCategory,
+      });
+    } catch (err) {
+      console.error("Failed to update category:", err);
+      alert("Failed to update document category.");
+    } finally {
+      setUpdatingCatId(null);
+    }
+  };
+
+  const handleRescanAll = async () => {
+    if (documents.length === 0 || rescanning) return;
+    setRescanning(true);
+    let updatedCount = 0;
+
+    try {
+      for (let i = 0; i < documents.length; i++) {
+        const d = documents[i];
+        setRescanProgress({ current: i + 1, total: documents.length });
+
+        // 1. First check by name
+        let detected = detectCategoryFromName(d.name);
+
+        // 2. If name is generic or we have a download URL, read actual content
+        if (d.downloadURL) {
+          const contentText = await extractTextFromRemoteUrl(d.downloadURL, d.name);
+          if (contentText && contentText.trim().length > 10) {
+            const contentCat = detectCategoryFromContent(contentText);
+            if (contentCat) {
+              detected = contentCat;
+            }
+          }
+        }
+
+        // If detected category is different from current, update in Firestore
+        if (detected && detected !== d.category) {
+          await updateDoc(doc(db, "wallet", d.id), {
+            category: detected,
+          });
+          updatedCount++;
+        }
+      }
+
+      alert(
+        updatedCount > 0
+          ? `Scan complete! ${updatedCount} document(s) were automatically re-categorized.`
+          : "Scan complete! All documents are already in their correct categories."
+      );
+    } catch (err) {
+      console.error("Re-scan error:", err);
+      alert("Error occurred while re-scanning documents.");
+    } finally {
+      setRescanning(false);
+      setRescanProgress(null);
+    }
+  };
+
   const categories: (WalletCategory | "All")[] = [
     "All",
     "Resume",
@@ -427,24 +531,44 @@ export default function WalletPage() {
           Store your career documents, achievements, and credentials in a secure sandbox. Use AI to scan resumes and auto-verify certificates.
         </p>
 
-        {/* Stat pills */}
-        <div className="flex gap-3 mt-4 flex-wrap">
-          {[
-            { label: "Total Documents", value: documents.length, suffix: "" },
-            { label: "Storage Used", value: totalSizeKB, suffix: " KB" },
-          ].map(({ label, value, suffix }) => (
-            <motion.div
-              key={label}
-              whileHover={{ scale: 1.04 }}
-              transition={{ type: "spring", stiffness: 400, damping: 18 }}
-              className="px-4 py-2 bg-surface border border-border rounded-2xl text-center shadow-sm"
+        {/* Stat pills + Action buttons */}
+        <div className="flex items-center justify-between gap-3 mt-4 flex-wrap">
+          <div className="flex gap-3 flex-wrap">
+            {[
+              { label: "Total Documents", value: documents.length, suffix: "" },
+              { label: "Storage Used", value: totalSizeKB, suffix: " KB" },
+            ].map(({ label, value, suffix }) => (
+              <motion.div
+                key={label}
+                whileHover={{ scale: 1.04 }}
+                transition={{ type: "spring", stiffness: 400, damping: 18 }}
+                className="px-4 py-2 bg-surface border border-border rounded-2xl text-center shadow-sm"
+              >
+                <p className="text-[10px] uppercase font-bold text-foreground-muted tracking-wider">{label}</p>
+                <p className="text-lg font-extrabold text-primary">
+                  <CountUp to={value} suffix={suffix} />
+                </p>
+              </motion.div>
+            ))}
+          </div>
+
+          {/* Re-Scan existing button */}
+          {documents.length > 0 && (
+            <motion.button
+              onClick={handleRescanAll}
+              disabled={rescanning}
+              whileHover={!rescanning ? { scale: 1.03 } : {}}
+              whileTap={!rescanning ? { scale: 0.97 } : {}}
+              className="px-4 py-2.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
             >
-              <p className="text-[10px] uppercase font-bold text-foreground-muted tracking-wider">{label}</p>
-              <p className="text-lg font-extrabold text-primary">
-                <CountUp to={value} suffix={suffix} />
-              </p>
-            </motion.div>
-          ))}
+              <RefreshCw className={`w-3.5 h-3.5 ${rescanning ? "animate-spin" : ""}`} />
+              <span>
+                {rescanning && rescanProgress
+                  ? `Scanning ${rescanProgress.current}/${rescanProgress.total}...`
+                  : "Auto Re-Scan & Organize All"}
+              </span>
+            </motion.button>
+          )}
         </div>
       </motion.div>
 
@@ -697,9 +821,31 @@ export default function WalletPage() {
                         <h4 className="font-bold text-foreground text-sm leading-snug">
                           {document.name}
                         </h4>
-                        <p className="text-[10px] text-foreground-muted font-semibold uppercase tracking-wider mt-0.5">
-                          {document.category} • {(document.sizeBytes / 1024).toFixed(0)} KB
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <select
+                            value={document.category}
+                            disabled={updatingCatId === document.id}
+                            onChange={(e) =>
+                              handleUpdateDocCategory(document.id, e.target.value as WalletCategory)
+                            }
+                            className="text-[10px] font-semibold bg-surface-raised border border-border rounded-lg px-2 py-0.5 text-primary outline-none focus:border-primary cursor-pointer transition-colors"
+                            title="Change document category"
+                          >
+                            {categories
+                              .filter((c) => c !== "All")
+                              .map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                          </select>
+                          <span className="text-[10px] text-foreground-muted font-medium">
+                            {(document.sizeBytes / 1024).toFixed(0)} KB
+                          </span>
+                          {updatingCatId === document.id && (
+                            <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                          )}
+                        </div>
                       </div>
                     </div>
 
