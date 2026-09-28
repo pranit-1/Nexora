@@ -21,28 +21,54 @@ export class GeminiRotatorService {
 
   // Make request with rotation and fallbacks
   public static async requestGemini(prompt: string, jsonMode: boolean = false): Promise<any> {
+    return this.send(prompt, jsonMode);
+  }
+
+  // Vision variant: same rotation logic, but the prompt is paired with an image.
+  public static async requestGeminiVision(
+    prompt: string,
+    imageBase64: string,
+    mimeType: string = "image/jpeg",
+    jsonMode: boolean = false
+  ): Promise<any> {
+    return this.send(prompt, jsonMode, { imageBase64, mimeType });
+  }
+
+  private static getModel(): string {
+    return process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  }
+
+  private static async send(
+    prompt: string,
+    jsonMode: boolean = false,
+    image?: { imageBase64: string; mimeType: string }
+  ): Promise<any> {
     const keys = this.getKeys();
     if (keys.length === 0) {
       throw new Error("No Gemini API keys found. Please set GEMINI_API_KEYS in your environment.");
     }
 
+    const model = this.getModel();
     let attempts = 0;
     const maxAttempts = keys.length;
 
     while (attempts < maxAttempts) {
       const activeKey = keys[this.currentKeyIndex];
       const maskedKey = this.maskKey(activeKey);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
 
       console.log(`[GeminiRotator] Trying request with key index ${this.currentKeyIndex} (${maskedKey}). Attempt ${attempts + 1}/${maxAttempts}`);
 
       try {
+        const parts: any[] = [{ text: prompt }];
+        if (image?.imageBase64) {
+          parts.push({
+            inline_data: { mime_type: image.mimeType, data: image.imageBase64 },
+          });
+        }
+
         const body: any = {
-          contents: [
-            {
-              parts: [{ text: prompt }],
-            },
-          ],
+          contents: [{ parts }],
         };
 
         if (jsonMode) {

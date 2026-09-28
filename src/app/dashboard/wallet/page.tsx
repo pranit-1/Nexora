@@ -18,6 +18,16 @@ import {
 } from "lucide-react";
 import type { WalletDocument, WalletCategory } from "@/lib/types";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
+import { Lock, Unlock, AlertTriangle } from "lucide-react";
+import {
+  WALLET_CATEGORIES,
+  classifyDocument,
+  classifyRemoteDocument,
+  extractTextFromFile,
+  fileToDataUrl,
+  type CategorySource,
+  type ClassificationResult,
+} from "@/lib/wallet/documentClassifier";
 
 /* ── Animation Variants ─────────────────────────────────────── */
 const containerVariants: Variants = {
@@ -40,140 +50,6 @@ const listVariants: Variants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.07 } },
 };
-
-function detectCategoryFromName(fileName: string): WalletCategory {
-  const name = fileName.toLowerCase();
-  if (/(^|[^a-z])(resume|cv)([^a-z]|$)/.test(name)) return "Resume";
-  if (/(aadhar|aadhaar|adhaar|pan( card)?|passport|driving|license|voter( id)?|\bid\b)/.test(name)) return "ID Documents";
-  if (/(certificate|certified|certif|completion|course)/.test(name)) return "Certificates";
-  if (/(award|honou?r|achievement|scholarship)/.test(name)) return "Awards";
-  if (/(result|marksheet|grade|report( card)?|transcript|cgpa|gpa|sgpa)/.test(name)) return "Results";
-  if (/(project|case study)/.test(name)) return "Projects";
-  return "Other";
-}
-
-function detectCategoryFromContent(rawText: string): WalletCategory | null {
-  const text = rawText.toLowerCase();
-
-  // 1. Resume / CV indicators
-  if (
-    /(work experience|professional summary|curriculum vitae|objective|education\s+and\s+experience|technical skills|projects\s*:\s*|employment history)/.test(text) &&
-    /(skills|experience|education|summary|languages)/.test(text)
-  ) {
-    return "Resume";
-  }
-
-  // 2. Official ID Documents indicators
-  if (
-    /(government of india|income tax department|election commission|unique identification authority|permanent account number|father's name|date of birth|republic of india|driving licence|indian passport)/.test(text) ||
-    /\b[a-z]{5}[0-9]{4}[a-z]{1}\b/.test(text) || // PAN number pattern
-    /\b[0-9]{4}\s?[0-9]{4}\s?[0-9]{4}\b/.test(text) // Aadhaar pattern
-  ) {
-    return "ID Documents";
-  }
-
-  // 3. Academic Results / Marksheets / Transcripts
-  if (
-    /(statement of marks|marksheet|mark sheet|grade card|semester examination|credit points|sgpa|cgpa|passed with|provisional certificate|academic record|total marks|marks obtained)/.test(text)
-  ) {
-    return "Results";
-  }
-
-  // 4. Certificates of Completion / Participation / Course
-  if (
-    /(certificate of|has successfully completed|hereby certifies that|in recognition of|has participated in|completion of course|is awarded to)/.test(text)
-  ) {
-    return "Certificates";
-  }
-
-  // 5. Awards / Honours / Hackathon Winners
-  if (
-    /(winner|runner up|first prize|second prize|third prize|hackathon winner|hall of fame|in honour of|scholarship award|merit award)/.test(text)
-  ) {
-    return "Awards";
-  }
-
-  // 6. Project Reports / Case Studies
-  if (
-    /(abstract|problem statement|system architecture|methodology|future scope|github repository|tech stack|implementation details)/.test(text)
-  ) {
-    return "Projects";
-  }
-
-  return null;
-}
-
-async function extractDocumentText(file: File): Promise<string> {
-  try {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-
-    if (ext === "txt") {
-      return await file.text();
-    }
-
-    if (ext === "pdf") {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const pageTexts: string[] = [];
-      const maxPages = Math.min(pdf.numPages, 3);
-      for (let i = 1; i <= maxPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        pageTexts.push(content.items.map((item: any) => item.str).join(" "));
-      }
-      return pageTexts.join("\n\n");
-    }
-
-    if (ext === "docx") {
-      const mammoth = await import("mammoth");
-      const arrayBuffer = await file.arrayBuffer();
-      const res = await mammoth.extractRawText({ arrayBuffer });
-      return res.value || "";
-    }
-  } catch (err) {
-    console.warn("Could not read text from file:", file.name, err);
-  }
-  return "";
-}
-
-async function extractTextFromRemoteUrl(url: string, name: string): Promise<string> {
-  try {
-    const ext = name.split(".").pop()?.toLowerCase();
-    const res = await fetch(url);
-    if (!res.ok) return "";
-
-    if (ext === "txt") {
-      return await res.text();
-    }
-
-    if (ext === "pdf" || url.toLowerCase().includes(".pdf")) {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-      const arrayBuffer = await res.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const pageTexts: string[] = [];
-      const maxPages = Math.min(pdf.numPages, 3);
-      for (let i = 1; i <= maxPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        pageTexts.push(content.items.map((item: any) => item.str).join(" "));
-      }
-      return pageTexts.join("\n\n");
-    }
-
-    if (ext === "docx") {
-      const mammoth = await import("mammoth");
-      const arrayBuffer = await res.arrayBuffer();
-      const docRes = await mammoth.extractRawText({ arrayBuffer });
-      return docRes.value || "";
-    }
-  } catch (err) {
-    console.warn("Could not extract remote text for:", name, err);
-  }
-  return "";
-}
 
 /* ── Animated Count-up ─────────────────────────────────────── */
 function CountUp({ to, suffix = "" }: { to: number; suffix?: string }) {
@@ -211,16 +87,24 @@ export default function WalletPage() {
   // Multiple files upload queue
   interface QueueItem {
     reading?: boolean;
-    detectedByContent?: boolean;
     id: string;
     file: File;
     name: string;
     category: WalletCategory;
+    /** "manual" once the user picks a category by hand, so auto-scan leaves it alone. */
+    manual?: boolean;
+    source?: CategorySource;
+    confidence?: number;
+    reason?: string;
+    needsReview?: boolean;
   }
   const [fileQueue, setFileQueue] = useState<QueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Every file gets its own LLM call (most accurate). Turn off to classify
+  // offline with the built-in content rules only.
+  const [useAIForScan, setUseAIForScan] = useState(true);
 
   // AI Analysis state
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
@@ -250,46 +134,52 @@ export default function WalletPage() {
   const addFilesToQueue = async (files: FileList | File[]) => {
     const fileList = Array.from(files);
 
-    // 1. Initial queue with name-based detection and reading status
+    // 1. Queue entries start unclassified; the file's own content decides.
     const initialItems: QueueItem[] = fileList.map((file) => ({
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       file,
       name: file.name.replace(/\.[^/.]+$/, ""),
-      category: detectCategoryFromName(file.name),
+      category: "Other",
       reading: true,
-      detectedByContent: false,
+      source: "unknown",
+      manual: false,
+      needsReview: true,
     }));
 
     setFileQueue((prev) => [...prev, ...initialItems]);
 
-    // 2. Read each document's actual text content asynchronously
+    // 2. Read every file's actual content and classify from that, never the name.
     for (const item of initialItems) {
       try {
-        const text = await extractDocumentText(item.file);
-        let finalCategory = item.category;
-        let isContentDetected = false;
+        const text = await extractTextFromFile(item.file);
+        const imageDataUrl = text.trim() ? undefined : (await fileToDataUrl(item.file)) ?? undefined;
 
-        if (text && text.trim().length > 10) {
-          const contentCat = detectCategoryFromContent(text);
-          if (contentCat) {
-            finalCategory = contentCat;
-            isContentDetected = true;
-          }
-        }
+        const result: ClassificationResult = await classifyDocument({
+          text,
+          imageDataUrl,
+          mimeType: item.file.type,
+          name: item.file.name,
+          useAI: useAIForScan,
+          preferAI: useAIForScan,
+        });
 
         setFileQueue((prev) =>
           prev.map((q) =>
             q.id === item.id
               ? {
                   ...q,
-                  category: finalCategory,
+                  category: result.category,
                   reading: false,
-                  detectedByContent: isContentDetected,
+                  source: result.source,
+                  confidence: result.confidence,
+                  reason: result.reason,
+                  needsReview: result.needsReview,
                 }
               : q
           )
         );
       } catch (err) {
+        console.error("Classification failed for", item.file.name, err);
         setFileQueue((prev) =>
           prev.map((q) => (q.id === item.id ? { ...q, reading: false } : q))
         );
@@ -309,7 +199,11 @@ export default function WalletPage() {
 
   const updateQueueItemCategory = (id: string, category: WalletCategory) => {
     setFileQueue((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, category } : item))
+      prev.map((item) =>
+        item.id === id
+          ? { ...item, category, manual: true, source: "manual", needsReview: false }
+          : item
+      )
     );
   };
 
@@ -357,6 +251,7 @@ export default function WalletPage() {
         const downloadURL = data.secure_url;
         const filePath = data.public_id;
 
+        const now = new Date().toISOString();
         const newDoc = {
           uid: currentUser.uid,
           name: item.name.trim() || item.file.name,
@@ -365,7 +260,12 @@ export default function WalletPage() {
           downloadURL,
           sizeBytes: item.file.size,
           mimeType: item.file.type,
-          uploadedAt: new Date().toISOString(),
+          uploadedAt: now,
+          categorySource: item.manual ? "manual" : "auto",
+          categoryConfidence: item.manual ? 1 : item.confidence ?? 0,
+          categoryReason: item.manual ? "Set manually before upload" : item.reason || "",
+          categoryNeedsReview: item.manual ? false : !!item.needsReview,
+          categoryUpdatedAt: now,
         };
 
         await addDoc(collection(db, "wallet"), newDoc);
@@ -431,8 +331,14 @@ export default function WalletPage() {
   const handleUpdateDocCategory = async (docId: string, newCategory: WalletCategory) => {
     try {
       setUpdatingCatId(docId);
+      // Marking it manual locks it: auto re-scan will never move this document again.
       await updateDoc(doc(db, "wallet", docId), {
         category: newCategory,
+        categorySource: "manual",
+        categoryConfidence: 1,
+        categoryReason: "Set manually",
+        categoryNeedsReview: false,
+        categoryUpdatedAt: new Date().toISOString(),
       });
     } catch (err) {
       console.error("Failed to update category:", err);
@@ -442,44 +348,82 @@ export default function WalletPage() {
     }
   };
 
+  /** Release the manual lock so a future scan can re-detect this document. */
+  const handleUnlockDocCategory = async (docId: string) => {
+    try {
+      setUpdatingCatId(docId);
+      await updateDoc(doc(db, "wallet", docId), {
+        categorySource: "auto",
+        categoryUpdatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error("Failed to unlock category:", err);
+      alert("Failed to unlock this document.");
+    } finally {
+      setUpdatingCatId(null);
+    }
+  };
+
   const handleRescanAll = async () => {
     if (documents.length === 0 || rescanning) return;
     setRescanning(true);
     let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
 
     try {
       for (let i = 0; i < documents.length; i++) {
         const d = documents[i];
         setRescanProgress({ current: i + 1, total: documents.length });
 
-        // 1. First check by name
-        let detected = detectCategoryFromName(d.name);
-
-        // 2. If name is generic or we have a download URL, read actual content
-        if (d.downloadURL) {
-          const contentText = await extractTextFromRemoteUrl(d.downloadURL, d.name);
-          if (contentText && contentText.trim().length > 10) {
-            const contentCat = detectCategoryFromContent(contentText);
-            if (contentCat) {
-              detected = contentCat;
-            }
-          }
+        // Respect manual choices: the user locked these on purpose.
+        if (d.categorySource === "manual") {
+          skippedCount++;
+          continue;
         }
 
-        // If detected category is different from current, update in Firestore
-        if (detected && detected !== d.category) {
-          await updateDoc(doc(db, "wallet", d.id), {
-            category: detected,
-          });
-          updatedCount++;
+        if (!d.downloadURL) {
+          failedCount++;
+          continue;
         }
+
+        // Re-read the stored file, then let the LLM categorise it on its own.
+        const result = await classifyRemoteDocument(
+          {
+            url: d.downloadURL,
+            name: d.name,
+            mimeType: d.mimeType,
+          },
+          { useAI: useAIForScan, preferAI: useAIForScan }
+        );
+
+        if (result.source === "unknown") {
+          failedCount++;
+          continue;
+        }
+
+        const patch: Record<string, unknown> = {
+          categorySource: "auto",
+          categoryConfidence: result.confidence,
+          categoryReason: result.reason,
+          categoryNeedsReview: result.needsReview,
+          categoryUpdatedAt: new Date().toISOString(),
+        };
+        if (result.category !== d.category) patch.category = result.category;
+
+        await updateDoc(doc(db, "wallet", d.id), patch);
+        if (result.category !== d.category) updatedCount++;
+
+        // Small pause so AI-backed scans do not hammer the provider.
+        await new Promise((r) => setTimeout(r, 250));
       }
 
-      alert(
-        updatedCount > 0
-          ? `Scan complete! ${updatedCount} document(s) were automatically re-categorized.`
-          : "Scan complete! All documents are already in their correct categories."
-      );
+      const parts = [
+        updatedCount > 0 ? `${updatedCount} moved to a new category` : "No categories changed",
+      ];
+      if (skippedCount > 0) parts.push(`${skippedCount} manual choice(s) kept as-is`);
+      if (failedCount > 0) parts.push(`${failedCount} could not be read`);
+      alert(`Scan complete: ${parts.join(", ")}.`);
     } catch (err) {
       console.error("Re-scan error:", err);
       alert("Error occurred while re-scanning documents.");
@@ -489,16 +433,7 @@ export default function WalletPage() {
     }
   };
 
-  const categories: (WalletCategory | "All")[] = [
-    "All",
-    "Resume",
-    "Certificates",
-    "Awards",
-    "Projects",
-    "Results",
-    "ID Documents",
-    "Other",
-  ];
+  const categories: (WalletCategory | "All")[] = ["All", ...WALLET_CATEGORIES];
 
   const filteredDocs =
     activeTab === "All" ? documents : documents.filter((d) => d.category === activeTab);
@@ -563,6 +498,7 @@ export default function WalletPage() {
               disabled={rescanning}
               whileHover={!rescanning ? { scale: 1.03 } : {}}
               whileTap={!rescanning ? { scale: 0.97 } : {}}
+              title="Re-reads every auto-classified file and moves it to the right category. Files you categorized manually are left untouched."
               className="px-4 py-2.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${rescanning ? "animate-spin" : ""}`} />
@@ -635,9 +571,24 @@ export default function WalletPage() {
               </label>
             </motion.div>
 
+            {/* AI classification toggle */}
+            <label className="flex items-start gap-2 p-2.5 bg-surface-raised border border-border rounded-xl cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={useAIForScan}
+                onChange={(e) => setUseAIForScan(e.target.checked)}
+                className="mt-0.5 accent-[var(--primary)]"
+                disabled={uploading || rescanning}
+              />
+              <span className="text-[10px] leading-snug text-foreground-muted">
+                <span className="font-bold text-foreground">Read every file with AI</span> — each
+                file&apos;s contents are sent to the LLM one by one, and it decides the category.
+                Turn off for instant offline matching.
+              </span>
+            </label>
+
             {/* Queue Preview List */}
-            {fileQueue.length > 0 && (
-              <div className="space-y-2">
+            {fileQueue.length > 0 && (              <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">
                     Upload Queue ({fileQueue.length})
@@ -701,13 +652,31 @@ export default function WalletPage() {
                             </select>
                             {item.reading ? (
                               <span className="flex items-center gap-1 text-[9px] text-primary">
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Reading...
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                {useAIForScan ? "AI analyzing…" : "Reading file…"}
                               </span>
-                            ) : item.detectedByContent ? (
-                              <span className="flex items-center gap-0.5 text-[9px] text-success font-semibold" title="Classified by reading document content">
+                            ) : item.manual ? (
+                              <span className="flex items-center gap-0.5 text-[9px] text-foreground-muted font-semibold" title="You set this category, it will be kept as-is">
+                                <Lock className="w-2.5 h-2.5" /> Manual
+                              </span>
+                            ) : item.source === "ai" ? (
+                              <span className="flex items-center gap-0.5 text-[9px] text-success font-semibold" title={item.reason || "Classified by AI from the file content"}>
+                                <Sparkles className="w-2.5 h-2.5" /> AI read
+                              </span>
+                            ) : item.source === "content" ? (
+                              <span className="flex items-center gap-0.5 text-[9px] text-success font-semibold" title={item.reason || "Classified from the file content"}>
                                 <Sparkles className="w-2.5 h-2.5" /> Read
                               </span>
-                            ) : null}
+                            ) : (
+                              <span className="flex items-center gap-0.5 text-[9px] text-warning font-semibold" title="No readable content found. Please pick a category.">
+                                <AlertTriangle className="w-2.5 h-2.5" /> Check
+                              </span>
+                            )}
+                            {item.confidence !== undefined && !item.manual && !item.reading && (
+                              <span className="text-[9px] text-foreground-muted">
+                                {Math.round(item.confidence * 100)}%
+                              </span>
+                            )}
                           </div>
                           <span>{(item.file.size / 1024).toFixed(0)} KB</span>
                         </div>
@@ -846,6 +815,31 @@ export default function WalletPage() {
                           <span className="text-[10px] text-foreground-muted font-medium">
                             {(document.sizeBytes / 1024).toFixed(0)} KB
                           </span>
+                          {document.categorySource === "manual" ? (
+                            <button
+                              type="button"
+                              onClick={() => handleUnlockDocCategory(document.id)}
+                              disabled={updatingCatId === document.id}
+                              title="Category set by you. Click to unlock so Auto Re-Scan can re-detect it."
+                              className="flex items-center gap-0.5 text-[9px] font-bold text-foreground-muted hover:text-primary transition-colors disabled:opacity-50"
+                            >
+                              <Lock className="w-2.5 h-2.5" /> Manual <Unlock className="w-2.5 h-2.5" />
+                            </button>
+                          ) : document.categoryNeedsReview ? (
+                            <span
+                              className="flex items-center gap-0.5 text-[9px] font-bold text-warning"
+                              title={document.categoryReason || "Low confidence — please verify this category."}
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5" /> Verify
+                            </span>
+                          ) : document.categoryReason ? (
+                            <span
+                              className="text-[9px] text-foreground-muted font-medium truncate max-w-[180px]"
+                              title={document.categoryReason}
+                            >
+                              {document.categoryReason}
+                            </span>
+                          ) : null}
                           {updatingCatId === document.id && (
                             <Loader2 className="w-3 h-3 text-primary animate-spin" />
                           )}

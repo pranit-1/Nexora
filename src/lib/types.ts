@@ -12,6 +12,9 @@ export type WalletCategory =
   | "ID Documents"
   | "Other";
 
+/** "manual" means the user picked it by hand, so auto re-scan must never move it. */
+export type WalletCategorySource = "auto" | "manual";
+
 export interface WalletDocument {
   id: string;
   uid: string;
@@ -22,6 +25,12 @@ export interface WalletDocument {
   sizeBytes: number;
   mimeType: string;
   uploadedAt: string;
+  categorySource?: WalletCategorySource;
+  categoryConfidence?: number;
+  categoryReason?: string;
+  /** Set when classification was weak, so the UI can flag it for review. */
+  categoryNeedsReview?: boolean;
+  categoryUpdatedAt?: string;
 }
 
 // ─── CALENDAR ──────────────────────────────────────────────────────

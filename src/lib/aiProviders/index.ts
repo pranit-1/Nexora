@@ -20,6 +20,28 @@ export class AIRouterService {
       }
     }
   }
+
+  /** Vision request: OpenRouter (needs OPENROUTER_VISION_MODEL), then Groq. */
+  public static async requestVision(
+    prompt: string,
+    imageBase64: string,
+    mimeType: string = "image/jpeg",
+    jsonMode: boolean = false
+  ): Promise<any> {
+    try {
+      return await OpenRouterService.requestVision(prompt, imageBase64, mimeType, jsonMode);
+    } catch (openRouterErr: any) {
+      console.warn(`[AIRouter] OpenRouter vision failed, falling back to Groq. Reason: ${openRouterErr.message}`);
+
+      try {
+        return await GroqService.request(prompt, jsonMode);
+      } catch (groqErr: any) {
+        throw new Error(
+          `No vision-capable AI provider available. Last error: ${groqErr.message}`
+        );
+      }
+    }
+  }
 }
 
 export { GroqService } from "./groq";

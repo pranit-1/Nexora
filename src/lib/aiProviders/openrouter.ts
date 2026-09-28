@@ -28,18 +28,44 @@ export class OpenRouterService {
     return process.env.OPENROUTER_MODEL || "openrouter/free";
   }
 
+  private static getVisionModel(): string {
+    const model = process.env.OPENROUTER_VISION_MODEL;
+    if (!model || model.trim().length === 0) {
+      throw new Error("No vision model configured. Set OPENROUTER_VISION_MODEL to enable image analysis.");
+    }
+    return model;
+  }
+
   private static maskKey(key: string): string {
     if (key.length <= 12) return "******";
     return `${key.slice(0, 8)}...${key.slice(-6)}`;
   }
 
   public static async request(prompt: string, jsonMode: boolean = false): Promise<any> {
+    return this.send(prompt, jsonMode);
+  }
+
+  /** Vision variant. Requires OPENROUTER_VISION_MODEL to be set. */
+  public static async requestVision(
+    prompt: string,
+    imageBase64: string,
+    mimeType: string = "image/jpeg",
+    jsonMode: boolean = false
+  ): Promise<any> {
+    return this.send(prompt, jsonMode, { imageBase64, mimeType });
+  }
+
+  private static async send(
+    prompt: string,
+    jsonMode: boolean = false,
+    image?: { imageBase64: string; mimeType: string }
+  ): Promise<any> {
     const keys = this.getKeys();
     if (keys.length === 0) {
       throw new Error("No OpenRouter API keys found. Please set OPENROUTER_API_KEYS in your environment.");
     }
 
-    const model = this.getModel();
+    const model = image ? this.getVisionModel() : this.getModel();
     let attempts = 0;
     const maxAttempts = keys.length;
 
@@ -51,9 +77,16 @@ export class OpenRouterService {
       console.log(`[OpenRouterService] Trying request with key index ${this.currentKeyIndex} (${maskedKey}). Attempt ${attempts + 1}/${maxAttempts}`);
 
       try {
+        const content: any = image
+          ? [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.imageBase64}` } },
+            ]
+          : prompt;
+
         const body: any = {
           model,
-          messages: [{ role: "user", content: prompt }],
+          messages: [{ role: "user", content }],
         };
 
         if (jsonMode) {
