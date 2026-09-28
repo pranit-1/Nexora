@@ -117,14 +117,22 @@ async function loadLinks(db: ReturnType<typeof getAdminDb>, uid: string): Promis
   const snap = await db.collection(`users/${uid}/profileLinks`).get();
   return snap.docs
     .map((d) => {
-      const data = d.data() as Partial<ProfileLink>;
+      const data = d.data() as Partial<ProfileLink> & { addedAt?: { toDate?: () => Date; seconds?: number } };
       const parsed = data.url ? parseProfileLink(data.url) : null;
+      let addedAt: string | undefined;
+      if (data.addedAt && typeof data.addedAt === "object" && "toDate" in data.addedAt) {
+        addedAt = (data.addedAt as { toDate: () => Date }).toDate().toISOString();
+      } else if (typeof data.addedAt === "string") {
+        addedAt = data.addedAt;
+      } else if (data.addedAt && typeof data.addedAt === "object" && data.addedAt !== null && "seconds" in data.addedAt) {
+        addedAt = new Date((data.addedAt as Record<string, unknown>).seconds as number * 1000).toISOString();
+      }
       return {
         id: d.id,
         url: parsed?.ok ? parsed.url : String(data.url || ""),
         kind: data.kind || parsed?.kind || "other",
         label: (typeof data.label === "string" && data.label.trim()) || parsed?.label,
-        addedAt: typeof data.addedAt === "string" ? data.addedAt : undefined,
+        addedAt,
         origin: data.origin === "document" ? "document" : "manual",
       } as ProfileLink;
     })

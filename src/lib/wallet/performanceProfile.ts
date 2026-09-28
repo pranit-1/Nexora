@@ -32,11 +32,14 @@ const DIMENSION_META: Record<
   PerformanceDimensionKey,
   { label: string; weight: number; potentialFill: number; oneDoc: number }
 > = {
-  academics: { label: "Academics", weight: 0.25, potentialFill: 70, oneDoc: 55 },
-  credentials: { label: "Credentials", weight: 0.2, potentialFill: 70, oneDoc: 50 },
-  recognition: { label: "Recognition", weight: 0.15, potentialFill: 70, oneDoc: 55 },
-  projects: { label: "Projects", weight: 0.2, potentialFill: 70, oneDoc: 55 },
-  readiness: { label: "Application Readiness", weight: 0.2, potentialFill: 70, oneDoc: 0 },
+  academics: { label: "Academics", weight: 0.18, potentialFill: 75, oneDoc: 55 },
+  credentials: { label: "Credentials", weight: 0.15, potentialFill: 70, oneDoc: 50 },
+  recognition: { label: "Recognition", weight: 0.12, potentialFill: 70, oneDoc: 55 },
+  projects: { label: "Projects", weight: 0.15, potentialFill: 75, oneDoc: 55 },
+  skills: { label: "Technical Skills", weight: 0.15, potentialFill: 75, oneDoc: 50 },
+  recency: { label: "Recency & Momentum", weight: 0.1, potentialFill: 70, oneDoc: 40 },
+  network: { label: "Network & Visibility", weight: 0.08, potentialFill: 70, oneDoc: 35 },
+  readiness: { label: "Application Readiness", weight: 0.07, potentialFill: 70, oneDoc: 0 },
 };
 
 const clamp = (n: number, min = 0, max = 100) => Math.min(max, Math.max(min, Math.round(n)));
@@ -315,6 +318,136 @@ function scoreReadiness(docs: WalletDocument[], needsReviewCount: number, links:
   return { key: "readiness", ...meta, score: clamp(Math.min(score, 92)), docCount: resumes.length || docs.length, missing: false, evidence, notes };
 }
 
+// ─── NEW DIMENSIONS ──────────────────────────────────────────────────────────
+
+function scoreSkills(docs: WalletDocument[]): PerformanceDimension {
+  const meta = DIMENSION_META.skills;
+  const allSkills = [...new Set(docs.flatMap((d) => insightOf(d)?.skills || []))];
+  const allTech = [...new Set(docs.flatMap((d) => insightOf(d)?.technologies || []))];
+  const allLangs = [...new Set(docs.flatMap((d) => insightOf(d)?.languages || []))];
+  const evidence: string[] = [];
+  const notes: string[] = [];
+
+  if (!allSkills.length && !allTech.length && !allLangs.length) {
+    return { key: "skills", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["No skills, technologies or languages detected in your documents."] };
+  }
+
+  let score = 15;
+
+  if (allTech.length) {
+    score += Math.min(35, allTech.length * 5);
+    evidence.push(`${allTech.length} technolog${allTech.length > 1 ? "ies" : "y"}: ${allTech.slice(0, 6).join(", ")}`);
+  }
+  if (allSkills.length) {
+    score += Math.min(25, allSkills.length * 3);
+    evidence.push(`${allSkills.length} skill${allSkills.length > 1 ? "s" : ""}: ${allSkills.slice(0, 5).join(", ")}`);
+  }
+  if (allLangs.length) {
+    score += Math.min(15, allLangs.length * 5);
+    evidence.push(`${allLangs.length} language${allLangs.length > 1 ? "s" : ""}: ${allLangs.join(", ")}`);
+  }
+
+  const hasResume = docs.some((d) => d.category === "Resume");
+  if (hasResume && (allTech.length >= 3 || allSkills.length >= 5)) score += 10;
+
+  return { key: "skills", ...meta, score: clamp(score), docCount: docs.filter((d) => insightOf(d)?.skills?.length || insightOf(d)?.technologies?.length).length, missing: false, evidence, notes };
+}
+
+function scoreRecency(docs: WalletDocument[]): PerformanceDimension {
+  const meta = DIMENSION_META.recency;
+  const evidence: string[] = [];
+  const notes: string[] = [];
+
+  if (!docs.length) {
+    return { key: "recency", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["Wallet is empty — nothing to evaluate."] };
+  }
+
+  let score = 10;
+
+  const dates = docs.map((d) => insightOf(d)?.documentDate || d.uploadedAt).filter(Boolean) as string[];
+  const recent = dates.filter((iso) => {
+    const d = daysSince(iso);
+    return d !== null && d >= 0 && d <= 180;
+  });
+  const somewhatRecent = dates.filter((iso) => {
+    const d = daysSince(iso);
+    return d !== null && d >= 0 && d <= 365;
+  });
+  const stale = dates.filter((iso) => {
+    const d = daysSince(iso);
+    return d === null || d < 0 || d > 365;
+  });
+
+  if (recent.length >= 3) {
+    score += 35;
+    evidence.push(`${recent.length} document${recent.length > 1 ? "s" : ""} updated in the last 6 months`);
+  } else if (recent.length) {
+    score += 15;
+    evidence.push(`${recent.length} document${recent.length > 1 ? "s" : ""} updated in the last 6 months`);
+  }
+
+  if (somewhatRecent.length >= 3) {
+    score += 20;
+    evidence.push(`${somewhatRecent.length} document${somewhatRecent.length > 1 ? "s" : ""} updated in the last year`);
+  } else if (somewhatRecent.length) {
+    score += 10;
+    evidence.push(`${somewhatRecent.length} document${somewhatRecent.length > 1 ? "s" : ""} updated in the last year`);
+  }
+
+  if (stale.length > docs.length * 0.5) {
+    notes.push("More than half your documents are over a year old.");
+  } else if (stale.length) {
+    notes.push(`${stale.length} document${stale.length > 1 ? "s are" : " is"} over a year old.`);
+  }
+
+  const hasResume = docs.some((d) => d.category === "Resume");
+  if (hasResume) {
+    const resume = docs.find((d) => d.category === "Resume")!;
+    const resumeDays = daysSince(insightOf(resume)?.documentDate || resume.uploadedAt);
+    if (resumeDays !== null && resumeDays <= 90) {
+      score += 15;
+      evidence.push("Resume refreshed in the last 90 days");
+    }
+  }
+
+  return { key: "recency", ...meta, score: clamp(score), docCount: dates.length, missing: false, evidence, notes };
+}
+
+function scoreNetwork(docs: WalletDocument[], links: ProfileLink[]): PerformanceDimension {
+  const meta = DIMENSION_META.network;
+  const evidence: string[] = [];
+  const notes: string[] = [];
+
+  if (!links.length && !docs.some((d) => insightOf(d)?.links?.length)) {
+    return { key: "network", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["No public profiles or links found in your wallet."] };
+  }
+
+  let score = 5;
+
+  if (links.length) {
+    const kinds = new Set(links.map((l) => l.kind));
+    score += Math.min(30, kinds.size * 12);
+    evidence.push(`${links.length} public profile link${links.length > 1 ? "s" : ""} (${[...kinds].map((k) => kindLabel(k)).join(", ")})`);
+
+    const hasLinkedIn = kinds.has("linkedin");
+    const hasGitHub = kinds.has("github");
+    const hasPortfolio = kinds.has("portfolio");
+    if (hasLinkedIn && hasGitHub) score += 10;
+    if (hasPortfolio) score += 8;
+  }
+
+  const docLinks = [...new Set(docs.flatMap((d) => insightOf(d)?.links || []))];
+  if (docLinks.length) {
+    score += Math.min(20, docLinks.length * 5);
+    evidence.push(`${docLinks.length} additional link${docLinks.length > 1 ? "s" : ""} found in documents`);
+  }
+
+  if (docs.some((d) => d.category === "Awards")) score += 8;
+  if (docs.some((d) => d.category === "Certificates")) score += 5;
+
+  return { key: "network", ...meta, score: clamp(score), docCount: links.length + docLinks.length, missing: false, evidence, notes };
+}
+
 // ─── PROFILE ───────────────────────────────────────────────────────────────
 
 function bandFor(overall: number, docCount: number, coverage: number): PerformanceBand {
@@ -386,6 +519,9 @@ export function computePerformanceProfile(docs: WalletDocument[], profileLinks: 
     scoreCredentials(valid),
     scoreRecognition(valid),
     scoreProjects(valid),
+    scoreSkills(valid),
+    scoreRecency(valid),
+    scoreNetwork(valid, links),
     scoreReadiness(valid, needsReviewCount, links),
   ];
 
@@ -416,11 +552,17 @@ export function computePerformanceProfile(docs: WalletDocument[], profileLinks: 
   const nextSteps: string[] = [];
   const hasResume = valid.some((d) => d.category === "Resume");
   const hasLinks = links.length > 0;
+  const hasSkills = valid.some((d) => insightOf(d)?.skills?.length || insightOf(d)?.technologies?.length);
   const ADD_MORE: Record<PerformanceDimensionKey, string> = {
     academics: "Add another marksheet or transcript",
     credentials: "Add another certificate",
     recognition: "Add another award or appreciation letter",
     projects: "Add another project, ideally with a repo or demo link",
+    skills: !hasSkills
+      ? "Add skills/technologies to your resume or project documents"
+      : "Broaden your tech stack (frameworks, tools, cloud, testing)",
+    recency: "Upload recent documents (marksheets, certificates, updated resume)",
+    network: "Add LinkedIn, GitHub, and a portfolio link to your wallet",
     readiness: !hasResume
       ? "Upload your resume"
       : !hasLinks
@@ -445,6 +587,11 @@ export function computePerformanceProfile(docs: WalletDocument[], profileLinks: 
     if (top) strengths.push(`Only proven area so far: ${top.label} at ${top.score}/100`);
   }
 
+  const allTech = [...new Set(valid.flatMap((d) => insightOf(d)?.technologies || []))];
+  const allSkills = [...new Set(valid.flatMap((d) => insightOf(d)?.skills || []))];
+  const skillGaps = identifySkillGaps(allTech, allSkills, valid);
+  const prepFocus = identifyPrepFocus(allTech, allSkills, valid, dimensions);
+
   return {
     overall,
     potential,
@@ -459,7 +606,65 @@ export function computePerformanceProfile(docs: WalletDocument[], profileLinks: 
     categoryCounts,
     needsReviewCount,
     profileLinks: links,
+    topTechnologies: allTech.slice(0, 10),
+    topSkills: allSkills.slice(0, 10),
+    skillGaps,
+    prepFocus,
     computedAt: new Date().toISOString(),
     engineVersion: ENGINE_VERSION,
   };
+}
+
+/** Detects missing but commonly paired skills for a tech stack. */
+function identifySkillGaps(tech: string[], skills: string[], docs: WalletDocument[]): string[] {
+  const gaps: string[] = [];
+  const has = new Set([...tech.map((t) => t.toLowerCase()), ...skills.map((s) => s.toLowerCase())]);
+  const pairs: Record<string, string[]> = {
+    react: ["typescript", "next.js", "testing-library"],
+    vue: ["typescript", "pinia", "vitest"],
+    node: ["express", "typescript", "postgresql", "redis"],
+    python: ["django", "fastapi", "sqlalchemy", "pytest"],
+    java: ["spring", "maven", "gradle", "junit"],
+    go: ["gin", "gorm", "testing"],
+    rust: ["tokio", "serde", "clap"],
+    docker: ["kubernetes", "github actions", "terraform"],
+    aws: ["lambda", "dynamodb", "cloudformation", "cdk"],
+    sql: ["postgresql", "redis", "orm"],
+    ml: ["pytorch", "tensorflow", "pandas", "numpy", "mlflow"],
+    data: ["pandas", "sql", "tableau", "airflow", "dbt"],
+  };
+  for (const [primary, secondaries] of Object.entries(pairs)) {
+    if (has.has(primary)) {
+      const missing = secondaries.filter((s) => !has.has(s.toLowerCase()));
+      if (missing.length) gaps.push(`${primary.toUpperCase()} stack: consider ${missing.slice(0, 2).join(", ")}`);
+    }
+  }
+  const hasResume = docs.some((d) => d.category === "Resume");
+  if (hasResume && !has.has("testing") && !has.has("jest") && !has.has("vitest")) {
+    gaps.push("No testing framework detected — add Jest/Vitest/Pytest to your resume");
+  }
+  if (hasResume && !has.has("ci/cd") && !has.has("github actions") && !has.has("gitlab ci")) {
+    gaps.push("No CI/CD pipeline mentioned — add GitHub Actions / GitLab CI");
+  }
+  return gaps.slice(0, 6);
+}
+
+/** Recommends concrete preparation focus areas. */
+function identifyPrepFocus(tech: string[], skills: string[], docs: WalletDocument[], dimensions: PerformanceDimension[]): string[] {
+  const focus: string[] = [];
+  const has = new Set([...tech.map((t) => t.toLowerCase()), ...skills.map((s) => s.toLowerCase())]);
+
+  const weak = dimensions.filter((d) => d.missing || d.score < 50).map((d) => d.key);
+  if (weak.includes("academics")) focus.push("Add latest marksheet/transcript with visible GPA/percentage");
+  if (weak.includes("projects")) focus.push("Document 1–2 projects with repo/demo links and tech stack");
+  if (weak.includes("skills")) focus.push("List 5–8 core skills on your resume (frameworks, tools, languages)");
+  if (weak.includes("recency")) focus.push("Refresh resume and 1–2 certificates uploaded in the last 90 days");
+  if (weak.includes("network")) focus.push("Add LinkedIn + GitHub to wallet; publish a portfolio page");
+
+  if (has.has("react") || has.has("next.js")) focus.push("Build a full-stack Next.js demo (auth, DB, API) for interviews");
+  if (has.has("python") && (has.has("pandas") || has.has("numpy"))) focus.push("Showcase a data project: EDA + model + Streamlit/Gradio demo");
+  if (has.has("ml") || has.has("pytorch") || has.has("tensorflow")) focus.push("Add a trained model card with metrics, dataset, and inference demo");
+  if (has.has("node") || has.has("express")) focus.push("Deploy a REST API with docs (Swagger), tests, and Dockerfile");
+
+  return focus.slice(0, 5);
 }

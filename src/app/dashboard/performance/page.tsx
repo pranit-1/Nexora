@@ -376,6 +376,75 @@ export default function PerformancePage() {
             </div>
           )}
 
+          {/* Top Technologies & Skills */}
+          {(profile.topTechnologies?.length || profile.topSkills?.length) && (
+            <div className="p-5 bg-surface border border-border rounded-2xl">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4" /> Your tech stack & skills
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                {profile.topTechnologies?.length && (
+                  <div>
+                    <p className="text-[10px] font-bold text-foreground-muted mb-2">Technologies</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {profile.topTechnologies.map((t) => (
+                        <span key={t} className="px-2.5 py-1 text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20 rounded-full">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {profile.topSkills?.length && (
+                  <div>
+                    <p className="text-[10px] font-bold text-foreground-muted mb-2">Skills</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {profile.topSkills.map((s) => (
+                        <span key={s} className="px-2.5 py-1 text-[10px] font-semibold bg-success/10 text-success border border-success/20 rounded-full">
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Skill Gaps */}
+          {profile.skillGaps?.length && (
+            <div className="p-5 bg-warning/10 border border-warning/20 rounded-2xl">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-warning flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4" /> Skill gaps to address
+              </h3>
+              <ul className="mt-3 space-y-1.5">
+                {profile.skillGaps.map((g) => (
+                  <li key={g} className="text-xs text-foreground flex gap-1.5">
+                    <span className="text-warning font-bold">•</span>
+                    <span>{g}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Preparation Focus */}
+          {profile.prepFocus?.length && (
+            <div className="p-5 bg-primary/10 border border-primary/20 rounded-2xl">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                <Target className="w-4 h-4" /> Preparation focus
+              </h3>
+              <ol className="mt-3 space-y-1.5">
+                {profile.prepFocus.map((p, i) => (
+                  <li key={p} className="text-xs text-foreground flex gap-2">
+                    <span className="font-black text-primary">{i + 1}.</span>
+                    <span>{p}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
           {/* Where the documents live */}
           <div className="p-5 bg-surface border border-border rounded-2xl">
             <h3 className="text-xs font-bold uppercase tracking-wider text-foreground-muted">Where your evidence sits</h3>

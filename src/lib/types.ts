@@ -76,6 +76,9 @@ export type PerformanceDimensionKey =
   | "credentials"
   | "recognition"
   | "projects"
+  | "skills"
+  | "recency"
+  | "network"
   | "readiness";
 
 export type PerformanceBand = "strong" | "solid" | "developing" | "early" | "empty";
@@ -129,6 +132,14 @@ export interface PerformanceProfile {
   needsReviewCount: number;
   /** The user's saved public profile links, mirrored into the snapshot. */
   profileLinks?: ProfileLink[];
+  /** Top technologies/skills detected across all documents. */
+  topTechnologies?: string[];
+  /** Top skills detected across all documents. */
+  topSkills?: string[];
+  /** Specific skill gaps identified for target roles. */
+  skillGaps?: string[];
+  /** Recommended preparation focus areas. */
+  prepFocus?: string[];
   computedAt: string;
   engineVersion: number;
 }
