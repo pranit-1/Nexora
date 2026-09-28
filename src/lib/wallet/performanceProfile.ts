@@ -9,6 +9,8 @@ import type {
   WalletDocument,
 } from "@/lib/types";
 import { kindLabel } from "@/lib/profileLinks";
+import { scoreRepository, aggregateGitHubScore, extractUsernameFromUrl } from "@/lib/github";
+import { fetchCodingProfile, scoreCodingProfile, aggregateCodingScore } from "@/lib/codingPlatforms";
 
 /**
  * The performance engine.
@@ -32,14 +34,16 @@ const DIMENSION_META: Record<
   PerformanceDimensionKey,
   { label: string; weight: number; potentialFill: number; oneDoc: number }
 > = {
-  academics: { label: "Academics", weight: 0.18, potentialFill: 75, oneDoc: 55 },
-  credentials: { label: "Credentials", weight: 0.15, potentialFill: 70, oneDoc: 50 },
-  recognition: { label: "Recognition", weight: 0.12, potentialFill: 70, oneDoc: 55 },
-  projects: { label: "Projects", weight: 0.15, potentialFill: 75, oneDoc: 55 },
-  skills: { label: "Technical Skills", weight: 0.15, potentialFill: 75, oneDoc: 50 },
-  recency: { label: "Recency & Momentum", weight: 0.1, potentialFill: 70, oneDoc: 40 },
-  network: { label: "Network & Visibility", weight: 0.08, potentialFill: 70, oneDoc: 35 },
-  readiness: { label: "Application Readiness", weight: 0.07, potentialFill: 70, oneDoc: 0 },
+  academics: { label: "Academics", weight: 0.15, potentialFill: 75, oneDoc: 55 },
+  credentials: { label: "Credentials", weight: 0.12, potentialFill: 70, oneDoc: 50 },
+  recognition: { label: "Recognition", weight: 0.1, potentialFill: 70, oneDoc: 55 },
+  projects: { label: "Projects", weight: 0.12, potentialFill: 75, oneDoc: 55 },
+  skills: { label: "Technical Skills", weight: 0.12, potentialFill: 75, oneDoc: 50 },
+  recency: { label: "Recency & Momentum", weight: 0.08, potentialFill: 70, oneDoc: 40 },
+  network: { label: "Network & Visibility", weight: 0.07, potentialFill: 70, oneDoc: 35 },
+  github: { label: "GitHub & Open Source", weight: 0.12, potentialFill: 80, oneDoc: 45 },
+  coding: { label: "Coding Platforms", weight: 0.1, potentialFill: 80, oneDoc: 40 },
+  readiness: { label: "Application Readiness", weight: 0.04, potentialFill: 70, oneDoc: 0 },
 };
 
 const clamp = (n: number, min = 0, max = 100) => Math.min(max, Math.max(min, Math.round(n)));
@@ -98,13 +102,46 @@ function scoreAcademics(docs: WalletDocument[]): PerformanceDimension {
   let score = 25 + Math.min(24, (results.length - 1) * 12);
   evidence.push(`${results.length} result document${results.length > 1 ? "s" : ""}`);
 
-  const gpa = bestGpa(results);
-  if (gpa !== null) {
-    score += gpa >= 75 ? 25 : gpa >= 60 ? 18 : gpa >= 50 ? 10 : 4;
-    const raw = results.map((d) => insightOf(d)?.gpaRaw).find(Boolean);
-    evidence.push(`Academic score ${gpa}/100${raw ? ` (${raw})` : ""}`);
+// Use marksheet-specific data: class 10/12, board, percentage, stream
+  const class10 = results.find((d) => insightOf(d)?.marksheetClass === "10");
+  const class12 = results.find((d) => insightOf(d)?.marksheetClass === "12");
+
+  const pct10: number | null = class10 ? insightOf(class10)?.percentage ?? null : null;
+  const pct12: number | null = class12 ? insightOf(class12)?.percentage ?? null : null;
+  const bestPct: number | null = pct10 !== null && pct12 !== null
+    ? (pct10 > pct12 ? pct10 : pct12)
+    : pct10 ?? pct12 ?? null;
+  if (bestPct != null) {
+    score += bestPct >= 90 ? 30 : bestPct >= 80 ? 25 : bestPct >= 70 ? 20 : bestPct >= 60 ? 15 : bestPct >= 50 ? 10 : 5;
+    evidence.push(`${bestPct}% (Class ${pct12 !== null ? "12" : "10"})`);
   } else {
-    notes.push("No GPA or percentage could be read from these documents.");
+    // Fallback to generic GPA/percentage
+    const gpa = bestGpa(results);
+    if (gpa !== null) {
+      score += gpa >= 75 ? 25 : gpa >= 60 ? 18 : gpa >= 50 ? 10 : 4;
+      const raw = results.map((d) => insightOf(d)?.gpaRaw).find(Boolean);
+      evidence.push(`Academic score ${gpa}/100${raw ? ` (${raw})` : ""}`);
+    } else {
+      notes.push("No GPA or percentage could be read from these documents.");
+    }
+  }
+
+  if (class12) {
+    score += 8; // Class 12 is higher weight
+    const board = insightOf(class12)?.marksheetBoard;
+    if (board) evidence.push(`${board} Class 12`);
+    const stream = insightOf(class12)?.marksheetStream;
+    if (stream) evidence.push(`Stream: ${stream}`);
+    const subjects = insightOf(class12)?.marksheetSubjects;
+    if (subjects?.length) {
+      score += Math.min(10, subjects.length * 2);
+      evidence.push(`${subjects.length} subjects with marks`);
+    }
+  }
+  if (class10) {
+    score += 5;
+    const board = insightOf(class10)?.marksheetBoard;
+    if (board) evidence.push(`${board} Class 10`);
   }
 
   const institutions = institutionsOf(results);
@@ -448,6 +485,43 @@ function scoreNetwork(docs: WalletDocument[], links: ProfileLink[]): Performance
   return { key: "network", ...meta, score: clamp(score), docCount: links.length + docLinks.length, missing: false, evidence, notes };
 }
 
+function scoreGitHub(githubData?: { score: number; signals: string[]; topRepos: any[] }): PerformanceDimension {
+  const meta = DIMENSION_META.github;
+  const evidence: string[] = [];
+  const notes: string[] = [];
+
+  if (!githubData || githubData.score === 0) {
+    return { key: "github", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["No GitHub profile connected or no public repositories found."] };
+  }
+
+  let score = githubData.score;
+  evidence.push(...githubData.signals);
+  if (githubData.topRepos?.length) {
+    evidence.push(`Top repo: ${githubData.topRepos[0].repo.name} (${githubData.topRepos[0].score}/100)`);
+  }
+
+  return { key: "github", ...meta, score: clamp(score), docCount: githubData.topRepos?.length || 0, missing: false, evidence, notes };
+}
+
+function scoreCodingPlatforms(codingData?: { score: number; byPlatform: Record<string, number>; signals: string[] }): PerformanceDimension {
+  const meta = DIMENSION_META.coding;
+  const evidence: string[] = [];
+  const notes: string[] = [];
+
+  if (!codingData || codingData.score === 0) {
+    return { key: "coding", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["No coding platform profiles connected (LeetCode, CodeChef, Codeforces, etc.)."] };
+  }
+
+  let score = codingData.score;
+  evidence.push(...codingData.signals);
+  const platforms = Object.entries(codingData.byPlatform).filter(([, s]) => s > 0);
+  if (platforms.length) {
+    evidence.push(`Active on: ${platforms.map(([p, s]) => `${p} (${s}/100)`).join(", ")}`);
+  }
+
+  return { key: "coding", ...meta, score: clamp(score), docCount: platforms.length, missing: false, evidence, notes };
+}
+
 // ─── PROFILE ───────────────────────────────────────────────────────────────
 
 function bandFor(overall: number, docCount: number, coverage: number): PerformanceBand {
@@ -504,7 +578,12 @@ function buildNarrative(
  * Turn a wallet into a scored, explainable performance profile.
  * Deterministic: same documents always produce the same numbers.
  */
-export function computePerformanceProfile(docs: WalletDocument[], profileLinks: ProfileLink[] = []): PerformanceProfile {
+export function computePerformanceProfile(
+  docs: WalletDocument[],
+  profileLinks: ProfileLink[] = [],
+  githubData?: { score: number; signals: string[]; topRepos: any[] },
+  codingData?: { score: number; byPlatform: Record<string, number>; signals: string[] }
+): PerformanceProfile {
   const valid = (docs || []).filter((d) => d && d.id);
   const links = (profileLinks || []).filter((l) => l && l.url);
   const needsReviewCount = valid.filter((d) => d.categoryNeedsReview).length;
@@ -523,6 +602,8 @@ export function computePerformanceProfile(docs: WalletDocument[], profileLinks: 
     scoreRecency(valid),
     scoreNetwork(valid, links),
     scoreReadiness(valid, needsReviewCount, links),
+    scoreGitHub(githubData),
+    scoreCodingPlatforms(codingData),
   ];
 
   const present = dimensions.filter((d) => !d.missing);
@@ -563,6 +644,8 @@ export function computePerformanceProfile(docs: WalletDocument[], profileLinks: 
       : "Broaden your tech stack (frameworks, tools, cloud, testing)",
     recency: "Upload recent documents (marksheets, certificates, updated resume)",
     network: "Add LinkedIn, GitHub, and a portfolio link to your wallet",
+    github: "Connect your GitHub profile and showcase your best repositories",
+    coding: "Add your LeetCode, CodeChef, or Codeforces profile",
     readiness: !hasResume
       ? "Upload your resume"
       : !hasLinks

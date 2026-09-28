@@ -61,6 +61,11 @@ export interface DocumentInsights {
   contactPhone?: string;
   links: string[];
   keywords: string[];
+  // Marksheet-specific (Results category)
+  marksheetClass?: "10" | "12";
+  marksheetStream?: "science" | "commerce" | "arts" | "vocational";
+  marksheetBoard?: string;
+  marksheetSubjects?: Array<{ name: string; marks: number; maxMarks?: number }>;
 }
 
 // ─── PERFORMANCE PROFILE ───────────────────────────────────────────────────
@@ -79,6 +84,8 @@ export type PerformanceDimensionKey =
   | "skills"
   | "recency"
   | "network"
+  | "github"
+  | "coding"
   | "readiness";
 
 export type PerformanceBand = "strong" | "solid" | "developing" | "early" | "empty";

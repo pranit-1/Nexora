@@ -195,8 +195,6 @@ function findInstitution(text: string, category: WalletCategory): string | undef
 
 const ORG_SUFFIX =
   "(?:Foundation|Society|Association|Council|Committee|Institute|Academy|Club|Trust|NGO|Inc\\.|Ltd\\.|Corp\\.|Corporation|Organization|Organisation|University|Department|Ministry|Authority|Centre|Center|Board|Agency)";
-
-/** Optional "of Education"-style tail so "Ministry" becomes "Ministry of Education". */
 const ORG_TAIL = "(?:\\s+of\\s+[A-Z][A-Za-z.&]*(?:\\s+(?:and\\s+)?[A-Z][A-Za-z.&]*){0,2})?";
 
 function findIssuer(text: string): string | undefined {
@@ -350,6 +348,98 @@ function findDate(text: string): string | undefined {
 }
 
 /**
+ * Extract marksheet-specific data: board, class (10/12), stream, percentage, subjects.
+ */
+function extractMarksheetData(text: string): {
+  board?: string;
+  class?: "10" | "12";
+  stream?: "science" | "commerce" | "arts" | "vocational";
+  percentage?: number;
+  subjects?: Array<{ name: string; marks: number; maxMarks?: number }>;
+  school?: string;
+  rollNumber?: string;
+} {
+  const lower = text.toLowerCase();
+  const result: ReturnType<typeof extractMarksheetData> = {};
+
+  // Board detection
+  const boards = [
+    "cbse", "icse", "isc", "iscse", "i.s.c", "c.b.s.e",
+    "up board", "uttar pradesh", "bihar board", "bseb",
+    "mp board", "madhya pradesh", "maharashtra board", "msbshse",
+    "rajasthan board", "rbse", "gujarat board", "gseb",
+    "karnataka board", "puc", "west bengal board", "wbchse",
+    "tamil nadu", "tn board", "dge tn", "andhra pradesh", "bseap",
+    "telangana", "tsbse", "kerala board", "kbpe",
+    "punjab board", "psb", "haryana board", "hbse",
+    "delhi board", "nios", "national institute of open schooling",
+    "cambridge", "igcse", "ib", "international baccalaureate",
+  ];
+  for (const b of boards) {
+    if (lower.includes(b)) { result.board = b.toUpperCase(); break; }
+  }
+  if (!result.board && /board of secondary/i.test(lower)) result.board = "STATE BOARD";
+
+  // Class 10 or 12
+  if (/\b(?:class\s*(?:10|x|ten)|x\s*(?:board|exam)|ssc|matric|secondary\s*school\s*certificate)\b/i.test(lower)) {
+    result.class = "10";
+  } else if (/\b(?:class\s*(?:12|xii|twelve)|intermediate|hsc|higher\s*secondary|senior\s*school\s*certificate|puc\s*ii)\b/i.test(lower)) {
+    result.class = "12";
+  }
+
+  // Stream (for class 12)
+  if (result.class === "12") {
+    if (/science|pcm|pcb|physics|chemistry|biology|maths|mathematics/.test(lower)) result.stream = "science";
+    else if (/commerce|accountancy|business\s*studies|economics/.test(lower)) result.stream = "commerce";
+    else if (/arts|humanities|history|political\s*science|geography|psychology/.test(lower)) result.stream = "arts";
+    else if (/vocational|skill/.test(lower)) result.stream = "vocational";
+  }
+
+  // School name (often appears as "School: XYZ" or "Institution: XYZ")
+  const schoolMatch = text.match(/(?:school|institution|college|academy)\s*[:.\-]\s*([A-Z][A-Za-z0-9 .&'-]{3,60})/i);
+  if (schoolMatch) result.school = clean(schoolMatch[1]);
+
+  // Roll number (already extracted by findRollNumber, but try marksheet-specific patterns)
+  const rollMatch = text.match(/(?:roll\s*(?:no|number)?|admit\s*card\s*no|registration\s*no)\s*[:#-]?\s*([A-Z0-9\/-]{5,20})/i);
+  if (rollMatch) result.rollNumber = clean(rollMatch[1]);
+
+  // Percentage (enhanced for marksheets)
+  const pctMatch = text.match(/(?:aggregate|overall|total|percentage|grand\s*total)\D{0,12}(\d{1,3}(?:\.\d{1,2})?)\s*%/i)
+    || text.match(/(?:total|aggregate|grand\s*total)\s*[:\-]\s*(\d{1,3}(?:\.\d{1,2})?)\s*(?:\/|out\s*of)\s*(\d{3,4})/i)
+    || text.match(/(\d{1,3}(?:\.\d{1,2})?)\s*%\s*(?:aggregate|overall|total)/i);
+  if (pctMatch) {
+    const v = parseFloat(pctMatch[1]);
+    if (v > 0 && v <= 100) result.percentage = Math.round(v * 10) / 10;
+    else if (pctMatch[2]) {
+      const max = parseFloat(pctMatch[2]);
+      if (max > 0) {
+        const calc = (v / max) * 100;
+        if (calc <= 100) result.percentage = Math.round(calc * 10) / 10;
+      }
+    }
+  }
+
+  // Subject-wise marks (look for patterns like "Mathematics 95/100" or "Physics: 92")
+  const subjects: Array<{ name: string; marks: number; maxMarks?: number }> = [];
+  const subjPattern = /(?:^|\n)\s*([A-Za-z][A-Za-z\s&]{2,30}?)\s*[:.\-]?\s*(\d{1,3}(?:\.\d{1,2})?)\s*(?:\/|out\s*of\s*)?(\d{2,3})?/gi;
+  let m;
+  while ((m = subjPattern.exec(text)) !== null) {
+    const name = clean(m[1]).replace(/\s+/g, " ");
+    const marks = parseFloat(m[2]);
+    const max = m[3] ? parseFloat(m[3]) : undefined;
+    if (marks >= 0 && marks <= 100 && name.length >= 3 && /[a-z]/i.test(name)) {
+      // Filter out common non-subject lines
+      if (!/total|aggregate|grand\s*total|percentage|result|pass|fail|grade|rank|attendance/.test(name.toLowerCase())) {
+        subjects.push({ name, marks, maxMarks: max });
+      }
+    }
+  }
+  if (subjects.length) result.subjects = subjects.slice(0, 10);
+
+  return result;
+}
+
+/**
  * Extract every fact we can from one document's text.
  * Safe to call with empty text — returns an empty insight object.
  */
@@ -358,6 +448,9 @@ export function extractInsights(text: string, category: WalletCategory, name = "
   const source = body || name || "";
   const insights: DocumentInsights = { skills: [], technologies: [], languages: [], links: [], keywords: [] };
   if (!source.trim()) return insights;
+
+  // Marksheet-specific extraction for Results
+  const marksheet = category === "Results" ? extractMarksheetData(body) : null;
 
   const gpa = findGpa(body);
   const percentage = findPercentage(body);
@@ -371,9 +464,17 @@ export function extractInsights(text: string, category: WalletCategory, name = "
     insights.gpa = percentage;
   }
   if (percentage !== null) insights.percentage = percentage;
+  // Prefer marksheet percentage (more accurate)
+  if (marksheet?.percentage !== undefined) {
+    insights.percentage = marksheet.percentage;
+    insights.gpa = marksheet.percentage;
+  }
 
   const roll = findRollNumber(body);
   if (roll) insights.rollNumber = roll;
+  // Use marksheet roll number if available
+  if (marksheet?.rollNumber) insights.rollNumber = marksheet.rollNumber;
+
   const year = findYear(body);
   if (year) insights.graduationYear = year;
   const date = findDate(body);
@@ -381,7 +482,17 @@ export function extractInsights(text: string, category: WalletCategory, name = "
   const field = findField(body);
   if (field) insights.field = field;
   if (institution) insights.institution = institution;
+  // Markshet board as institution fallback
+  if (marksheet?.board && !insights.institution) insights.institution = marksheet.board;
+  if (marksheet?.school && !insights.institution) insights.institution = marksheet.school;
+
   if (issuer && issuer !== institution) insights.issuer = issuer;
+
+  // Markshet class & stream
+  if (marksheet?.class) insights.marksheetClass = marksheet.class;
+  if (marksheet?.stream) insights.marksheetStream = marksheet.stream;
+  if (marksheet?.board) insights.marksheetBoard = marksheet.board;
+  if (marksheet?.subjects?.length) insights.marksheetSubjects = marksheet.subjects;
 
   insights.skills = findSkills(body);
   insights.technologies = findTechnologies(body);

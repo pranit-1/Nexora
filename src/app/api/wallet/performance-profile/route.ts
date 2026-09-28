@@ -5,6 +5,8 @@ import { computePerformanceProfile, bandLabel, ENGINE_VERSION } from "@/lib/wall
 import { describeInsights } from "@/lib/wallet/documentInsights";
 import { normalizeCategory } from "@/lib/wallet/categories";
 import { parseProfileLink } from "@/lib/profileLinks";
+import { extractUsernameFromUrl, fetchUserRepos, scoreRepository, aggregateGitHubScore } from "@/lib/github";
+import { fetchCodingProfile, scoreCodingProfile, aggregateCodingScore } from "@/lib/codingPlatforms";
 import type { PerformanceProfile, PerformanceSnapshot, ProfileLink, WalletDocument } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 const TRACKER_PATH = (uid: string) => `users/${uid}/tracker/performance`;
 
-function fingerprintOf(docs: WalletDocument[], links: ProfileLink[]): string {
+function fingerprintOf(docs: WalletDocument[], links: ProfileLink[], githubData?: any, codingData?: any): string {
   const docPart = docs
     .map((d) => `${d.id}:${d.category}:${d.categoryUpdatedAt || d.uploadedAt}:${d.categoryNeedsReview ? 1 : 0}`)
     .sort()
@@ -32,7 +34,9 @@ function fingerprintOf(docs: WalletDocument[], links: ProfileLink[]): string {
     .map((l) => `${l.id}:${l.url}`)
     .sort()
     .join("|");
-  return `${docPart}#${linkPart}`;
+  const ghPart = githubData ? `gh:${githubData.topRepos?.map((r: any) => r.repo.fullName).join(",") || ""}` : "";
+  const codingPart = codingData ? `coding:${Object.entries((codingData.byPlatform || {}) as Record<string, number>).filter(([, v]) => v > 0).map(([k]) => k).join(",")}` : "";
+  return `${docPart}#${linkPart}#${ghPart}#${codingPart}`;
 }
 
 /** Compact, token-cheap evidence digest handed to the model. */
@@ -143,8 +147,62 @@ async function build(uid: string, refreshNarrative: boolean, force: boolean) {
   const db = getAdminDb();
   const docs = await loadDocs(db, uid);
   const links = await loadLinks(db, uid);
-  const profile = computePerformanceProfile(docs, links);
-  const fingerprint = fingerprintOf(docs, links);
+
+  // Extract GitHub username from profile links
+  const githubLink = links.find((l) => l.kind === "github");
+  const githubUsername = githubLink ? extractUsernameFromUrl(githubLink.url) : null;
+
+  // Extract coding platform URLs
+  // Check both kind and URL for platform detection
+  const codingLinks = links.filter((l) => {
+    const isCodingPlatform = ["leetcode", "codechef", "codeforces", "geeksforgeeks", "hackerrank", "atcoder"].includes(l.kind);
+    const url = (l.url || "").toLowerCase();
+    const isCodingUrl = url.includes("leetcode.com") || url.includes("codechef.com") || url.includes("codeforces.com") || url.includes("geeksforgeeks.org") || url.includes("hackerrank.com") || url.includes("atcoder.jp");
+    return isCodingPlatform || isCodingUrl;
+  });
+
+  // Fetch GitHub data
+  let githubData: any = null;
+  if (githubUsername) {
+    console.log("[performance-profile] Fetching GitHub repos for:", githubUsername);
+    try {
+      const repos = await fetchUserRepos(githubUsername);
+      console.log("[performance-profile] Got", repos.length, "repos for", githubUsername);
+      const scored = repos.map(scoreRepository);
+      githubData = aggregateGitHubScore(scored);
+      console.log("[performance-profile] GitHub aggregate score:", githubData.total);
+      // Add score property for scoreGitHub function
+      githubData.score = githubData.total;
+    } catch (e) {
+      console.warn("[performance-profile] GitHub fetch failed:", (e as Error)?.message);
+    }
+  } else {
+    console.log("[performance-profile] No GitHub username found in links");
+  }
+
+  // Fetch coding platform data
+  let codingData: any = null;
+  if (codingLinks.length) {
+    console.log("[performance-profile] Fetching coding profiles for:", codingLinks.map(l => l.kind));
+    try {
+      const profiles = await Promise.all(
+        codingLinks.map((l) => fetchCodingProfile(l.url))
+      );
+      console.log("[performance-profile] Got coding profiles:", profiles.map(p => ({ platform: p?.platform, username: p?.username, rating: p?.rating, problemsSolved: p?.problemsSolved, contestCount: p?.contestCount })));
+      const scored = profiles.filter(Boolean).map((p) => scoreCodingProfile(p!));
+      codingData = aggregateCodingScore(scored);
+      console.log("[performance-profile] Coding aggregate score:", codingData.total);
+      // Add score property for scoreCodingPlatforms function
+      codingData.score = codingData.total;
+    } catch (e) {
+      console.warn("[performance-profile] Coding platform fetch failed:", (e as Error)?.message);
+    }
+  } else {
+    console.log("[performance-profile] No coding platform links found");
+  }
+
+  const profile = computePerformanceProfile(docs, links, githubData, codingData);
+  const fingerprint = fingerprintOf(docs, links, githubData, codingData);
 
   const ref = db.doc(TRACKER_PATH(uid));
   const cached = (await ref.get()).data() as PerformanceSnapshot | undefined;
