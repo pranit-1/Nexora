@@ -18,7 +18,8 @@ import {
   RefreshCw,
   Gauge,
 } from "lucide-react";
-import type { WalletDocument, WalletCategory } from "@/lib/types";
+import { Link2, Copy, Check, ExternalLink } from "lucide-react";
+import type { WalletDocument, WalletCategory, ProfileLink } from "@/lib/types";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { Lock, Unlock, AlertTriangle } from "lucide-react";
 import {
@@ -33,6 +34,15 @@ import {
 import { extractInsights } from "@/lib/wallet/documentInsights";
 import { computePerformanceProfile } from "@/lib/wallet/performanceProfile";
 import { refreshPerformanceProfile } from "@/lib/performanceProfileClient";
+import {
+  displayUrl,
+  kindAccent,
+  kindLabel,
+  LINK_SUGGESTIONS,
+  needsProfilePath,
+  parseProfileLink,
+} from "@/lib/profileLinks";
+import { addProfileLink, removeProfileLink, subscribeProfileLinks } from "@/lib/profileLinksClient";
 
 /** How much of a document's text we keep — feeds the performance profile. */
 const STORED_TEXT_CHARS = 3000;
@@ -125,6 +135,17 @@ export default function WalletPage() {
   const [rescanProgress, setRescanProgress] = useState<{ current: number; total: number } | null>(null);
   const [updatingCatId, setUpdatingCatId] = useState<string | null>(null);
 
+  // Public profile links — LinkedIn, GitHub, portfolio, anything the user wants
+  // visible to recruiters. Stored in users/{uid}/profileLinks.
+  const [profileLinks, setProfileLinks] = useState<ProfileLink[]>([]);
+  const [linkInput, setLinkInput] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [savingLink, setSavingLink] = useState(false);
+  const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+
+  const linkPreview = useMemo(() => parseProfileLink(linkInput), [linkInput]);
+
   useEffect(() => {
     if (!currentUser) return;
 
@@ -139,6 +160,15 @@ export default function WalletPage() {
     });
 
     return () => unsub();
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    return subscribeProfileLinks(
+      currentUser.uid,
+      setProfileLinks,
+      () => setLinkError("Could not load your saved links.")
+    );
   }, [currentUser]);
 
   const addFilesToQueue = async (files: FileList | File[]) => {
@@ -466,6 +496,50 @@ export default function WalletPage() {
     }
   };
 
+  /* ── Public profile links ───────────────────────────────────── */
+  const handleAddLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+    setLinkError(null);
+    setSavingLink(true);
+    try {
+      const result = await addProfileLink(currentUser.uid, linkInput);
+      if (!result.ok) {
+        setLinkError(result.error);
+      } else {
+        setLinkInput("");
+        void refreshPerformanceProfile(currentUser.uid);
+      }
+    } catch {
+      setLinkError("That link could not be saved. Please try again.");
+    } finally {
+      setSavingLink(false);
+    }
+  };
+
+  const handleRemoveLink = async (linkId: string) => {
+    if (!currentUser) return;
+    setDeletingLinkId(linkId);
+    try {
+      await removeProfileLink(currentUser.uid, linkId);
+      void refreshPerformanceProfile(currentUser.uid);
+    } catch {
+      setLinkError("That link could not be removed. Please try again.");
+    } finally {
+      setDeletingLinkId(null);
+    }
+  };
+
+  const handleCopyLink = async (link: ProfileLink) => {
+    try {
+      await navigator.clipboard.writeText(link.url);
+      setCopiedLinkId(link.id);
+      setTimeout(() => setCopiedLinkId((id) => (id === link.id ? null : id)), 1600);
+    } catch {
+      setLinkError("Could not copy to the clipboard.");
+    }
+  };
+
   const categories: (WalletCategory | "All")[] = ["All", ...WALLET_CATEGORIES];
 
   const filteredDocs =
@@ -475,7 +549,7 @@ export default function WalletPage() {
 
   // Live preview of the score the wallet is currently producing. The persisted
   // snapshot (with the AI narrative) lives on the performance page.
-  const liveProfile = useMemo(() => computePerformanceProfile(documents), [documents]);
+  const liveProfile = useMemo(() => computePerformanceProfile(documents, profileLinks), [documents, profileLinks]);
 
   /* ── Loading ──────────────────────────────────────────────── */
   if (loading) {
@@ -526,6 +600,22 @@ export default function WalletPage() {
                 </p>
               </motion.div>
             ))}
+
+            {profileLinks.length > 0 && (
+              <motion.div
+                whileHover={{ scale: 1.04 }}
+                transition={{ type: "spring", stiffness: 400, damping: 18 }}
+                title="Public profile links saved in your wallet"
+                className="px-4 py-2 bg-surface border border-border rounded-2xl text-center shadow-sm"
+              >
+                <p className="text-[10px] uppercase font-bold text-foreground-muted tracking-wider">
+                  Public Links
+                </p>
+                <p className="text-lg font-extrabold text-primary">
+                  <CountUp to={profileLinks.length} />
+                </p>
+              </motion.div>
+            )}
 
             {/* Live performance link — the wallet and the score stay in sync */}
             {documents.length > 0 && (
@@ -790,6 +880,168 @@ export default function WalletPage() {
               </AnimatePresence>
             </motion.button>
           </form>
+        </motion.div>
+
+        {/* Public Profile Links Panel */}
+        <motion.div
+          variants={panelVariants}
+          className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-4 h-fit"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-bold text-foreground text-sm flex items-center gap-1.5">
+              <Link2 className="w-4 h-4 text-primary" /> Public Profile Links
+            </h3>
+            {profileLinks.length > 0 && (
+              <span className="text-[10px] font-bold text-foreground-muted bg-surface-raised border border-border rounded-full px-2 py-0.5">
+                {profileLinks.length} saved
+              </span>
+            )}
+          </div>
+
+          <p className="text-[10px] text-foreground-muted leading-snug">
+            Save the public pages recruiters should see — LinkedIn, GitHub, your portfolio, or
+            anything else. These count as verified evidence in your{" "}
+            <Link href="/dashboard/performance" className="text-primary font-semibold hover:underline">
+              performance profile
+            </Link>
+            .
+          </p>
+
+          <form onSubmit={handleAddLink} className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                inputMode="url"
+                value={linkInput}
+                onChange={(e) => {
+                  setLinkInput(e.target.value);
+                  setLinkError(null);
+                }}
+                placeholder="linkedin.com/in/yourname"
+                aria-label="Public profile URL"
+                className="flex-1 min-w-0 text-xs bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary placeholder:text-foreground-muted/60"
+              />
+              <button
+                type="submit"
+                disabled={savingLink || !linkInput.trim()}
+                className="px-3 py-2 bg-primary hover:bg-primary-hover text-primary-foreground text-[10px] font-bold rounded-xl shadow-sm transition-all flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
+              >
+                {savingLink ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <>
+                    <Link2 className="w-3 h-3" /> Save
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Live validation feedback so the user knows what will be saved */}
+            {linkInput.trim() && (
+              <p
+                className={`text-[9px] leading-snug ${
+                  linkPreview.ok ? "text-success" : "text-danger"
+                }`}
+              >
+                {linkPreview.ok ? (
+                  <>
+                    Will save as <span className="font-bold">{kindLabel(linkPreview.kind)}</span> —{" "}
+                    {displayUrl(linkPreview.url)}
+                    {needsProfilePath(linkPreview.kind, linkPreview.url) && (
+                      <span className="text-warning">
+                        {" "}
+                        Tip: add your /in/username so the link opens your profile.
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  linkPreview.error
+                )}
+              </p>
+            )}
+            {linkError && <p className="text-[9px] text-danger leading-snug">{linkError}</p>}
+          </form>
+
+          {profileLinks.length === 0 ? (
+            <div className="space-y-2">
+              <p className="text-[9px] text-foreground-muted text-center py-1">
+                Nothing saved yet. Quick-fill a common one:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {LINK_SUGGESTIONS.map((s) => (
+                  <button
+                    key={s.kind}
+                    type="button"
+                    onClick={() => {
+                      setLinkInput(s.placeholder);
+                      setLinkError(null);
+                    }}
+                    className="text-[9px] font-bold px-2 py-1 bg-surface-raised border border-border rounded-lg text-foreground-muted hover:text-primary hover:border-primary/40 transition-colors"
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              <AnimatePresence initial={false}>
+                {profileLinks.map((link) => (
+                  <motion.div
+                    key={link.id}
+                    layout
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="p-2.5 bg-background border border-border rounded-xl flex items-center gap-2"
+                  >
+                    <span
+                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-surface-raised border border-border whitespace-nowrap ${kindAccent(
+                        link.kind
+                      )}`}
+                    >
+                      {link.label || kindLabel(link.kind)}
+                    </span>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open in a new tab"
+                      className="flex-1 min-w-0 text-[10px] text-foreground hover:text-primary transition-colors truncate flex items-center gap-1"
+                    >
+                      <span className="truncate">{displayUrl(link.url)}</span>
+                      <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 opacity-50" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(link)}
+                      title="Copy link"
+                      className="p-1 text-foreground-muted hover:text-primary rounded-lg transition-colors"
+                    >
+                      {copiedLinkId === link.id ? (
+                        <Check className="w-3 h-3 text-success" />
+                      ) : (
+                        <Copy className="w-3 h-3" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveLink(link.id)}
+                      disabled={deletingLinkId === link.id}
+                      title="Remove this link"
+                      className="p-1 text-foreground-muted hover:text-danger rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {deletingLinkId === link.id ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3 h-3" />
+                      )}
+                    </button>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
         </motion.div>
 
         {/* Documents Grid */}

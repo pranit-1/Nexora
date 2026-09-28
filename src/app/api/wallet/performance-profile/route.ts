@@ -4,7 +4,8 @@ import { AIRouterService } from "@/lib/aiProviders";
 import { computePerformanceProfile, bandLabel, ENGINE_VERSION } from "@/lib/wallet/performanceProfile";
 import { describeInsights } from "@/lib/wallet/documentInsights";
 import { normalizeCategory } from "@/lib/wallet/categories";
-import type { PerformanceProfile, PerformanceSnapshot, WalletDocument } from "@/lib/types";
+import { parseProfileLink } from "@/lib/profileLinks";
+import type { PerformanceProfile, PerformanceSnapshot, ProfileLink, WalletDocument } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -22,17 +23,25 @@ export const dynamic = "force-dynamic";
 
 const TRACKER_PATH = (uid: string) => `users/${uid}/tracker/performance`;
 
-function fingerprintOf(docs: WalletDocument[]): string {
-  return docs
+function fingerprintOf(docs: WalletDocument[], links: ProfileLink[]): string {
+  const docPart = docs
     .map((d) => `${d.id}:${d.category}:${d.categoryUpdatedAt || d.uploadedAt}:${d.categoryNeedsReview ? 1 : 0}`)
     .sort()
     .join("|");
+  const linkPart = links
+    .map((l) => `${l.id}:${l.url}`)
+    .sort()
+    .join("|");
+  return `${docPart}#${linkPart}`;
 }
 
 /** Compact, token-cheap evidence digest handed to the model. */
 function buildDigest(profile: PerformanceProfile, docs: WalletDocument[]): string {
   const lines: string[] = [];
   lines.push(`Composite score: ${profile.overall}/100 (potential ${profile.potential}/100, coverage ${profile.coverage}%, ${profile.docCount} documents).`);
+  if (profile.profileLinks?.length) {
+    lines.push(`Public profile links the user saved: ${profile.profileLinks.map((l) => `${l.label || l.kind} ${l.url}`).join("; ")}`);
+  }
   for (const d of profile.dimensions) {
     if (d.missing) {
       lines.push(`- ${d.label}: NO EVIDENCE YET (weight ${d.weight})`);
@@ -104,11 +113,30 @@ async function loadDocs(db: ReturnType<typeof getAdminDb>, uid: string): Promise
   });
 }
 
+async function loadLinks(db: ReturnType<typeof getAdminDb>, uid: string): Promise<ProfileLink[]> {
+  const snap = await db.collection(`users/${uid}/profileLinks`).get();
+  return snap.docs
+    .map((d) => {
+      const data = d.data() as Partial<ProfileLink>;
+      const parsed = data.url ? parseProfileLink(data.url) : null;
+      return {
+        id: d.id,
+        url: parsed?.ok ? parsed.url : String(data.url || ""),
+        kind: data.kind || parsed?.kind || "other",
+        label: (typeof data.label === "string" && data.label.trim()) || parsed?.label,
+        addedAt: typeof data.addedAt === "string" ? data.addedAt : undefined,
+        origin: data.origin === "document" ? "document" : "manual",
+      } as ProfileLink;
+    })
+    .filter((l) => l.url);
+}
+
 async function build(uid: string, refreshNarrative: boolean, force: boolean) {
   const db = getAdminDb();
   const docs = await loadDocs(db, uid);
-  const profile = computePerformanceProfile(docs);
-  const fingerprint = fingerprintOf(docs);
+  const links = await loadLinks(db, uid);
+  const profile = computePerformanceProfile(docs, links);
+  const fingerprint = fingerprintOf(docs, links);
 
   const ref = db.doc(TRACKER_PATH(uid));
   const cached = (await ref.get()).data() as PerformanceSnapshot | undefined;

@@ -14,11 +14,14 @@ import {
   ArrowRight,
   Sparkles,
   Target,
+  Link2,
+  ExternalLink,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { fetchPerformanceProfile, refreshPerformanceProfile } from "@/lib/performanceProfileClient";
 import { bandLabel } from "@/lib/wallet/performanceProfile";
 import { WALLET_CATEGORIES } from "@/lib/wallet/categories";
+import { kindLabel } from "@/lib/profileLinks";
 import type { PerformanceBand, PerformanceSnapshot } from "@/lib/types";
 
 const BAND_STYLES: Record<PerformanceBand, { ring: string; text: string; chip: string }> = {
@@ -342,6 +345,36 @@ export default function PerformancePage() {
               </Link>
             </div>
           </div>
+
+          {/* Saved public profile links */}
+          {profile.profileLinks && profile.profileLinks.length > 0 && (
+            <div className="p-5 bg-surface border border-border rounded-2xl">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
+                <Link2 className="w-4 h-4" /> Your public profiles
+              </h3>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {profile.profileLinks.map((l) => (
+                  <a
+                    key={l.id}
+                    href={l.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 text-xs font-semibold border rounded-full bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+                  >
+                    {l.label || kindLabel(l.kind)}
+                    <ExternalLink className="w-3 h-3 opacity-70" />
+                  </a>
+                ))}
+              </div>
+              <p className="text-[10px] text-foreground-muted mt-3">
+                These count as verified evidence toward Application Readiness. Manage them in the{" "}
+                <Link href="/dashboard/wallet" className="text-primary font-semibold hover:underline">
+                  wallet
+                </Link>
+                .
+              </p>
+            </div>
+          )}
 
           {/* Where the documents live */}
           <div className="p-5 bg-surface border border-border rounded-2xl">

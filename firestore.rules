@@ -116,6 +116,10 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
     }
 
+    match /users/{uid}/profileLinks/{linkId} {
+      allow read, write: if isOwner(uid);
+    }
+
     match /chat_history/{uid} {
       allow read, write: if isOwner(uid);
     }

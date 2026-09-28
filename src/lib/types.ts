@@ -80,6 +80,21 @@ export type PerformanceDimensionKey =
 
 export type PerformanceBand = "strong" | "solid" | "developing" | "early" | "empty";
 
+/** How a saved public link is treated by the score and the UI. */
+export type ProfileLinkKind = "linkedin" | "github" | "portfolio" | "social" | "website" | "other";
+
+/** A public profile URL the user saved by hand — LinkedIn, GitHub, anything. */
+export interface ProfileLink {
+  id: string;
+  url: string;
+  kind: ProfileLinkKind;
+  /** Shown in the list. Defaults to the kind's name, e.g. "LinkedIn". */
+  label?: string;
+  addedAt?: string;
+  /** Where it came from: typed by the user, or read out of an uploaded document. */
+  origin?: "manual" | "document";
+}
+
 export interface PerformanceDimension {
   key: PerformanceDimensionKey;
   label: string;
@@ -112,6 +127,8 @@ export interface PerformanceProfile {
   categoryCounts: Partial<Record<WalletCategory, number>>;
   /** Documents that still need the user to confirm their category. */
   needsReviewCount: number;
+  /** The user's saved public profile links, mirrored into the snapshot. */
+  profileLinks?: ProfileLink[];
   computedAt: string;
   engineVersion: number;
 }

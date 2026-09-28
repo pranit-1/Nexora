@@ -4,9 +4,11 @@ import type {
   PerformanceDimension,
   PerformanceDimensionKey,
   PerformanceProfile,
+  ProfileLink,
   WalletCategory,
   WalletDocument,
 } from "@/lib/types";
+import { kindLabel } from "@/lib/profileLinks";
 
 /**
  * The performance engine.
@@ -233,7 +235,7 @@ function scoreProjects(docs: WalletDocument[]): PerformanceDimension {
   return { key: "projects", ...meta, score: clamp(score), docCount: projects.length, missing: false, evidence, notes };
 }
 
-function scoreReadiness(docs: WalletDocument[], needsReviewCount: number): PerformanceDimension {
+function scoreReadiness(docs: WalletDocument[], needsReviewCount: number, links: ProfileLink[]): PerformanceDimension {
   const meta = DIMENSION_META.readiness;
   const resumes = byCategory(docs, "Resume");
   const evidence: string[] = [];
@@ -264,15 +266,27 @@ function scoreReadiness(docs: WalletDocument[], needsReviewCount: number): Perfo
     } else {
       notes.push("No contact details found in the resume text.");
     }
-    const links = resumes.some((d) => (insightOf(d)?.links || []).length > 0);
-    if (links) {
+    const inResume = resumes.some((d) => (insightOf(d)?.links || []).length > 0);
+    if (inResume || links.length) {
       score += 12;
       evidence.push("Links to portfolio / profiles found");
     } else {
-      notes.push("No portfolio, GitHub or LinkedIn link in the resume.");
+      notes.push("No portfolio, GitHub or LinkedIn link saved.");
     }
   } else {
     notes.push("No resume in the wallet — this is the highest-impact gap.");
+  }
+
+  // Saved public profiles count on their own: a LinkedIn the user curated by
+  // hand is stronger evidence than a bare URL buried in a resume PDF.
+  if (links.length) {
+    const kinds = new Set(links.map((l) => l.kind));
+    score += Math.min(14, 7 * kinds.size);
+    evidence.push(
+      kinds.size === 1
+        ? `${links.length} public profile link${links.length > 1 ? "s" : ""} saved`
+        : `${links.length} public profile links saved (${[...kinds].map((k) => kindLabel(k)).join(", ")})`
+    );
   }
 
   if (needsReviewCount === 0) {
@@ -357,8 +371,9 @@ function buildNarrative(
  * Turn a wallet into a scored, explainable performance profile.
  * Deterministic: same documents always produce the same numbers.
  */
-export function computePerformanceProfile(docs: WalletDocument[]): PerformanceProfile {
+export function computePerformanceProfile(docs: WalletDocument[], profileLinks: ProfileLink[] = []): PerformanceProfile {
   const valid = (docs || []).filter((d) => d && d.id);
+  const links = (profileLinks || []).filter((l) => l && l.url);
   const needsReviewCount = valid.filter((d) => d.categoryNeedsReview).length;
 
   const categoryCounts: Partial<Record<WalletCategory, number>> = {};
@@ -371,7 +386,7 @@ export function computePerformanceProfile(docs: WalletDocument[]): PerformancePr
     scoreCredentials(valid),
     scoreRecognition(valid),
     scoreProjects(valid),
-    scoreReadiness(valid, needsReviewCount),
+    scoreReadiness(valid, needsReviewCount, links),
   ];
 
   const present = dimensions.filter((d) => !d.missing);
@@ -400,14 +415,17 @@ export function computePerformanceProfile(docs: WalletDocument[]): PerformancePr
   const gaps: string[] = [];
   const nextSteps: string[] = [];
   const hasResume = valid.some((d) => d.category === "Resume");
+  const hasLinks = links.length > 0;
   const ADD_MORE: Record<PerformanceDimensionKey, string> = {
     academics: "Add another marksheet or transcript",
     credentials: "Add another certificate",
     recognition: "Add another award or appreciation letter",
     projects: "Add another project, ideally with a repo or demo link",
-    readiness: hasResume
-      ? "Add your email, phone number and profile links to the resume so it can be read automatically"
-      : "Upload your resume",
+    readiness: !hasResume
+      ? "Upload your resume"
+      : !hasLinks
+      ? "Save your public profile links in the wallet (LinkedIn, GitHub, portfolio)"
+      : "Add your email, phone number and profile links to the resume so it can be read automatically",
   };
   for (const d of dimensions) {
     if (d.missing) {
@@ -440,6 +458,7 @@ export function computePerformanceProfile(docs: WalletDocument[]): PerformancePr
     narrative: buildNarrative(overall, band, coverage, potential, dimensions, valid.length),
     categoryCounts,
     needsReviewCount,
+    profileLinks: links,
     computedAt: new Date().toISOString(),
     engineVersion: ENGINE_VERSION,
   };
