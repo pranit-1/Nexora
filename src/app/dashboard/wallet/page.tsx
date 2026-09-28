@@ -3,7 +3,8 @@
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { collection, query, where, addDoc, deleteDoc, updateDoc, doc, onSnapshot } from "firebase/firestore";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import Link from "next/link";
 import {
   Wallet,
   FileText,
@@ -15,6 +16,7 @@ import {
   X,
   CheckCircle2,
   RefreshCw,
+  Gauge,
 } from "lucide-react";
 import type { WalletDocument, WalletCategory } from "@/lib/types";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
@@ -28,6 +30,12 @@ import {
   type CategorySource,
   type ClassificationResult,
 } from "@/lib/wallet/documentClassifier";
+import { extractInsights } from "@/lib/wallet/documentInsights";
+import { computePerformanceProfile } from "@/lib/wallet/performanceProfile";
+import { refreshPerformanceProfile } from "@/lib/performanceProfileClient";
+
+/** How much of a document's text we keep — feeds the performance profile. */
+const STORED_TEXT_CHARS = 3000;
 
 /* ── Animation Variants ─────────────────────────────────────── */
 const containerVariants: Variants = {
@@ -97,6 +105,8 @@ export default function WalletPage() {
     confidence?: number;
     reason?: string;
     needsReview?: boolean;
+    /** Text read from the file, stored with the document for scoring. */
+    text?: string;
   }
   const [fileQueue, setFileQueue] = useState<QueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -174,6 +184,7 @@ export default function WalletPage() {
                   confidence: result.confidence,
                   reason: result.reason,
                   needsReview: result.needsReview,
+                  text: text.slice(0, STORED_TEXT_CHARS),
                 }
               : q
           )
@@ -252,6 +263,8 @@ export default function WalletPage() {
         const filePath = data.public_id;
 
         const now = new Date().toISOString();
+        // Facts parsed out of the text are what the performance engine scores on.
+        const insights = extractInsights(item.text || "", item.category, item.name);
         const newDoc = {
           uid: currentUser.uid,
           name: item.name.trim() || item.file.name,
@@ -266,6 +279,8 @@ export default function WalletPage() {
           categoryReason: item.manual ? "Set manually before upload" : item.reason || "",
           categoryNeedsReview: item.manual ? false : !!item.needsReview,
           categoryUpdatedAt: now,
+          extractedText: (item.text || "").slice(0, STORED_TEXT_CHARS),
+          insights,
         };
 
         await addDoc(collection(db, "wallet"), newDoc);
@@ -279,6 +294,9 @@ export default function WalletPage() {
     setUploading(false);
     setUploadProgress(null);
     setFileQueue([]);
+
+    // More documents = more facts, so rebuild the score immediately.
+    if (successCount > 0) await refreshPerformanceProfile(currentUser.uid);
   };
 
   const handleDelete = async (id: string) => {
@@ -332,6 +350,7 @@ export default function WalletPage() {
     try {
       setUpdatingCatId(docId);
       // Marking it manual locks it: auto re-scan will never move this document again.
+      const target = documents.find((d) => d.id === docId);
       await updateDoc(doc(db, "wallet", docId), {
         category: newCategory,
         categorySource: "manual",
@@ -339,7 +358,12 @@ export default function WalletPage() {
         categoryReason: "Set manually",
         categoryNeedsReview: false,
         categoryUpdatedAt: new Date().toISOString(),
+        // Re-parse the facts against the new category so scores update too.
+        ...(target?.extractedText
+          ? { insights: extractInsights(target.extractedText, newCategory, target.name) }
+          : {}),
       });
+      if (currentUser) await refreshPerformanceProfile(currentUser.uid);
     } catch (err) {
       console.error("Failed to update category:", err);
       alert("Failed to update document category.");
@@ -356,6 +380,7 @@ export default function WalletPage() {
         categorySource: "auto",
         categoryUpdatedAt: new Date().toISOString(),
       });
+      if (currentUser) await refreshPerformanceProfile(currentUser.uid);
     } catch (err) {
       console.error("Failed to unlock category:", err);
       alert("Failed to unlock this document.");
@@ -365,7 +390,8 @@ export default function WalletPage() {
   };
 
   const handleRescanAll = async () => {
-    if (documents.length === 0 || rescanning) return;
+    if (documents.length === 0 || rescanning || !currentUser) return;
+    const uid = currentUser.uid;
     setRescanning(true);
     let updatedCount = 0;
     let skippedCount = 0;
@@ -410,6 +436,11 @@ export default function WalletPage() {
           categoryUpdatedAt: new Date().toISOString(),
         };
         if (result.category !== d.category) patch.category = result.category;
+        // Refresh the facts too, so the profile reflects the new category.
+        if (result.text) {
+          patch.extractedText = result.text.slice(0, STORED_TEXT_CHARS);
+          patch.insights = extractInsights(result.text, result.category, d.name);
+        }
 
         await updateDoc(doc(db, "wallet", d.id), patch);
         if (result.category !== d.category) updatedCount++;
@@ -417,6 +448,8 @@ export default function WalletPage() {
         // Small pause so AI-backed scans do not hammer the provider.
         await new Promise((r) => setTimeout(r, 250));
       }
+
+      await refreshPerformanceProfile(uid, { refreshNarrative: updatedCount > 0 });
 
       const parts = [
         updatedCount > 0 ? `${updatedCount} moved to a new category` : "No categories changed",
@@ -439,6 +472,10 @@ export default function WalletPage() {
     activeTab === "All" ? documents : documents.filter((d) => d.category === activeTab);
 
   const totalSizeKB = Math.round(documents.reduce((acc, d) => acc + d.sizeBytes, 0) / 1024);
+
+  // Live preview of the score the wallet is currently producing. The persisted
+  // snapshot (with the AI narrative) lives on the performance page.
+  const liveProfile = useMemo(() => computePerformanceProfile(documents), [documents]);
 
   /* ── Loading ──────────────────────────────────────────────── */
   if (loading) {
@@ -489,6 +526,21 @@ export default function WalletPage() {
                 </p>
               </motion.div>
             ))}
+
+            {/* Live performance link — the wallet and the score stay in sync */}
+            {documents.length > 0 && (
+              <Link
+                href="/dashboard/performance"
+                title="Your performance profile is calculated from these documents"
+                className="px-4 py-2 bg-success/10 hover:bg-success/20 text-success border border-success/20 rounded-2xl text-center shadow-sm transition-colors"
+              >
+                <p className="text-[10px] uppercase font-bold tracking-wider">Performance</p>
+                <p className="text-lg font-extrabold">
+                  {liveProfile.overall}
+                  <span className="text-[10px] font-bold">/100</span>
+                </p>
+              </Link>
+            )}
           </div>
 
           {/* Re-Scan existing button */}

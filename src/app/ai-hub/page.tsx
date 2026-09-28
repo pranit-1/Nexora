@@ -24,8 +24,10 @@ import {
   Zap,
   TrendingUp,
   UploadCloud,
+  ArrowRight,
   X
 } from "lucide-react";
+import { fetchPerformanceProfile } from "@/lib/performanceProfileClient";
 
 export default function AIHub() {
   const { currentUser, loading: authLoading } = useAuth();
@@ -882,6 +884,7 @@ function AnalyticsTab() {
     profileCompletion: 0,
     resumeScanScore: 0,
     interviewSessionCount: 0,
+    performanceScore: 0,
   });
   const [summary, setSummary] = useState("");
 
@@ -928,6 +931,8 @@ function AnalyticsTab() {
         // No resume analyzed yet == no score, not a fake placeholder number.
         resumeScanScore: latestATS ?? 0,
         interviewSessionCount: interviewCount,
+        // Real document-backed score from the wallet. 0 when the wallet is empty.
+        performanceScore: (await fetchPerformanceProfile(currentUser.uid))?.overall ?? 0,
       };
 
       setStats(currentStats);
@@ -966,18 +971,32 @@ function AnalyticsTab() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Profile Integrity", value: `${stats.profileCompletion}%` },
-          { label: "Latest ATS Score", value: `${stats.resumeScanScore}/100` },
-          { label: "Practice Interviews", value: stats.interviewSessionCount },
-        ].map((stat, idx) => (
-          <div key={idx} className="bg-surface-raised border border-border p-4 rounded-2xl">
-            <span className="block text-[9px] font-bold uppercase text-foreground-muted">{stat.label}</span>
-            <span className="text-lg font-black text-foreground mt-1 block">{stat.value}</span>
-          </div>
-        ))}
-      </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label: "Profile Integrity", value: `${stats.profileCompletion}%` },
+            { label: "Latest ATS Score", value: `${stats.resumeScanScore}/100` },
+            { label: "Document Performance", value: `${stats.performanceScore}/100` },
+            { label: "Practice Interviews", value: stats.interviewSessionCount },
+          ].map((stat, idx) => (
+            <div key={idx} className="bg-surface-raised border border-border p-4 rounded-2xl">
+              <span className="block text-[9px] font-bold uppercase text-foreground-muted">{stat.label}</span>
+              <span className="text-lg font-black text-foreground mt-1 block">{stat.value}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 p-4 bg-surface border border-border rounded-2xl flex-wrap">
+          <p className="text-xs text-foreground-muted">
+            Document Performance is calculated from your wallet documents — marksheets, certificates, awards,
+            projects and resume. Add more documents and it moves on its own.
+          </p>
+          <Link
+            href="/dashboard/performance"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+          >
+            Open performance profile <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
 
       <div className="p-5 bg-primary/30 border border-primary/10 rounded-2xl flex flex-col md:flex-row items-start gap-4">
         <div className="p-3 bg-surface rounded-2xl border border-primary/10 text-primary shadow-sm">

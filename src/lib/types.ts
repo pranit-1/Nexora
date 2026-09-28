@@ -31,6 +31,97 @@ export interface WalletDocument {
   /** Set when classification was weak, so the UI can flag it for review. */
   categoryNeedsReview?: boolean;
   categoryUpdatedAt?: string;
+  /** First slice of the file's real text. The performance engine reads from here. */
+  extractedText?: string;
+  /** Structured facts parsed out of the text (GPA, issuer, skills, year, ...). */
+  insights?: DocumentInsights;
+}
+
+// ─── DOCUMENT INSIGHTS ─────────────────────────────────────────────────────
+
+/** Facts pulled out of a single document's text. Every field is optional. */
+export interface DocumentInsights {
+  institution?: string;
+  issuer?: string;
+  /** Normalised to 0-100 so scores are comparable across grading scales. */
+  gpa?: number;
+  gpaRaw?: string;
+  percentage?: number;
+  rollNumber?: string;
+  graduationYear?: number;
+  documentDate?: string;
+  field?: string;
+  skills: string[];
+  technologies: string[];
+  languages: string[];
+  orgType?: "government" | "academic" | "ngo" | "private" | "unknown";
+  isGovtId?: boolean;
+  awardLevel?: "international" | "national" | "state" | "university" | "college";
+  contactEmail?: string;
+  contactPhone?: string;
+  links: string[];
+  keywords: string[];
+}
+
+// ─── PERFORMANCE PROFILE ───────────────────────────────────────────────────
+
+/**
+ * Each dimension is scored 0-100 from the wallet documents that back it.
+ * A dimension with no documents at all is reported as `missing` and left out
+ * of the weighted average — it lowers `coverage` instead of dragging the score
+ * down, and it is listed in `gaps` so the user knows exactly what to upload.
+ */
+export type PerformanceDimensionKey =
+  | "academics"
+  | "credentials"
+  | "recognition"
+  | "projects"
+  | "readiness";
+
+export type PerformanceBand = "strong" | "solid" | "developing" | "early" | "empty";
+
+export interface PerformanceDimension {
+  key: PerformanceDimensionKey;
+  label: string;
+  score: number;
+  weight: number;
+  /** How many wallet documents fed this dimension. */
+  docCount: number;
+  /** True when no document supports this dimension yet. */
+  missing: boolean;
+  evidence: string[];
+  notes: string[];
+}
+
+export interface PerformanceProfile {
+  /** Weighted score across the dimensions that have evidence. 0 when empty. */
+  overall: number;
+  /** What the score would become if every missing dimension were filled. */
+  potential: number;
+  band: PerformanceBand;
+  /** Share of dimensions that actually have documents behind them (0-100). */
+  coverage: number;
+  docCount: number;
+  dimensions: PerformanceDimension[];
+  strengths: string[];
+  gaps: string[];
+  nextSteps: string[];
+  /** LLM-written read of the numbers. Falls back to a rule-built summary. */
+  narrative: string;
+  /** Category histogram, so the UI can show where the documents live. */
+  categoryCounts: Partial<Record<WalletCategory, number>>;
+  /** Documents that still need the user to confirm their category. */
+  needsReviewCount: number;
+  computedAt: string;
+  engineVersion: number;
+}
+
+/** The persisted snapshot at users/{uid}/tracker/performance. */
+export interface PerformanceSnapshot extends PerformanceProfile {
+  uid: string;
+  /** Changes whenever any document's category or review flag changes. */
+  fingerprint?: string;
+  bandLabel?: string;
 }
 
 // ─── CALENDAR ──────────────────────────────────────────────────────

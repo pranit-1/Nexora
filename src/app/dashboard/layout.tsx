@@ -17,6 +17,7 @@ import {
   X,
   Sparkles,
   ArrowLeft,
+  Gauge,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 
@@ -33,6 +34,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navigation = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Opportunity Wallet", href: "/dashboard/wallet", icon: Wallet },
+    { name: "Performance", href: "/dashboard/performance", icon: Gauge },
     { name: "Calendar Hub", href: "/dashboard/calendar", icon: CalendarIcon },
     { name: "AI Career Hub", href: "/ai-hub", icon: Sparkles },
     {
