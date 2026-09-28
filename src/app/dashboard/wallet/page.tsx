@@ -122,11 +122,8 @@ export default function WalletPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  // Every file gets its own LLM call (most accurate). Turn off to classify
-  // offline with the built-in content rules only.
-  const [useAIForScan, setUseAIForScan] = useState(true);
 
-  // AI Analysis state
+  // AI Analysis state (removed per-file LLM review)
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [aiReport, setAiReport] = useState<Record<string, string>>({});
 
@@ -199,8 +196,8 @@ export default function WalletPage() {
           imageDataUrl,
           mimeType: item.file.type,
           name: item.file.name,
-          useAI: useAIForScan,
-          preferAI: useAIForScan,
+          useAI: false,
+          preferAI: false,
         });
 
         setFileQueue((prev) =>
@@ -443,14 +440,14 @@ export default function WalletPage() {
           continue;
         }
 
-        // Re-read the stored file, then let the LLM categorise it on its own.
+        // Re-read the stored file and classify from content (no LLM).
         const result = await classifyRemoteDocument(
           {
             url: d.downloadURL,
             name: d.name,
             mimeType: d.mimeType,
           },
-          { useAI: useAIForScan, preferAI: useAIForScan }
+          { useAI: false, preferAI: false }
         );
 
         if (result.source === "unknown") {
@@ -715,22 +712,6 @@ export default function WalletPage() {
               </label>
             </motion.div>
 
-            {/* AI classification toggle */}
-            <label className="flex items-start gap-2 p-2.5 bg-surface-raised border border-border rounded-xl cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={useAIForScan}
-                onChange={(e) => setUseAIForScan(e.target.checked)}
-                className="mt-0.5 accent-[var(--primary)]"
-                disabled={uploading || rescanning}
-              />
-              <span className="text-[10px] leading-snug text-foreground-muted">
-                <span className="font-bold text-foreground">Read every file with AI</span> — each
-                file&apos;s contents are sent to the LLM one by one, and it decides the category.
-                Turn off for instant offline matching.
-              </span>
-            </label>
-
             {/* Queue Preview List */}
             {fileQueue.length > 0 && (              <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -797,7 +778,7 @@ export default function WalletPage() {
                             {item.reading ? (
                               <span className="flex items-center gap-1 text-[9px] text-primary">
                                 <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                {useAIForScan ? "AI analyzing…" : "Reading file…"}
+                                Reading file…
                               </span>
                             ) : item.manual ? (
                               <span className="flex items-center gap-0.5 text-[9px] text-foreground-muted font-semibold" title="You set this category, it will be kept as-is">
