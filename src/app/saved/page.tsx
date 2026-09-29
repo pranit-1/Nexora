@@ -19,6 +19,11 @@ import {
   ChevronRight,
   Trash2,
   ExternalLink,
+  Bell,
+  Clock,
+  AlertTriangle,
+  CheckCircle2,
+  TrendingUp,
 } from "lucide-react";
 
 interface SavedItem {
@@ -35,6 +40,118 @@ interface SavedItem {
   applyLink?: string;
   sourceUrl?: string;
   _source?: string;
+}
+
+// ── Timeline helpers ────────────────────────────────────────────
+
+function daysUntil(dateStr?: string): number {
+  if (!dateStr) return -1;
+  const target = new Date(dateStr);
+  if (isNaN(target.getTime())) return -1;
+  const now = new Date();
+  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Returns how far along we are in the "tracking window" (0–100).
+ * Tracking window = 90 days before deadline.
+ */
+function deadlineProgress(dateStr?: string): number {
+  const days = daysUntil(dateStr);
+  if (days < 0) return 100;
+  const totalWindow = 90;
+  return Math.max(0, Math.min(100, Math.round(((totalWindow - days) / totalWindow) * 100)));
+}
+
+type UrgencyLevel = "expired" | "critical" | "urgent" | "approaching" | "safe";
+
+function getUrgency(days: number): UrgencyLevel {
+  if (days < 0) return "expired";
+  if (days <= 1) return "critical";
+  if (days <= 3) return "urgent";
+  if (days <= 7) return "approaching";
+  return "safe";
+}
+
+const urgencyConfig: Record<
+  UrgencyLevel,
+  { label: string; bar: string; badge: string; text: string; icon: React.ReactNode }
+> = {
+  expired: {
+    label: "Expired",
+    bar: "bg-gray-400",
+    badge: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+    text: "text-gray-400",
+    icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+  },
+  critical: {
+    label: "Last Day!",
+    bar: "bg-red-500",
+    badge: "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400",
+    text: "text-red-500",
+    icon: <AlertTriangle className="w-3.5 h-3.5" />,
+  },
+  urgent: {
+    label: "Urgent",
+    bar: "bg-orange-500",
+    badge: "bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400",
+    text: "text-orange-500",
+    icon: <AlertTriangle className="w-3.5 h-3.5" />,
+  },
+  approaching: {
+    label: "Approaching",
+    bar: "bg-amber-400",
+    badge: "bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400",
+    text: "text-amber-500",
+    icon: <Clock className="w-3.5 h-3.5" />,
+  },
+  safe: {
+    label: "On Track",
+    bar: "bg-emerald-500",
+    badge: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400",
+    text: "text-emerald-500",
+    icon: <TrendingUp className="w-3.5 h-3.5" />,
+  },
+};
+
+function DeadlineTimeline({ deadline }: { deadline?: string }) {
+  const days = daysUntil(deadline);
+  const progress = deadlineProgress(deadline);
+  const urgency = getUrgency(days);
+  const cfg = urgencyConfig[urgency];
+
+  const dayLabel =
+    days < 0
+      ? "Deadline passed"
+      : days === 0
+      ? "Today!"
+      : days === 1
+      ? "1 day left"
+      : `${days} days left`;
+
+  return (
+    <div className="mt-4 space-y-1.5">
+      {/* Bar */}
+      <div className="relative h-1.5 w-full bg-surface-raised rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${cfg.bar}`}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      {/* Labels row */}
+      <div className="flex items-center justify-between text-[10px]">
+        <span className={`flex items-center gap-1 font-bold ${cfg.text}`}>
+          {cfg.icon} {dayLabel}
+        </span>
+        <span
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[9px] uppercase tracking-wide ${cfg.badge}`}
+        >
+          {cfg.label}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export default function SavedOpportunities() {
@@ -108,6 +225,26 @@ export default function SavedOpportunities() {
     }
   };
 
+  // Sort by urgency: most urgent first
+  const sortedItems = [...savedItems].sort((a, b) => {
+    const da = daysUntil(a.deadline);
+    const db_ = daysUntil(b.deadline);
+    // Expired at the bottom
+    if (da < 0 && db_ >= 0) return 1;
+    if (db_ < 0 && da >= 0) return -1;
+    if (da < 0 && db_ < 0) return 0;
+    return da - db_;
+  });
+
+  // Stats
+  const totalSaved = savedItems.length;
+  const criticalCount = savedItems.filter((i) => {
+    const d = daysUntil(i.deadline);
+    return d >= 0 && d <= 3;
+  }).length;
+  const expiredCount = savedItems.filter((i) => daysUntil(i.deadline) < 0).length;
+  const activeCount = totalSaved - expiredCount;
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background transition-colors duration-300">
@@ -123,7 +260,7 @@ export default function SavedOpportunities() {
       <main className="flex-grow bg-background min-h-screen py-12 px-4 sm:px-6 lg:px-8 transition-colors duration-300">
         <div className="max-w-5xl mx-auto">
           {/* Header */}
-          <div className="mb-10">
+          <div className="mb-8">
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-primary">
               <Bookmark className="w-3.5 h-3.5" /> Saved Collection
             </span>
@@ -131,77 +268,121 @@ export default function SavedOpportunities() {
               Your Bookmarked Opportunities
             </h1>
             <p className="text-sm text-foreground-muted mt-1">
-              {savedItems.length > 0
-                ? `${savedItems.length} opportunity${savedItems.length !== 1 ? "ies" : "y"} saved to your collection.`
+              {totalSaved > 0
+                ? `${totalSaved} opportunit${totalSaved !== 1 ? "ies" : "y"} saved — sorted by deadline urgency.`
                 : "Your bookmarked opportunities will appear here."}
             </p>
           </div>
 
+          {/* Stats strip */}
+          {totalSaved > 0 && (
+            <div className="grid grid-cols-3 gap-4 mb-8">
+              <div className="bg-surface border border-border rounded-2xl p-4 text-center">
+                <p className="text-2xl font-extrabold text-foreground">{activeCount}</p>
+                <p className="text-[11px] text-foreground-muted font-semibold mt-0.5 uppercase tracking-wide">Active</p>
+              </div>
+              <div className={`bg-surface border rounded-2xl p-4 text-center ${criticalCount > 0 ? "border-red-300 dark:border-red-800" : "border-border"}`}>
+                <p className={`text-2xl font-extrabold ${criticalCount > 0 ? "text-red-500" : "text-foreground"}`}>
+                  {criticalCount}
+                </p>
+                <p className="text-[11px] text-foreground-muted font-semibold mt-0.5 uppercase tracking-wide">Critical (≤3d)</p>
+              </div>
+              <div className="bg-surface border border-border rounded-2xl p-4 text-center">
+                <p className="text-2xl font-extrabold text-foreground-muted">{expiredCount}</p>
+                <p className="text-[11px] text-foreground-muted font-semibold mt-0.5 uppercase tracking-wide">Expired</p>
+              </div>
+            </div>
+          )}
+
           {/* Grid */}
-          {savedItems.length > 0 ? (
+          {sortedItems.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {savedItems.map((opp) => {
+              {sortedItems.map((opp) => {
                 const applyLink: string = (opp as any).applyLink || "";
                 const liveOpp = (opp as any)._source || false;
+                const days = daysUntil(opp.deadline);
+                const urgency = getUrgency(days);
+                const isExpired = urgency === "expired";
+
                 return (
-                <div
-                  key={opp.id}
-                  className="bg-surface border border-border rounded-3xl p-6 shadow-sm hover:shadow-md dark:hover:shadow-[0_4px_20px_rgba(255,60,110,0.12)] hover:border-primary/25 transition-all flex flex-col justify-between group card-hover"
-                >
-                  <div>
-                    {/* Header */}
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full">
-                          {opp.category || "Opportunity"}
-                        </span>
-                        {liveOpp && (<span className="text-[10px] text-foreground-muted font-medium">{opp._source}</span>)}
+                  <div
+                    key={opp.id}
+                    className={`bg-surface border rounded-3xl p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between group card-hover ${
+                      urgency === "critical"
+                        ? "border-red-300 dark:border-red-800/60 dark:hover:shadow-[0_4px_20px_rgba(239,68,68,0.15)]"
+                        : urgency === "urgent"
+                        ? "border-orange-300 dark:border-orange-800/60"
+                        : "border-border hover:border-primary/25 dark:hover:shadow-[0_4px_20px_rgba(255,60,110,0.12)]"
+                    } ${isExpired ? "opacity-60" : ""}`}
+                  >
+                    <div>
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full">
+                            {opp.category || "Opportunity"}
+                          </span>
+                          {liveOpp && (<span className="text-[10px] text-foreground-muted font-medium">{opp._source}</span>)}
+                        </div>
+                        <button
+                          onClick={() => removeBookmark(opp.id)}
+                          className="p-1.5 rounded-full text-foreground-muted hover:text-red-500 hover:bg-red-500/10 transition-all flex-shrink-0"
+                          title="Remove Bookmark"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => removeBookmark(opp.id)}
-                        className="p-1.5 rounded-full text-foreground-muted hover:text-danger hover:bg-danger-surface transition-all"
-                        title="Remove Bookmark"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+
+                      {/* Title */}
+                      <h3 className="font-bold text-foreground text-base leading-snug group-hover:text-primary transition-colors">
+                        {applyLink ? <a href={applyLink} target="_blank" rel="noopener noreferrer">{opp.title}</a> : <span>{opp.title}</span>}
+                      </h3>
+                      <p className="text-foreground-muted text-xs mt-1 font-medium">{opp.organization || opp.orgName}</p>
+
+                      {/* Description */}
+                      <p className="text-foreground-muted text-xs mt-4 leading-relaxed line-clamp-2">
+                        {opp.description}
+                      </p>
+
+                      {/* ── Deadline Timeline ── */}
+                      <DeadlineTimeline deadline={opp.deadline} />
                     </div>
 
-                    {/* Title */}
-                    <h3 className="font-bold text-foreground text-base leading-snug group-hover:text-primary transition-colors">
-                      {applyLink ? <a href={applyLink} target="_blank" rel="noopener noreferrer">{opp.title}</a> : <span>{opp.title}</span>}
-                    </h3>
-                    <p className="text-foreground-muted text-xs mt-1 font-medium">{opp.organization || opp.orgName}</p>
+                    {/* Footer Metadata */}
+                    <div className="border-t border-border mt-5 pt-4 flex items-center justify-between text-[11px] text-foreground-muted">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5" />
+                          {opp.country || "—"}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5" />
+                          {formatDeadline(opp.deadline || "")}
+                        </span>
+                      </div>
 
-                    {/* Description */}
-                    <p className="text-foreground-muted text-xs mt-4 leading-relaxed line-clamp-2">
-                      {opp.description}
-                    </p>
-                  </div>
+                      <div className="flex items-center gap-2">
+                        {/* Notification reminder link */}
+                        <Link
+                          href="/dashboard/notifications"
+                          className="p-1.5 rounded-full text-foreground-muted hover:text-primary hover:bg-primary/10 transition-all"
+                          title="View notifications"
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                        </Link>
 
-                  {/* Footer Metadata */}
-                  <div className="border-t border-border mt-6 pt-4 flex items-center justify-between text-[11px] text-foreground-muted">
-                    <div className="flex items-center gap-4">
-                      <span className="flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5" />
-                        {opp.country}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5" />
-                        {formatDeadline(opp.deadline || "")}
-                      </span>
+                        {applyLink ? (
+                          <a href={applyLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary font-semibold hover:translate-x-0.5 transition-transform">
+                            Apply <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        ) : (
+                          <Link href={`/opportunity/${opp.id}`} className="flex items-center gap-0.5 text-primary font-semibold hover:translate-x-0.5 transition-transform">
+                            Details <ChevronRight className="w-3.5 h-3.5" />
+                          </Link>
+                        )}
+                      </div>
                     </div>
-
-                    {applyLink ? (
-                      <a href={applyLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-primary font-semibold hover:translate-x-0.5 transition-transform">
-                        Apply <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    ) : (
-                      <Link href={`/opportunity/${opp.id}`} className="flex items-center gap-0.5 text-primary font-semibold hover:translate-x-0.5 transition-transform">
-                        Details <ChevronRight className="w-3.5 h-3.5" />
-                      </Link>
-                    )}
                   </div>
-                </div>
                 );
               })}
             </div>

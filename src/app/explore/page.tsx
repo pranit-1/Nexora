@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
+import { seedOpportunityNotification } from "@/lib/automationEngine";
 
 const filterPanelVariants: Variants = {
   hidden: { opacity: 0, x: -16 },
@@ -318,6 +319,15 @@ function ExploreContent() {
           ...items.filter((it: any) => it?.id !== oppId),
           ...(resolved ? [toSnapshot(resolved)] : []),
         ];
+        // Fire save + deadline notifications for this newly bookmarked opportunity
+        if (resolved?.deadline && resolved?.title) {
+          seedOpportunityNotification(
+            currentUser.uid,
+            oppId,
+            resolved.title,
+            resolved.deadline
+          ).catch((e) => console.warn("Notification seed failed:", e));
+        }
       }
       await setDoc(docRef, { opportunityIds: nextIds, items: nextItems });
       setSavedIds(nextIds);

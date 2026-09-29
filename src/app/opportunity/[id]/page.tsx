@@ -33,6 +33,7 @@ import {
   Check
 } from "lucide-react";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
+import { seedOpportunityNotification } from "@/lib/automationEngine";
 
 /* ── Animation Variants ─────────────────────────────────────── */
 const pageVariants: Variants = {
@@ -133,7 +134,18 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
           opportunityIds: isSaved ? arrayRemove(id) : arrayUnion(id),
         });
       }
-      setIsSaved(!isSaved);
+      const nowSaved = !isSaved;
+      setIsSaved(nowSaved);
+
+      // Fire save + deadline notifications when newly bookmarked
+      if (nowSaved && opp?.deadline && opp?.title) {
+        seedOpportunityNotification(
+          currentUser.uid,
+          opp.id,
+          opp.title,
+          opp.deadline
+        ).catch((e) => console.warn("Notification seed failed:", e));
+      }
     } catch (error) {
       console.error("Bookmarking error:", error);
     }

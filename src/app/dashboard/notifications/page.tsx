@@ -4,7 +4,8 @@ import { useAuth } from "@/context/AuthContext";
 import { useNotifications } from "@/hooks/useNotifications";
 import { db } from "@/lib/firebase";
 import { doc, updateDoc, deleteDoc, writeBatch } from "firebase/firestore";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { refreshDeadlineAlerts } from "@/lib/automationEngine";
 import {
   Bell,
   Check,
@@ -24,6 +25,14 @@ export default function NotificationsPage() {
   const { currentUser } = useAuth();
   const { notifications, loading } = useNotifications(currentUser?.uid);
   const [filter, setFilter] = useState<string>("all");
+
+  // Refresh deadline milestone alerts every time the user opens this page
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    refreshDeadlineAlerts(currentUser.uid).catch((e) =>
+      console.warn("Deadline refresh failed:", e)
+    );
+  }, [currentUser?.uid]);
 
   const markAsRead = async (id: string) => {
     if (!currentUser) return;
