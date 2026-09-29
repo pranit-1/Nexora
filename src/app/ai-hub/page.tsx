@@ -118,112 +118,394 @@ export default function AIHub() {
 }
 
 /* ==========================================================================
-   TAB 1: OPPORTUNITY RECOMMENDATIONS (Matcher)
+   TAB 1: OPPORTUNITY RECOMMENDATIONS (Deep Multi-Signal Matcher)
    ========================================================================== */
+
+interface MatchSignal {
+  label: string;
+  points: number;
+  icon: string;
+}
+
+interface MatchResult {
+  opportunity: Opportunity;
+  score: number;
+  signals: MatchSignal[];
+}
+
+function ScoreBar({ score }: { score: number }) {
+  const color =
+    score >= 80 ? "bg-emerald-500" : score >= 60 ? "bg-primary" : "bg-amber-500";
+  return (
+    <div className="w-full h-1.5 rounded-full bg-border/40 overflow-hidden mt-1">
+      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${score}%` }} />
+    </div>
+  );
+}
+
 function RecommendationsTab() {
   const { profile } = useAuth();
   const { opportunities } = useOpportunities();
   const [loading, setLoading] = useState(false);
-  const [recs, setRecs] = useState<{ opportunity: Opportunity; score: number; reason: string }[]>([]);
+  const [recs, setRecs] = useState<MatchResult[]>([]);
+  const [minScore, setMinScore] = useState(40);
+  const [showCount, setShowCount] = useState(6);
 
-  const generateRecommendations = () => {
-    if (!profile) return;
+  const tokenize = (text: string): string[] =>
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
+
+  const runMatcher = () => {
+    if (!profile || !opportunities.length) return;
     setLoading(true);
 
-    // Rule-based matching score
-    const matches = opportunities.map((opp) => {
-      let score = 50; // Base score
-      const reasons: string[] = [];
+    const userSkills = (profile.skills || []).map((s) => s.toLowerCase().trim());
+    const userInterests = (profile.interests || []).map((i) => i.toLowerCase().trim());
+    const userCategory = (profile.category || "").toLowerCase().trim();
+    const userLocation = (profile.location || "").toLowerCase().trim();
+    const userEducation = (profile.education || "").toLowerCase();
+    const userBio = profile.bio || "";
+    const userIncome = (profile.income || "").toLowerCase();
+    const bioTokens = tokenize(userBio);
 
-      // 1. Category Matching
-      if (profile.category && opp.category === profile.category) {
+    const results: MatchResult[] = opportunities.map((opp) => {
+      const signals: MatchSignal[] = [];
+      let score = 30;
+
+      const oppText = [opp.description, opp.eligibility, opp.field, opp.title]
+        .join(" ")
+        .toLowerCase();
+      const oppTokens = tokenize(oppText);
+
+      // Signal 1: Category exact match (+20)
+      if (userCategory && opp.category.toLowerCase() === userCategory) {
         score += 20;
-        reasons.push(`Matches preferred category: ${profile.category}`);
+        signals.push({ label: `Category: ${opp.category}`, points: 20, icon: "🎯" });
       }
 
-      // 2. Field Match
-      const userInterests = profile.interests || [];
-      const hasFieldMatch = userInterests.some((interest) =>
-        opp.field.toLowerCase().includes(interest.toLowerCase())
-      );
-      if (hasFieldMatch) {
-        score += 20;
-        reasons.push(`Matches field of interest: ${opp.field}`);
+      // Signal 2: Skills match (+6 per skill, max +30)
+      let skillPoints = 0;
+      const matchedSkills: string[] = [];
+      for (const skill of userSkills) {
+        if (oppText.includes(skill) && skillPoints < 30) {
+          skillPoints += 6;
+          matchedSkills.push(skill);
+        }
+      }
+      if (skillPoints > 0) {
+        score += skillPoints;
+        signals.push({
+          label: `Skills: ${matchedSkills.slice(0, 3).join(", ")}${matchedSkills.length > 3 ? ` +${matchedSkills.length - 3}` : ""}`,
+          points: skillPoints,
+          icon: "⚡",
+        });
       }
 
-      // 3. Location preference
-      if (profile.location && opp.country === profile.location) {
+      // Signal 3: Interests / field match (+5 per match, max +20)
+      let intPoints = 0;
+      const matchedInterests: string[] = [];
+      for (const interest of userInterests) {
+        if (
+          (opp.field.toLowerCase().includes(interest) ||
+            opp.description.toLowerCase().includes(interest)) &&
+          intPoints < 20
+        ) {
+          intPoints += 5;
+          matchedInterests.push(interest);
+        }
+      }
+      if (intPoints > 0) {
+        score += intPoints;
+        signals.push({
+          label: `Interests: ${matchedInterests.slice(0, 2).join(", ")}`,
+          points: intPoints,
+          icon: "💡",
+        });
+      }
+
+      // Signal 4: Location / country match (+10)
+      if (userLocation && opp.country.toLowerCase().includes(userLocation)) {
         score += 10;
-        reasons.push(`Located in preferred country: ${opp.country}`);
+        signals.push({ label: `Country: ${opp.country}`, points: 10, icon: "📍" });
+      }
+
+      // Signal 5: Education level match (+8)
+      const eduKeywords = ["bachelor", "master", "phd", "diploma", "undergraduate", "postgraduate", "mba"];
+      let eduMatched = "";
+      for (const kw of eduKeywords) {
+        if (userEducation.includes(kw) && opp.eligibility.toLowerCase().includes(kw)) {
+          eduMatched = kw;
+          break;
+        }
+      }
+      if (!eduMatched && opp.degreeLevel && userEducation.includes(opp.degreeLevel.toLowerCase())) {
+        eduMatched = opp.degreeLevel;
+      }
+      if (eduMatched) {
+        score += 8;
+        signals.push({ label: `Education: ${eduMatched}`, points: 8, icon: "🎓" });
+      }
+
+      // Signal 6: Income / financial need match (+8)
+      const isLowIncome =
+        userIncome.includes("low") ||
+        userIncome.includes("below") ||
+        userIncome.includes("bpl") ||
+        userIncome.includes("<");
+      if (isLowIncome && opp.incomeLimit != null) {
+        score += 8;
+        signals.push({ label: "Income criteria eligible", points: 8, icon: "💰" });
+      }
+
+      // Signal 7: Bio keyword resonance (+3 per token, max +10)
+      let bioPoints = 0;
+      const matchedBio: string[] = [];
+      for (const token of bioTokens) {
+        if (token.length > 3 && oppTokens.includes(token) && bioPoints < 10) {
+          bioPoints += 3;
+          matchedBio.push(token);
+        }
+      }
+      if (bioPoints > 0) {
+        score += bioPoints;
+        signals.push({
+          label: `Bio keywords: ${matchedBio.slice(0, 2).join(", ")}`,
+          points: bioPoints,
+          icon: "📝",
+        });
+      }
+
+      // Signal 8: Field token overlap vs skills+interests (+4 each, max +12)
+      const fieldTokens = tokenize(opp.field);
+      const allUserTokens = [...userSkills, ...userInterests];
+      const fieldOverlap = fieldTokens.filter((ft) =>
+        allUserTokens.some((ut) => ut.includes(ft) || ft.includes(ut))
+      );
+      if (fieldOverlap.length > 0 && intPoints === 0) {
+        const fPoints = Math.min(fieldOverlap.length * 4, 12);
+        score += fPoints;
+        signals.push({ label: `Field overlap: ${opp.field}`, points: fPoints, icon: "🔗" });
       }
 
       return {
         opportunity: opp,
-        score: Math.min(score, 100),
-        reason: reasons.join(" • ") || "General opportunity matching career profile parameters.",
+        score: Math.min(Math.round(score), 100),
+        signals,
       };
     });
 
-    // Sort by match score
-    matches.sort((a, b) => b.score - a.score);
-    setRecs(matches.slice(0, 3)); // Top 3
+    results.sort((a, b) => b.score - a.score);
+    setRecs(results);
     setLoading(false);
   };
 
   useEffect(() => {
-    generateRecommendations();
+    runMatcher();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, opportunities]);
+
+  const filtered = recs.filter((r) => r.score >= minScore).slice(0, showCount);
+  const hasProfile =
+    profile &&
+    ((profile.skills?.length ?? 0) > 0 ||
+      (profile.interests?.length ?? 0) > 0 ||
+      !!profile.category ||
+      !!profile.location);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-          <Award className="w-5 h-5 text-primary" /> AI Career Opportunity Matcher
-        </h2>
-        <p className="text-xs text-foreground-muted mt-1">
-          Matches opportunities based on your skills, interests, and profile details using database logic.
-        </p>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
+            <Award className="w-5 h-5 text-primary" /> Opportunity Matcher
+          </h2>
+          <p className="text-xs text-foreground-muted mt-1">
+            Deep multi-signal matching — skills, interests, location, education, income &amp; bio keywords.
+          </p>
+        </div>
+        <button
+          onClick={runMatcher}
+          disabled={loading}
+          className="flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-all"
+        >
+          {loading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="w-3.5 h-3.5" />
+          )}
+          Rematch
+        </button>
       </div>
 
-      <div className="space-y-4">
-        {loading ? (
-          <div className="py-12 flex justify-center">
-            <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      {/* Profile completeness nudge */}
+      {!hasProfile && !loading && (
+        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
+          <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-xs font-bold text-amber-600">Complete your profile for better matches</p>
+            <p className="text-xs text-foreground-muted mt-0.5">
+              Add skills, interests, location, and education in profile settings to unlock deep matching.
+            </p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-6">
-            {recs.map(({ opportunity, score, reason }) => (
-              <div
-                key={opportunity.id}
-                className="bg-surface border border-border hover:border-primary/20 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
-              >
-                <div className="flex justify-between items-start gap-4 mb-3">
-                  <div>
-                    <span className="text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                      {opportunity.category}
-                    </span>
-                    <h3 className="font-extrabold text-foreground text-sm mt-2 hover:text-primary transition-colors">
-                      <Link href={`/opportunity/${opportunity.id}`}>{opportunity.title}</Link>
-                    </h3>
-                    <p className="text-foreground-muted text-xs font-semibold">{opportunity.organization}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="block text-[10px] font-bold uppercase tracking-wider text-foreground-muted">Match score</span>
-                    <span className="text-base font-extrabold text-primary">{score}%</span>
-                  </div>
-                </div>
+        </div>
+      )}
 
-                <div className="bg-primary/30 border border-primary/10 p-3.5 rounded-2xl mt-4">
-                  <span className="block text-[9px] font-bold uppercase tracking-wider text-primary mb-1">
-                    Matching Criteria
-                  </span>
-                  <p className="text-foreground text-xs font-medium leading-relaxed">
-                    {reason}
-                  </p>
-                </div>
-              </div>
+      {/* Filter Controls */}
+      {!loading && recs.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-foreground-muted font-semibold">Min score:</span>
+            {[30, 40, 55, 70].map((v) => (
+              <button
+                key={v}
+                onClick={() => setMinScore(v)}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                  minScore === v
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-border/40 text-foreground-muted hover:bg-border"
+                }`}
+              >
+                {v}%+
+              </button>
             ))}
           </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-foreground-muted font-semibold">Show:</span>
+            {[6, 10, 20].map((v) => (
+              <button
+                key={v}
+                onClick={() => setShowCount(v)}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                  showCount === v
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-border/40 text-foreground-muted hover:bg-border"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      <div className="space-y-4">
+        {loading ? (
+          <div className="py-12 flex flex-col items-center gap-3">
+            <Loader2 className="w-6 h-6 text-primary animate-spin" />
+            <p className="text-xs text-foreground-muted">
+              Scanning {opportunities.length} opportunities…
+            </p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-10 text-center">
+            <TrendingUp className="w-8 h-8 text-foreground-muted mx-auto mb-3" />
+            <p className="text-sm font-bold text-foreground">No matches above {minScore}%</p>
+            <p className="text-xs text-foreground-muted mt-1">
+              Try lowering the minimum score or enriching your profile.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-foreground-muted font-semibold">
+              Showing{" "}
+              <span className="text-foreground font-bold">{filtered.length}</span> of{" "}
+              <span className="text-foreground font-bold">
+                {recs.filter((r) => r.score >= minScore).length}
+              </span>{" "}
+              matches
+            </p>
+            <div className="grid grid-cols-1 gap-5">
+              {filtered.map(({ opportunity, score, signals }) => {
+                const scoreColor =
+                  score >= 80 ? "text-emerald-500" : score >= 60 ? "text-primary" : "text-amber-500";
+                const badgeColor =
+                  score >= 80
+                    ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                    : score >= 60
+                    ? "bg-primary/10 text-primary border-primary/20"
+                    : "bg-amber-500/10 text-amber-600 border-amber-500/20";
+
+                return (
+                  <div
+                    key={opportunity.id}
+                    className="bg-surface border border-border hover:border-primary/30 p-5 rounded-3xl shadow-sm hover:shadow-md transition-all"
+                  >
+                    {/* Top Row */}
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                            {opportunity.category}
+                          </span>
+                          <span className="text-[9px] font-semibold text-foreground-muted">
+                            {opportunity.field}
+                          </span>
+                        </div>
+                        <h3 className="font-extrabold text-foreground text-sm leading-snug hover:text-primary transition-colors">
+                          <Link href={`/opportunity/${opportunity.id}`}>{opportunity.title}</Link>
+                        </h3>
+                        <p className="text-foreground-muted text-xs font-semibold mt-0.5">
+                          {opportunity.organization} · {opportunity.country}
+                        </p>
+                      </div>
+
+                      {/* Score Badge */}
+                      <div className={`text-center border rounded-2xl px-3 py-2 flex-shrink-0 ${badgeColor}`}>
+                        <span className={`block text-xl font-black ${scoreColor}`}>{score}%</span>
+                        <span className="block text-[9px] font-bold uppercase tracking-wider opacity-70">
+                          Match
+                        </span>
+                        <ScoreBar score={score} />
+                      </div>
+                    </div>
+
+                    {/* Signal Chips */}
+                    {signals.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-4">
+                        {signals.map((sig, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold bg-primary/10 border border-primary/15 text-foreground px-2.5 py-1 rounded-full"
+                          >
+                            <span>{sig.icon}</span>
+                            {sig.label}
+                            <span className="text-primary font-bold ml-0.5">+{sig.points}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Deadline + CTA */}
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
+                      <span className="text-[10px] text-foreground-muted font-semibold">
+                        Deadline:{" "}
+                        <span className="text-foreground">
+                          {opportunity.deadline
+                            ? new Date(opportunity.deadline).toLocaleDateString("en-IN", {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              })
+                            : "Open"}
+                        </span>
+                      </span>
+                      <Link
+                        href={`/opportunity/${opportunity.id}`}
+                        className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline"
+                      >
+                        View Details <ArrowRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </div>
