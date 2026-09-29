@@ -335,97 +335,26 @@ export default function AdminPage() {
 
         {/* 2 Bucket Queues Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
-          {/* Queue 1: Primary Bucket */}
+          {/* Active Serving Bucket */}
           <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 <h4 className="font-extrabold text-foreground text-sm">
-                  Queue-1: Primary Bucket
+                  {telemetry?.primaryBucket?.name || "Active Serving Bucket"}
                 </h4>
               </div>
-              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
-                telemetry?.activeQueue === 1
-                  ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                  : "bg-amber-500/10 text-amber-500 border-amber-500/20"
-              }`}>
-                {telemetry?.queue1?.status || "In Service"}
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
+                {telemetry?.primaryBucket?.status || "Serving Traffic"}
               </span>
             </div>
 
             <p className="text-[11px] text-foreground-muted">
-              Keys #1 to #4 handle real-time resume analysis, career chat & confidence scores.
+              Remaining in active bucket: <strong className="text-foreground">{telemetry?.primaryBucket?.keysRemaining ?? 8} keys</strong>. Har fallback/rate limit par key eject hokar standby bucket me transfer hoti hai.
             </p>
 
             <div className="space-y-2.5">
-              {(telemetry?.queue1?.keys || []).map((k: any) => (
-                <div
-                  key={k.keyId}
-                  className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      onClick={() => copyToClipboard(k.keyId, k.keyId)}
-                      className="p-1 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded transition-colors"
-                      title="Copy Key Identifier"
-                    >
-                      {copiedKeyId === k.keyId ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                    <div>
-                      <span className="font-bold text-foreground block truncate">{k.keyId}</span>
-                      <span className="text-[10px] text-foreground-muted font-mono">{k.maskedKey}</span>
-                    </div>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-extrabold text-foreground block">
-                      {(k.estimatedTokens || 0).toLocaleString()} tokens
-                    </span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border ${
-                      k.status === "active"
-                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                        : k.status === "cooling_down"
-                        ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                        : k.status === "exhausted"
-                        ? "bg-red-500/10 text-red-500 border-red-500/20"
-                        : "bg-surface-raised text-foreground-muted border-border"
-                    }`}>
-                      {k.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Queue 2: Fallback Bucket */}
-          <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${telemetry?.activeQueue === 2 ? "bg-amber-500 animate-ping" : "bg-blue-500"}`} />
-                <h4 className="font-extrabold text-foreground text-sm">
-                  Queue-2: Fallback Standby Bucket
-                </h4>
-              </div>
-              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
-                telemetry?.activeQueue === 2
-                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                  : "bg-blue-500/10 text-blue-500 border-blue-500/20"
-              }`}>
-                {telemetry?.queue2?.status || "Standby (Armed)"}
-              </span>
-            </div>
-
-            <p className="text-[11px] text-foreground-muted">
-              Keys #5 to #8 (including newly added Key #8). Sirf tab engage hongi jab Queue-1 exhausted/cooling ho.
-            </p>
-
-            <div className="space-y-2.5">
-              {(telemetry?.queue2?.keys || []).map((k: any) => (
+              {(telemetry?.primaryBucket?.keys || []).map((k: any) => (
                 <div
                   key={k.keyId}
                   className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
@@ -460,12 +389,10 @@ export default function AdminPage() {
                       {(k.estimatedTokens || 0).toLocaleString()} tokens
                     </span>
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border ${
-                      k.status === "active"
+                      k.status === "in_use"
                         ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                         : k.status === "cooling_down"
                         ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                        : k.status === "exhausted"
-                        ? "bg-red-500/10 text-red-500 border-red-500/20"
                         : "bg-surface-raised text-foreground-muted border-border"
                     }`}>
                       {k.status}
@@ -473,6 +400,75 @@ export default function AdminPage() {
                   </div>
                 </div>
               ))}
+
+              {(!telemetry?.primaryBucket?.keys || telemetry?.primaryBucket?.keys?.length === 0) && (
+                <div className="text-center py-8 text-foreground-muted text-xs">
+                  All keys ejected from active bucket. Automatic swap triggered!
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Standby / Replenishing Bucket */}
+          <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <h4 className="font-extrabold text-foreground text-sm">
+                  {telemetry?.fallbackBucket?.name || "Standby / Replenishing Bucket"}
+                </h4>
+              </div>
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-blue-500/10 text-blue-500 border-blue-500/20">
+                {telemetry?.fallbackBucket?.status || "Filling on Fallback"}
+              </span>
+            </div>
+
+            <p className="text-[11px] text-foreground-muted">
+              Keys in holding/cooldown: <strong className="text-foreground">{telemetry?.fallbackBucket?.keysCount ?? 0} keys</strong>. Jab tak active bucket 0 nahi hoti, yahan se koi key consume nahi hogi.
+            </p>
+
+            <div className="space-y-2.5">
+              {(telemetry?.fallbackBucket?.keys || []).map((k: any) => (
+                <div
+                  key={k.keyId}
+                  className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      onClick={() => copyToClipboard(k.keyId, k.keyId)}
+                      className="p-1 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded transition-colors"
+                      title="Copy Key Identifier"
+                    >
+                      {copiedKeyId === k.keyId ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <div>
+                      <span className="font-bold text-foreground block truncate flex items-center gap-1.5">
+                        {k.keyId}
+                      </span>
+                      <span className="text-[10px] text-foreground-muted font-mono">{k.maskedKey}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-extrabold text-foreground block">
+                      {(k.estimatedTokens || 0).toLocaleString()} tokens
+                    </span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border bg-amber-500/10 text-amber-500 border-amber-500/20">
+                      Cooldown / Standby
+                    </span>
+                  </div>
+                </div>
+              ))}
+
+              {(!telemetry?.fallbackBucket?.keys || telemetry?.fallbackBucket?.keys?.length === 0) && (
+                <div className="text-center py-8 text-foreground-muted text-xs border border-dashed border-border rounded-xl">
+                  Bucket is currently empty. Keys will move here as fallback occurs.
+                </div>
+              )}
             </div>
           </div>
         </div>
