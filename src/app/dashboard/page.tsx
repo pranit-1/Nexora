@@ -16,9 +16,16 @@ import {
   Clock,
   ArrowRight,
   Briefcase,
-  Trash2
+  Trash2,
+  Wallet,
+  Gauge,
+  FileText,
+  ChevronRight,
+  TrendingUp,
 } from "lucide-react";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
+import { fetchPerformanceProfile } from "@/lib/performanceProfileClient";
+import type { PerformanceSnapshot } from "@/lib/types";
 
 const sectionVariants: Variants = {
   hidden: { opacity: 0, y: 16 },
@@ -53,15 +60,9 @@ function SkeletonDashboard() {
         <div className="skeleton h-14 w-40 rounded-2xl" />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="skeleton h-36 rounded-3xl" />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="skeleton h-20 rounded-3xl" />
         ))}
       </div>
 
@@ -91,6 +92,8 @@ export default function Dashboard() {
 
   const [savedOpps, setSavedOpps] = useState<Opportunity[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [docCount, setDocCount] = useState<number>(0);
+  const [performance, setPerformance] = useState<PerformanceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -113,20 +116,30 @@ export default function Dashboard() {
         }
 
         // 2. Fetch reminders
-        // Direct document get since we set doc ID as {uid}_{oppId} or query
-        const q = query(collection(db, "reminders"), where("uid", "==", currentUser.uid));
-        const querySnap = await getDocs(q);
+        const qReminders = query(collection(db, "reminders"), where("uid", "==", currentUser.uid));
+        const querySnap = await getDocs(qReminders);
         const remsList: Reminder[] = [];
-        querySnap.forEach((doc) => {
-          const data = doc.data();
+        querySnap.forEach((docSnap) => {
+          const data = docSnap.data();
           remsList.push({
-            id: doc.id,
+            id: docSnap.id,
             opportunityId: data.opportunityId,
             opportunityTitle: data.opportunityTitle,
             deadline: data.deadline,
           });
         });
         setReminders(remsList);
+
+        // 3. Fetch wallet documents count
+        const qDocs = query(collection(db, "wallet"), where("uid", "==", currentUser.uid));
+        const docsSnap = await getDocs(qDocs);
+        setDocCount(docsSnap.size);
+
+        // 4. Fetch performance profile score
+        const perfData = await fetchPerformanceProfile(currentUser.uid);
+        if (perfData) {
+          setPerformance(perfData);
+        }
       } catch (error) {
         console.error("Error loading dashboard data:", error);
       } finally {
@@ -157,6 +170,49 @@ export default function Dashboard() {
     const diffDays = (deadlineTime - nowTime) / (1000 * 60 * 60 * 24);
     return diffDays > 0 && diffDays <= 30;
   }).length;
+
+  const overallScore = performance ? Math.round(performance.overall) : null;
+  const scoreBand = performance?.band || "developing";
+
+  // Tab summary cards configuration
+  const tabSummaries = [
+    {
+      title: "Opportunity Wallet",
+      metric: `${docCount} Documents`,
+      subtext: docCount > 0 ? "Credentials & records synced" : "Upload resume & certificates",
+      href: "/dashboard/wallet",
+      icon: Wallet,
+      accent: "text-blue-500 bg-blue-500/10 border-blue-500/20",
+      pill: "Vault",
+    },
+    {
+      title: "Performance Score",
+      metric: overallScore !== null ? `${overallScore}/100` : "Audit Ready",
+      subtext: overallScore !== null ? `Profile status: ${scoreBand.toUpperCase()}` : "Compute readiness score",
+      href: "/dashboard/performance",
+      icon: Gauge,
+      accent: "text-amber-500 bg-amber-500/10 border-amber-500/20",
+      pill: overallScore !== null ? `${overallScore}%` : "Track",
+    },
+    {
+      title: "Calendar Hub",
+      metric: `${reminders.length} Active Alerts`,
+      subtext: incomingDeadlinesCount > 0 ? `${incomingDeadlinesCount} closing this month` : "Track deadlines & schedules",
+      href: "/dashboard/calendar",
+      icon: Calendar,
+      accent: "text-emerald-500 bg-emerald-500/10 border-emerald-500/20",
+      pill: "Deadlines",
+    },
+    {
+      title: "AI Career Hub",
+      metric: profile?.category || "Explore Pathways",
+      subtext: "AI resume audit & job match",
+      href: "/ai-hub",
+      icon: Sparkles,
+      accent: "text-purple-500 bg-purple-500/10 border-purple-500/20",
+      pill: "AI Coach",
+    },
+  ];
 
   return (
     <motion.div initial="hidden" animate="show" variants={containerVariants} className="space-y-8">
@@ -196,67 +252,38 @@ export default function Dashboard() {
         </Link>
       </motion.div>
 
-      {/* Ecosystem Launchpad shortcuts */}
-      <motion.div variants={gridStaggerVariants} className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { title: "Opportunity Wallet", desc: "Credentials vault", href: "/dashboard/wallet", icon: Bookmark, color: "from-primary to-indigo-600 text-white" },
-          { title: "Application Tracker", desc: "Pipeline tracking", href: "/dashboard/tracker", icon: Briefcase, color: "from-indigo-600 to-cyan-500 text-white" },
-          { title: "Calendar Hub", desc: "Deadlines & interviews", href: "/dashboard/calendar", icon: Calendar, color: "from-cyan-600 to-teal-500 text-white" },
-          { title: "AI Career Hub", desc: "Audit & coaching", href: "/ai-hub", icon: Sparkles, color: "from-violet-600 to-purple-500 text-white" },
-        ].map((mod) => (
-          <motion.div key={mod.title} variants={itemVariants} whileHover={{ y: -3 }}>
+      {/* Tab Summaries & Metric Overview Grid */}
+      <motion.div variants={gridStaggerVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {tabSummaries.map((tab) => (
+          <motion.div key={tab.title} variants={itemVariants} whileHover={{ y: -3 }}>
             <Link
-              href={mod.href}
-              className="p-5 bg-surface border border-border rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between h-36 card-hover"
+              href={tab.href}
+              className="p-5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between h-40 group relative overflow-hidden"
             >
-              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${mod.color} flex items-center justify-center shadow-xs`}>
-                <mod.icon className="w-4 h-4" />
+              <div className="flex items-center justify-between">
+                <div className={`p-2.5 rounded-2xl border ${tab.accent}`}>
+                  <tab.icon className="w-5 h-5" />
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 rounded-full group-hover:text-primary transition-colors">
+                  {tab.pill}
+                </span>
               </div>
+
               <div>
-                <h4 className="font-bold text-foreground text-xs leading-none">{mod.title}</h4>
-                <p className="text-[10px] text-foreground-muted mt-1 font-semibold">{mod.desc}</p>
+                <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  {tab.title}
+                </span>
+                <h4 className="font-extrabold text-foreground text-lg leading-tight mt-0.5 truncate">
+                  {tab.metric}
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 font-medium flex items-center justify-between">
+                  <span className="truncate">{tab.subtext}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1 shrink-0" />
+                </p>
               </div>
             </Link>
           </motion.div>
         ))}
-      </motion.div>
-
-      {/* Quick Stats Grid */}
-      <motion.div variants={gridStaggerVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-        {/* Bookmarks Stat */}
-        <motion.div variants={itemVariants} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-3xl shadow-sm flex items-center gap-4 transition-colors duration-300">
-          <div className="p-3 bg-primary/10 dark:bg-primary/15 text-primary rounded-2xl">
-            <Bookmark className="w-6 h-6" />
-          </div>
-          <div className="text-left">
-            <span className="block text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Bookmarked Hub</span>
-            <span className="text-xl font-extrabold text-slate-800 dark:text-slate-200">{savedOpps.length} saved</span>
-          </div>
-        </motion.div>
-
-        {/* Reminders Stat */}
-        <motion.div variants={itemVariants} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-3xl shadow-sm flex items-center gap-4 transition-colors duration-300">
-          <div className="p-3 bg-secondary/10 dark:bg-secondary/15 text-secondary rounded-2xl">
-            <Calendar className="w-6 h-6" />
-          </div>
-          <div className="text-left">
-            <span className="block text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Reminders Set</span>
-            <span className="text-xl font-extrabold text-slate-800 dark:text-slate-200">{reminders.length} alerts active</span>
-          </div>
-        </motion.div>
-
-        {/* Interest Stat */}
-        <motion.div variants={itemVariants} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-900 rounded-3xl shadow-sm flex items-center gap-4 transition-colors duration-300">
-          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 rounded-2xl">
-            <Briefcase className="w-6 h-6" />
-          </div>
-          <div className="text-left">
-            <span className="block text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Category Focus</span>
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-400 truncate max-w-[150px]">
-              {profile?.category || "None Set"}
-            </span>
-          </div>
-        </motion.div>
       </motion.div>
 
       {/* Bottom Grid: Saved & Deadlines */}
