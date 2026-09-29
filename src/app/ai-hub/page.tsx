@@ -148,8 +148,34 @@ function RecommendationsTab() {
   const { opportunities } = useOpportunities();
   const [loading, setLoading] = useState(false);
   const [recs, setRecs] = useState<MatchResult[]>([]);
-  const [minScore, setMinScore] = useState(40);
-  const [showCount, setShowCount] = useState(6);
+  const [showCount, setShowCount] = useState(8);
+
+  /** Build human-readable explanation of why score is high or low */
+  const buildExplanation = (
+    score: number,
+    signals: MatchSignal[],
+    opp: Opportunity
+  ): { why: string; missing: string[] } => {
+    const matched = signals.map((s) => s.label.split(":").pop()?.trim() || s.label);
+    const missing: string[] = [];
+    if (!profile?.skills?.length) missing.push("skills");
+    if (!profile?.interests?.length) missing.push("interests");
+    if (!profile?.location) missing.push("location");
+    if (!profile?.education) missing.push("education level");
+
+    let why = "";
+    if (score >= 80) {
+      why = `Strong match — your profile directly aligns with this opportunity.${matched.length ? ` Key matches: ${matched.slice(0, 3).join(", ")}.` : ""}`;
+    } else if (score >= 60) {
+      why = `Good match — several profile signals overlap with this opportunity${matched.length ? ` (${matched.slice(0, 2).join(", ")})` : ""}. Adding more profile data could push this higher.`;
+    } else if (score >= 45) {
+      why = `Partial match — some signals align${matched.length ? ` like ${matched[0]}` : ""}, but your profile doesn't yet strongly match the field "${opp.field}" or category "${opp.category}".`;
+    } else {
+      why = `Low match — this opportunity's field "${opp.field}" and category "${opp.category}" don't closely align with your current profile. It may still be worth a look if you're exploring new areas.`;
+    }
+    return { why, missing };
+  };
+
 
   const tokenize = (text: string): string[] =>
     text
@@ -307,7 +333,8 @@ function RecommendationsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, opportunities]);
 
-  const filtered = recs.filter((r) => r.score >= minScore).slice(0, showCount);
+
+  const displayed = recs.slice(0, showCount);
   const hasProfile =
     profile &&
     ((profile.skills?.length ?? 0) > 0 ||
@@ -324,7 +351,7 @@ function RecommendationsTab() {
             <Award className="w-5 h-5 text-primary" /> Opportunity Matcher
           </h2>
           <p className="text-xs text-foreground-muted mt-1">
-            Deep multi-signal matching — skills, interests, location, education, income &amp; bio keywords.
+            Ranked highest to lowest match — based on your skills, interests, location, education, income &amp; bio.
           </p>
         </div>
         <button
@@ -354,44 +381,6 @@ function RecommendationsTab() {
         </div>
       )}
 
-      {/* Filter Controls */}
-      {!loading && recs.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-foreground-muted font-semibold">Min score:</span>
-            {[30, 40, 55, 70].map((v) => (
-              <button
-                key={v}
-                onClick={() => setMinScore(v)}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
-                  minScore === v
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-border/40 text-foreground-muted hover:bg-border"
-                }`}
-              >
-                {v}%+
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-foreground-muted font-semibold">Show:</span>
-            {[6, 10, 20].map((v) => (
-              <button
-                key={v}
-                onClick={() => setShowCount(v)}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
-                  showCount === v
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-border/40 text-foreground-muted hover:bg-border"
-                }`}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Results */}
       <div className="space-y-4">
         {loading ? (
@@ -401,26 +390,23 @@ function RecommendationsTab() {
               Scanning {opportunities.length} opportunities…
             </p>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : displayed.length === 0 ? (
           <div className="py-10 text-center">
             <TrendingUp className="w-8 h-8 text-foreground-muted mx-auto mb-3" />
-            <p className="text-sm font-bold text-foreground">No matches above {minScore}%</p>
+            <p className="text-sm font-bold text-foreground">No opportunities found</p>
             <p className="text-xs text-foreground-muted mt-1">
-              Try lowering the minimum score or enriching your profile.
+              Check back once opportunities are available in the database.
             </p>
           </div>
         ) : (
           <>
             <p className="text-xs text-foreground-muted font-semibold">
               Showing{" "}
-              <span className="text-foreground font-bold">{filtered.length}</span> of{" "}
-              <span className="text-foreground font-bold">
-                {recs.filter((r) => r.score >= minScore).length}
-              </span>{" "}
-              matches
+              <span className="text-foreground font-bold">{displayed.length}</span> of{" "}
+              <span className="text-foreground font-bold">{recs.length}</span> opportunities — best matches first
             </p>
             <div className="grid grid-cols-1 gap-5">
-              {filtered.map(({ opportunity, score, signals }) => {
+              {displayed.map(({ opportunity, score, signals }) => {
                 const scoreColor =
                   score >= 80 ? "text-emerald-500" : score >= 60 ? "text-primary" : "text-amber-500";
                 const badgeColor =
@@ -429,6 +415,7 @@ function RecommendationsTab() {
                     : score >= 60
                     ? "bg-primary/10 text-primary border-primary/20"
                     : "bg-amber-500/10 text-amber-600 border-amber-500/20";
+                const { why, missing } = buildExplanation(score, signals, opportunity);
 
                 return (
                   <div
@@ -480,6 +467,26 @@ function RecommendationsTab() {
                       </div>
                     )}
 
+                    {/* Smart Explanation */}
+                    <div className={`mt-4 p-3.5 rounded-2xl text-xs leading-relaxed ${
+                      score >= 80
+                        ? "bg-emerald-500/8 border border-emerald-500/15"
+                        : score >= 60
+                        ? "bg-primary/8 border border-primary/15"
+                        : "bg-amber-500/8 border border-amber-500/15"
+                    }`}>
+                      <p className="font-medium text-foreground">{why}</p>
+                      {missing.length > 0 && score < 70 && (
+                        <p className="mt-1.5 text-foreground-muted">
+                          💡 To improve this score, add your{" "}
+                          <span className="font-semibold text-foreground">
+                            {missing.slice(0, 2).join(" & ")}
+                          </span>{" "}
+                          to your profile.
+                        </p>
+                      )}
+                    </div>
+
                     {/* Deadline + CTA */}
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
                       <span className="text-[10px] text-foreground-muted font-semibold">
@@ -505,6 +512,16 @@ function RecommendationsTab() {
                 );
               })}
             </div>
+
+            {/* Load more */}
+            {recs.length > showCount && (
+              <button
+                onClick={() => setShowCount((c) => c + 8)}
+                className="w-full py-3 text-xs font-bold text-primary border border-primary/20 rounded-2xl hover:bg-primary/5 transition-all"
+              >
+                Load {Math.min(8, recs.length - showCount)} more opportunities ↓
+              </button>
+            )}
           </>
         )}
       </div>
