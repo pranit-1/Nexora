@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AIRouterService } from "@/lib/aiProviders";
+import { AIRouterService, OpenRouterService } from "@/lib/aiProviders";
 
 export async function POST(request: Request) {
   try {
@@ -101,5 +101,18 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error("AI API error:", error);
     return NextResponse.json({ error: error.message || "Failed to contact AI service" }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  try {
+    const telemetry = OpenRouterService.getTelemetryData();
+    return NextResponse.json({
+      success: true,
+      telemetry,
+      model: process.env.OPENROUTER_MODEL || "openrouter/auto",
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to load telemetry" }, { status: 500 });
   }
 }

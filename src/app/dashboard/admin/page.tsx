@@ -16,6 +16,15 @@ import {
   XCircle,
   FileSpreadsheet,
   Loader2,
+  Cpu,
+  RefreshCw,
+  Layers,
+  Zap,
+  Flame,
+  Clock,
+  Activity,
+  Check,
+  Copy,
 } from "lucide-react";
 import type { OrgOpportunity, AdminStats, OrgRequest } from "@/lib/types";
 
@@ -35,6 +44,11 @@ export default function AdminPage() {
   const [usersList, setUsersList] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // AI Keys Double-Queue Bucket Telemetry
+  const [telemetry, setTelemetry] = useState<any | null>(null);
+  const [telemetryLoading, setTelemetryLoading] = useState(false);
+  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -109,7 +123,29 @@ export default function AdminPage() {
     };
 
     loadAdminData();
+    fetchTelemetry();
   }, [currentUser]);
+
+  const fetchTelemetry = async () => {
+    try {
+      setTelemetryLoading(true);
+      const res = await fetch("/api/ai");
+      if (res.ok) {
+        const data = await res.json();
+        setTelemetry(data.telemetry);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch AI telemetry:", e);
+    } finally {
+      setTelemetryLoading(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKeyId(id);
+    setTimeout(() => setCopiedKeyId(null), 2000);
+  };
 
   const updateOppStatus = async (oppId: string, status: "approved" | "rejected") => {
     try {
@@ -205,6 +241,240 @@ export default function AdminPage() {
           <MessageSquare className="w-6 h-6 text-amber-500 mx-auto mb-2" />
           <span className="block text-[9px] font-bold text-foreground-muted uppercase tracking-wider">Forum Posts</span>
           <span className="text-lg font-extrabold text-foreground">{stats.totalCommunityPosts} posts</span>
+        </div>
+      </div>
+
+      {/* ── AI Provider Keys & Double Queue Bucket Telemetry ── */}
+      <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
+                <Cpu className="w-5 h-5" />
+              </span>
+              <div>
+                <h3 className="font-extrabold text-foreground text-base flex items-center gap-2">
+                  AI Key Engine — Double-Queue Bucket System
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                    Dual Failover Active
+                  </span>
+                </h3>
+                <p className="text-xs text-foreground-muted">
+                  Primary Queue processes all AI traffic. Secondary Queue remains on hot standby and activates upon 429/exhaustion.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={fetchTelemetry}
+              disabled={telemetryLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-border text-foreground rounded-xl text-xs font-bold transition-all border border-border disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${telemetryLoading ? "animate-spin text-primary" : ""}`} />
+              Refresh Telemetry
+            </button>
+          </div>
+        </div>
+
+        {/* Global Key Bucket Metrics Summary */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
+          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Total Pool Keys</span>
+              <Layers className="w-4 h-4 text-primary" />
+            </div>
+            <div className="text-xl font-extrabold text-foreground mt-1">
+              {telemetry?.totalKeys ?? 8} Keys
+            </div>
+            <span className="text-[10px] text-foreground-muted font-medium">
+              4 Primary · 4 Standby Fallback
+            </span>
+          </div>
+
+          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Active Serving Queue</span>
+              <Activity className="w-4 h-4 text-emerald-500" />
+            </div>
+            <div className="text-xl font-extrabold text-emerald-500 mt-1">
+              Queue {telemetry?.activeQueue ?? 1}
+            </div>
+            <span className="text-[10px] text-foreground-muted font-medium">
+              {telemetry?.activeQueue === 1 ? "Primary traffic routing" : "Fallback active"}
+            </span>
+          </div>
+
+          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Total Tokens Processed</span>
+              <Zap className="w-4 h-4 text-amber-500" />
+            </div>
+            <div className="text-xl font-extrabold text-amber-500 mt-1">
+              {(telemetry?.summary?.totalEstimatedTokens ?? 0).toLocaleString()} tokens
+            </div>
+            <span className="text-[10px] text-foreground-muted font-medium">
+              Across all requests
+            </span>
+          </div>
+
+          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Total AI Requests</span>
+              <Flame className="w-4 h-4 text-blue-500" />
+            </div>
+            <div className="text-xl font-extrabold text-foreground mt-1">
+              {telemetry?.summary?.totalRequests ?? 0}
+            </div>
+            <span className="text-[10px] text-emerald-500 font-semibold">
+              {telemetry?.summary?.totalSuccessful ?? 0} ok · {telemetry?.summary?.totalFailed ?? 0} retried
+            </span>
+          </div>
+        </div>
+
+        {/* 2 Bucket Queues Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
+          {/* Queue 1: Primary Bucket */}
+          <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <h4 className="font-extrabold text-foreground text-sm">
+                  Queue-1: Primary Bucket
+                </h4>
+              </div>
+              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                telemetry?.activeQueue === 1
+                  ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                  : "bg-amber-500/10 text-amber-500 border-amber-500/20"
+              }`}>
+                {telemetry?.queue1?.status || "In Service"}
+              </span>
+            </div>
+
+            <p className="text-[11px] text-foreground-muted">
+              Keys #1 to #4 handle real-time resume analysis, career chat & confidence scores.
+            </p>
+
+            <div className="space-y-2.5">
+              {(telemetry?.queue1?.keys || []).map((k: any) => (
+                <div
+                  key={k.keyId}
+                  className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      onClick={() => copyToClipboard(k.keyId, k.keyId)}
+                      className="p-1 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded transition-colors"
+                      title="Copy Key Identifier"
+                    >
+                      {copiedKeyId === k.keyId ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <div>
+                      <span className="font-bold text-foreground block truncate">{k.keyId}</span>
+                      <span className="text-[10px] text-foreground-muted font-mono">{k.maskedKey}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-extrabold text-foreground block">
+                      {(k.estimatedTokens || 0).toLocaleString()} tokens
+                    </span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border ${
+                      k.status === "active"
+                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                        : k.status === "cooling_down"
+                        ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                        : k.status === "exhausted"
+                        ? "bg-red-500/10 text-red-500 border-red-500/20"
+                        : "bg-surface-raised text-foreground-muted border-border"
+                    }`}>
+                      {k.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Queue 2: Fallback Bucket */}
+          <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${telemetry?.activeQueue === 2 ? "bg-amber-500 animate-ping" : "bg-blue-500"}`} />
+                <h4 className="font-extrabold text-foreground text-sm">
+                  Queue-2: Fallback Standby Bucket
+                </h4>
+              </div>
+              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                telemetry?.activeQueue === 2
+                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                  : "bg-blue-500/10 text-blue-500 border-blue-500/20"
+              }`}>
+                {telemetry?.queue2?.status || "Standby (Armed)"}
+              </span>
+            </div>
+
+            <p className="text-[11px] text-foreground-muted">
+              Keys #5 to #8 (including newly added Key #8). Sirf tab engage hongi jab Queue-1 exhausted/cooling ho.
+            </p>
+
+            <div className="space-y-2.5">
+              {(telemetry?.queue2?.keys || []).map((k: any) => (
+                <div
+                  key={k.keyId}
+                  className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      onClick={() => copyToClipboard(k.keyId, k.keyId)}
+                      className="p-1 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded transition-colors"
+                      title="Copy Key Identifier"
+                    >
+                      {copiedKeyId === k.keyId ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <div>
+                      <span className="font-bold text-foreground block truncate flex items-center gap-1.5">
+                        {k.keyId}
+                        {k.keyId === "OPENROUTER_API_KEY_8" && (
+                          <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-semibold border border-primary/20">
+                            NEW
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[10px] text-foreground-muted font-mono">{k.maskedKey}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-extrabold text-foreground block">
+                      {(k.estimatedTokens || 0).toLocaleString()} tokens
+                    </span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border ${
+                      k.status === "active"
+                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                        : k.status === "cooling_down"
+                        ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                        : k.status === "exhausted"
+                        ? "bg-red-500/10 text-red-500 border-red-500/20"
+                        : "bg-surface-raised text-foreground-muted border-border"
+                    }`}>
+                      {k.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
