@@ -295,14 +295,14 @@ export default function AdminPage() {
 
           <div className="p-4 bg-surface-raised border border-border rounded-2xl">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Active Serving Queue</span>
+              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Active Serving Bucket</span>
               <Activity className="w-4 h-4 text-emerald-500" />
             </div>
             <div className="text-xl font-extrabold text-emerald-500 mt-1">
-              Queue {telemetry?.activeQueue ?? 1}
+              Bucket {telemetry?.activeQueue || "A"}
             </div>
             <span className="text-[10px] text-foreground-muted font-medium">
-              {telemetry?.activeQueue === 1 ? "Primary traffic routing" : "Fallback active"}
+              Primary traffic routing
             </span>
           </div>
 
@@ -341,7 +341,7 @@ export default function AdminPage() {
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 <h4 className="font-extrabold text-foreground text-sm">
-                  {telemetry?.primaryBucket?.name || "Active Serving Bucket"}
+                  {telemetry?.primaryBucket?.name || "Bucket A (Active Serving)"}
                 </h4>
               </div>
               <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
@@ -350,7 +350,7 @@ export default function AdminPage() {
             </div>
 
             <p className="text-[11px] text-foreground-muted">
-              Remaining in active bucket: <strong className="text-foreground">{telemetry?.primaryBucket?.keysRemaining ?? 8} keys</strong>. Har fallback/rate limit par key eject hokar standby bucket me transfer hoti hai.
+              Active Pool: <strong className="text-foreground">{telemetry?.primaryBucket?.keysRemaining ?? 8} keys</strong> ready. Har rate-limit/error par key eject hokar Standby Bucket me chali jati hai.
             </p>
 
             <div className="space-y-2.5">

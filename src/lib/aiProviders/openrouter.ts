@@ -161,19 +161,19 @@ export class OpenRouterService {
     const standbyList = this.activeBucket === "A" ? this.queueB : this.queueA;
 
     return {
-      activeQueue: `Queue-${this.activeBucket}`,
+      activeQueue: this.activeBucket,
       totalKeys: items.length,
       primaryBucket: {
-        name: `Queue-${this.activeBucket} (Active Serving Bucket)`,
+        name: `Bucket ${this.activeBucket} (Active Serving)`,
         keysRemaining: activeList.length,
         status: activeList.length > 0 ? "Active Serving" : "Empty (Swapping)",
         keys: activeList.map((idx) => items.find((k) => k.index === idx)!),
       },
       fallbackBucket: {
-        name: `Queue-${this.activeBucket === "A" ? "B" : "A"} (Replenishing / Standby Bucket)`,
+        name: `Bucket ${this.activeBucket === "A" ? "B" : "A"} (Replenishing Standby)`,
         keysCount: standbyList.length,
         status: standbyList.length > 0 
-          ? (activeList.length === 0 ? "Swapping to Active" : "Filling as fallback occurs (Locked until Active is empty)") 
+          ? (activeList.length === 0 ? "Swapping to Active" : "Filling on fallback (Locked until Active is empty)") 
           : "Empty (Pristine)",
         keys: standbyList.map((idx) => items.find((k) => k.index === idx)!),
       },
