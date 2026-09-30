@@ -184,22 +184,34 @@ function RecommendationsTab() {
       .split(/\s+/)
       .filter((w) => w.length > 2);
 
-  const runMatcher = () => {
+const runMatcher = () => {
     if (!profile || !opportunities.length) return;
     setLoading(true);
 
+    // --- Normalized user profile ---
     const userSkills = (profile.skills || []).map((s) => s.toLowerCase().trim());
     const userInterests = (profile.interests || []).map((i) => i.toLowerCase().trim());
     const userCategory = (profile.category || "").toLowerCase().trim();
     const userLocation = (profile.location || "").toLowerCase().trim();
-    const userEducation = (profile.education || "").toLowerCase();
+    const userEducation = (profile.education || "").toLowerCase().trim();
     const userBio = profile.bio || "";
-    const userIncome = (profile.income || "").toLowerCase();
+    const userIncome = (profile.income || "").toLowerCase().trim();
     const bioTokens = tokenize(userBio);
+
+    // --- Performance profile enrichment (if available) ---
+    // The performance profile (from wallet documents) can provide additional skills/tech
+    const perfSkills: string[] = []; // Could be populated from performance context if available
+    const perfTechs: string[] = [];
+
+    // Helper: word-boundary-aware contains check
+    const containsWord = (haystack: string, needle: string): boolean => {
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`\\b${escaped}\\b`, "i").test(haystack);
+    };
 
     const results: MatchResult[] = opportunities.map((opp) => {
       const signals: MatchSignal[] = [];
-      let score = 30;
+      let score = 0;
 
       const oppText = [opp.description, opp.eligibility, opp.field, opp.title]
         .join(" ")
@@ -212,11 +224,11 @@ function RecommendationsTab() {
         signals.push({ label: `Category: ${opp.category}`, points: 20, icon: "🎯" });
       }
 
-      // Signal 2: Skills match (+6 per skill, max +30)
+      // Signal 2: Skills match (+6 per skill, max +30) — word-boundary aware
       let skillPoints = 0;
       const matchedSkills: string[] = [];
       for (const skill of userSkills) {
-        if (oppText.includes(skill) && skillPoints < 30) {
+        if (containsWord(oppText, skill) && skillPoints < 30) {
           skillPoints += 6;
           matchedSkills.push(skill);
         }
@@ -230,13 +242,13 @@ function RecommendationsTab() {
         });
       }
 
-      // Signal 3: Interests / field match (+5 per match, max +20)
+      // Signal 3: Interests / field match (+5 per match, max +20) — word-boundary aware
       let intPoints = 0;
       const matchedInterests: string[] = [];
       for (const interest of userInterests) {
         if (
-          (opp.field.toLowerCase().includes(interest) ||
-            opp.description.toLowerCase().includes(interest)) &&
+          (containsWord(opp.field, interest) ||
+            containsWord(opp.description, interest)) &&
           intPoints < 20
         ) {
           intPoints += 5;
@@ -252,7 +264,7 @@ function RecommendationsTab() {
         });
       }
 
-      // Signal 4: Location / country match (+10)
+      // Signal 4: Location / country match (+10) — exact or prefix match
       if (userLocation && opp.country.toLowerCase().includes(userLocation)) {
         score += 10;
         signals.push({ label: `Country: ${opp.country}`, points: 10, icon: "📍" });

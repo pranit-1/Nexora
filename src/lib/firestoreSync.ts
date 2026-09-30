@@ -97,6 +97,58 @@ export function generateOpportunityDocId(opp: {
   return `opp-${cleanOrg}-${cleanTitle}`;
 }
 
+/**
+ * Infers income limit from opportunity description/eligibility.
+ * Returns INR value (e.g., 800000 for 8 LPA) or undefined if not detectable.
+ */
+function inferIncomeLimit(opp: any): number | undefined {
+  const text = `${opp.description || ""} ${opp.eligibility || ""} ${opp.title || ""}`.toLowerCase();
+  // Match patterns like "8 LPA", "8 lakh", "800000", "12 lpa", "income below 8 lakh"
+  const patterns = [
+    /(?:income|family income|annual income|income limit|below|upto|up to)\D*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs?)/gi,
+    /(?:income|family income|annual income|income limit|below|upto|up to)\D*(\d+(?:\.\d+)?)\s*(?:crore|crores?)/gi,
+    /(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs?)\s*(?:income|family|annual|limit)/gi,
+    /(?:rs\.?|inr|₹)\s*(\d+(?:,\d{3})*(?:\.\d+)?)/gi,
+  ];
+  for (const re of patterns) {
+    const matches = [...text.matchAll(re)];
+    for (const m of matches) {
+      const val = parseFloat(m[1].replace(/,/g, ""));
+      if (!isNaN(val) && val > 0) {
+        // Convert to INR
+        if (m[0].includes("crore")) return val * 10000000;
+        if (m[0].includes("lakh") || m[0].includes("lpa")) return val * 100000;
+        // If just a number with ₹/INR/RS, assume it's already in INR
+        if (m[0].includes("rs") || m[0].includes("₹") || m[0].includes("inr")) return val;
+        // If bare number, check scale
+        if (val < 100) return val * 100000; // likely in lakhs
+        return val;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Infers degree level from eligibility/description.
+ * Returns string like "bachelor", "master", "phd", "diploma", etc.
+ */
+function inferDegreeLevel(opp: any): string | undefined {
+  const text = `${opp.eligibility || ""} ${opp.description || ""} ${opp.title || ""}`.toLowerCase();
+  const degreeMap: [RegExp, string][] = [
+    [/\b(phd|ph\.d|doctorate|doctoral)\b/, "phd"],
+    [/\b(master|m\.?tech|m\.?e|m\.?sc|msc|mba|m\.?c\.?a|mca|postgraduate|pg)\b/, "master"],
+    [/\b(bachelor|b\.?tech|b\.?e|b\.?sc|bsc|b\.?c\.?a|bca|b\.?b\.?a|bba|undergraduate|ug)\b/, "bachelor"],
+    [/\b(diploma|polytechnic|certificate|course)\b/, "diploma"],
+    [/\b(12th|class\s*12|hsc|intermediate|puc)\b/, "12th"],
+    [/\b(10th|class\s*10|ssc|matric)\b/, "10th"],
+  ];
+  for (const [re, level] of degreeMap) {
+    if (re.test(text)) return level;
+  }
+  return undefined;
+}
+
 export interface SyncResult {
   totalProcessed: number;
   newOrUpdated: number;
@@ -127,6 +179,11 @@ export async function syncOpportunitiesToFirestore(
     }
 
     const docId = opp.id || generateOpportunityDocId(opp);
+    // Infer income limit from description/eligibility if not provided
+    const inferredIncomeLimit = inferIncomeLimit(opp);
+    // Infer degree level from eligibility/description
+    const inferredDegreeLevel = inferDegreeLevel(opp);
+
     const payload = {
       title: opp.title || "Untitled Opportunity",
       orgName: opp.orgName || opp.organization || "NEXORA Partner",
@@ -146,6 +203,8 @@ export async function syncOpportunitiesToFirestore(
       status: "approved", // auto-approved for live explore feed
       postedByUid: "automated-ingestion",
       updatedAt: new Date().toISOString(),
+      incomeLimit: inferredIncomeLimit,
+      degreeLevel: inferredDegreeLevel,
     };
 
     validOpps.push({ id: docId, data: payload });
