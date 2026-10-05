@@ -119,6 +119,31 @@
   --color-info: var(--info);
   --color-info-surface: var(--info-surface);
 
+  /* ── shadcn-compatible aliases ──────────────────────────────────────────
+     Our ui/ components (Button, Card, Chip, Skeleton, Field, etc.) use the
+     shadcn token vocabulary. Map each alias to the nearest Nexora equivalent
+     so Tailwind classes like bg-muted, text-destructive, bg-card resolve. */
+
+  /* card → surface (our cards sit on the surface plane) */
+  --color-card: var(--surface);
+  --color-card-foreground: var(--foreground);
+
+  /* muted → surface-raised / foreground-muted */
+  --color-muted: var(--surface-raised);
+  --color-muted-foreground: var(--foreground-muted);
+
+  /* accent → surface-raised (hover accent, same warm lift as raised) */
+  --color-accent: var(--surface-raised);
+  --color-accent-foreground: var(--foreground);
+
+  /* destructive → danger */
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--primary-foreground);
+
+  /* popover → surface */
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--foreground);
+
   /* Type scale — 11 steps, tight tracking, 1.55 body leading. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1.35;

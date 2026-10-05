@@ -173,9 +173,22 @@ export default function PerformancePage() {
       return;
     }
     setLoading(true);
-    const data = await fetchPerformanceProfile(currentUser.uid);
-    setProfile(data);
-    setLoading(false);
+    // Try the cached snapshot first (fast, read-only GET)
+    const cached = await fetchPerformanceProfile(currentUser.uid);
+    if (cached) {
+      // Snapshot exists — use it immediately, then silently refresh in background
+      setProfile(cached);
+      setLoading(false);
+      // Quietly recompute in background so numbers stay fresh
+      refreshPerformanceProfile(currentUser.uid, { refreshNarrative: false })
+        .then((fresh) => { if (fresh) setProfile(fresh); })
+        .catch(() => {/* non-critical */});
+    } else {
+      // No cached snapshot yet — compute for the first time (shows spinner)
+      const fresh = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true });
+      setProfile(fresh);
+      setLoading(false);
+    }
   }, [currentUser]);
 
   useEffect(() => {
