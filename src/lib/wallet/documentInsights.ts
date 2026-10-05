@@ -506,7 +506,15 @@ export function extractInsights(text: string, category: WalletCategory, name = "
 
   insights.orgType = detectOrgType(body);
   if (category === "ID Documents" || isGovtId(body)) insights.isGovtId = true;
-  if (category === "Awards") insights.awardLevel = detectAwardLevel(body) || "university";
+  if (category === "Awards") {
+    // Only record a level that the text actually supports. This used to fall back
+    // to `"university"`, which asserted a specific competitive tier for every
+    // award whose level could not be read — feeding `scoreRecognition` a
+    // guaranteed non-null level and handing out recognition points for a tier the
+    // document never claimed.
+    const level = detectAwardLevel(body);
+    if (level) insights.awardLevel = level;
+  }
 
   insights.keywords = findKeywords(body);
   return insights;

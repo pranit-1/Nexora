@@ -4,7 +4,7 @@
 //  2. Fallback to cheerio selectors for server-rendered parts
 //  3. If both fail, return RawListing via stripHtml for AI normalization
 
-import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline } from "./utils";
+import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline, asText, firstLineOf } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 
 const BASE = "https://unstop.com";
@@ -33,7 +33,11 @@ export async function scrapeUnstop(): Promise<ScrapedOpportunity[]> {
             out.push(...opportunities);
             continue;
           }
-        } catch {}
+        } catch (err: any) {
+          // An empty `catch {}` here is what let one malformed record erase a
+          // whole page's results with no trace. Report and try the next route.
+          console.warn(`[Scraper:Unstop] __NEXT_DATA__ parse failed on ${page.url}:`, err?.message ?? err);
+        }
       }
 
       // Attempt 2: JSON-LD
@@ -42,7 +46,9 @@ export async function scrapeUnstop(): Promise<ScrapedOpportunity[]> {
         try {
           const j = JSON.parse($(el).html() || "");
           jsonLdBlocks.push(j);
-        } catch {}
+        } catch (err: any) {
+          console.warn(`[Scraper:Unstop] bad JSON-LD block on ${page.url}:`, err?.message ?? err);
+        }
       });
       if (jsonLdBlocks.length > 0) {
         const fromLd = extractFromJsonLd(jsonLdBlocks, page);
@@ -61,8 +67,10 @@ export async function scrapeUnstop(): Promise<ScrapedOpportunity[]> {
           const $el = $(el);
           const title = cleanText(
             $el.find("h3, h2, .title, [class*='title'], [class*='heading']").first().text() ||
-              $el.text().split("\n")[0] ||
-              ""
+              // No `.split("\n")[0]` here: Unstop ships minified HTML with zero
+              // newlines, so that returned the entire card text (>5000 chars),
+              // failed the length guard and silently dropped every card.
+              firstLineOf($el.text())
           );
           if (!title || title.length < 5 || title.length > 180) return;
           const href = $el.attr("href") || $el.find("a").first().attr("href") || "";
@@ -116,14 +124,24 @@ function extractFromNextData(data: any, page: { url: string; category: string; f
     if (Array.isArray(cur)) {
       for (const item of cur) {
         if (item && typeof item === "object" && (item.title || item.name) && (item.url || item.slug || item.id)) {
-          const title: string = item.title || item.name;
-          if (title.length < 5 || title.length > 180) continue;
-          const slug: string = item.slug || item.url || item.id;
+          const title = cleanText(asText(item.title, 200) || asText(item.name, 200));
+          if (title.length < 5 || title.length > 180) {
+            if (typeof item === "object") stack.push(item);
+            continue;
+          }
+          // `item.id` is numeric on Unstop, so `slug.startsWith` used to throw
+          // a TypeError and abort the entire walk for this page.
+          const slug = asText(item.slug, 500) || asText(item.url, 500) || String(item.id ?? "");
           const link = slug.startsWith("http") ? slug : `${BASE}/o/${slug}`;
           out.push({
-            title: cleanText(title),
-            orgName: cleanText(item.organisation_name || item.company || item.org || "Unstop"),
-            description: cleanText(item.description || item.tagline || "").slice(0, 280) || `${title} on Unstop.`,
+            title,
+            orgName: cleanText(
+              asText(item.organisation_name, 180) ||
+                asText(item.company, 180) ||
+                asText(item.org, 180) ||
+                "Unstop"
+            ),
+            description: cleanText(asText(item.description, 600) || asText(item.tagline, 600)).slice(0, 280) || `${title} on Unstop.`,
             eligibility: "Check Unstop for eligibility details.",
             deadline: parseDeadline(item.deadline || item.end_date || item.reg_end_date),
             country: "Global",
@@ -153,21 +171,25 @@ function extractFromJsonLd(blocks: any[], page: { url: string; category: string;
   for (const b of blocks) {
     const arr = Array.isArray(b) ? b : [b];
     for (const item of arr) {
+      if (!item || typeof item !== "object") continue;
       if (item["@type"] === "Event" || item["@type"] === "Course" || item.name) {
-        const title = cleanText(item.name || "");
+        const title = cleanText(asText(item.name, 200));
         if (!title || title.length < 5) continue;
+        const url = asText(item.url, 500) || page.url;
         out.push({
           title,
-          orgName: cleanText(item.organizer?.name || item.provider?.name || "Unstop"),
-          description: cleanText(item.description || "").slice(0, 280) || `${title} on Unstop.`,
+          orgName: cleanText(
+            asText(item.organizer?.name, 180) || asText(item.provider?.name, 180) || "Unstop"
+          ),
+          description: cleanText(asText(item.description, 600)).slice(0, 280) || `${title} on Unstop.`,
           eligibility: "Check Unstop for eligibility.",
           deadline: parseDeadline(item.endDate || item.startDate),
-          country: cleanText(item.location?.name || "") || "Global",
+          country: cleanText(asText(item.location?.name, 120)) || "Global",
           category: page.category,
           field: page.field,
-          applyLink: item.url || page.url,
+          applyLink: url,
           requiredDocuments: ["Resume"],
-          sourceUrl: item.url || page.url,
+          sourceUrl: url,
           sourceType: "scraped",
           autoApprove: false,
           scraperName: "Unstop",

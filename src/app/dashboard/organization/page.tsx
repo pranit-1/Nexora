@@ -2,7 +2,8 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
+import { authedFetch } from "@/lib/apiClient";
+import { collection, query, where, addDoc, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -25,6 +26,8 @@ export default function OrgDashboardPage() {
   const [opportunities, setOpportunities] = useState<OrgOpportunity[]>([]);
   const [applications, setApplications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [shortlistingId, setShortlistingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
 
   const isOrg = profile?.role === "organization" || profile?.role === "admin";
 
@@ -113,14 +116,24 @@ export default function OrgDashboardPage() {
       setLoading(false);
     });
 
-    // Fetch candidate submissions / mock applications submitted to this org
+    // Fetch candidate submissions for programs THIS organization posted.
+    //
+    // Reading `applications` directly from the browser is not possible: the
+    // rules scope each document to its applicant (and to the org that posted the
+    // program), and Firestore rules cannot join an `org_opportunities` lookup
+    // against an `applications` query. So the list is fetched server-side, where
+    // the caller's uid is verified before their posted programs are resolved.
     const loadSubmissions = async () => {
-      const q = query(collection(db, "applications"), where("organization", "==", profile?.name || "NEXORA Partner"));
-      const snap = await getDocs(q);
-      const list: any[] = [];
-      snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() });
-      });
+      if (!currentUser) return;
+      const res = await authedFetch("/api/organization/applications");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || `Could not load applications (${res.status}).`);
+        setApplications([]);
+        return;
+      }
+      const data = await res.json();
+      const list: any[] = Array.isArray(data?.applications) ? data.applications : [];
       setApplications(list);
     };
     loadSubmissions();
@@ -168,17 +181,26 @@ export default function OrgDashboardPage() {
   };
 
   const handleShortlistCandidate = async (appId: string, status: "Shortlisted" | "Rejected") => {
+    setShortlistingId(appId);
+    setActionError("");
     try {
-      await updateDoc(doc(db, "applications", appId), {
-        status,
-        updatedAt: new Date().toISOString(),
+      const res = await authedFetch("/api/organization/applications/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: appId, status }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || `Could not update the application (${res.status}).`);
+      }
       setApplications((prev) =>
         prev.map((app) => (app.id === appId ? { ...app, status } : app))
       );
-      alert(`Candidate has been successfully: ${status}! 🌸`);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setActionError(err?.message || "Could not update the application.");
+    } finally {
+      setShortlistingId(null);
     }
   };
 
@@ -537,6 +559,14 @@ export default function OrgDashboardPage() {
           </h3>
 
           <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+            {actionError && (
+              <div
+                role="alert"
+                className="p-3 bg-red-50 border border-red-200 rounded-xl text-[10px] text-red-700"
+              >
+                {actionError}
+              </div>
+            )}
             {applications.map((app) => (
               <div key={app.id} className="bg-white border border-slate-100 p-4 rounded-2xl shadow-sm space-y-3">
                 <div className="space-y-0.5">
@@ -559,14 +589,16 @@ export default function OrgDashboardPage() {
                     <div className="flex gap-1">
                       <button
                         onClick={() => handleShortlistCandidate(app.id, "Shortlisted")}
-                        className="p-1 hover:bg-primary/10 rounded text-primary"
+                        disabled={shortlistingId === app.id}
+                        className="p-1 hover:bg-primary/10 rounded text-primary disabled:opacity-50"
                         title="Shortlist Candidate"
                       >
                         <CheckCircle className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleShortlistCandidate(app.id, "Rejected")}
-                        className="p-1 hover:bg-red-50 rounded text-red-500"
+                        disabled={shortlistingId === app.id}
+                        className="p-1 hover:bg-red-50 rounded text-red-500 disabled:opacity-50"
                         title="Reject Candidate"
                       >
                         <XCircle className="w-4 h-4" />

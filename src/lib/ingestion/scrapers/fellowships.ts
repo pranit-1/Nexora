@@ -2,7 +2,7 @@
 // Scrapes fellowship-specific listings without pre-filtering — all data
 // is returned and filtered client-side per user choice.
 
-import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline, stripHtml } from "./utils";
+import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline, stripHtml, firstLineOf } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 
 function decodeEntities(str: string): string {
@@ -114,7 +114,7 @@ export async function scrapeFellowships(): Promise<ScrapedOpportunity[]> {
       }
       cards.slice(0, 30).each((_, el) => {
         const $el = $(el);
-        const title = cleanText($el.find("h2, h3, .title, [class*='title'], .entry-title").first().text() || $el.text().split("\n")[0] || "");
+        const title = cleanText($el.find("h2, h3, .title, [class*='title'], .entry-title").first().text() || firstLineOf($el.text()));
         if (!title || title.length < 10 || title.length > 180) return;
         const key = title.toLowerCase();
         if (seen.has(key)) return;

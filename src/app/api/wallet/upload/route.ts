@@ -1,15 +1,80 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { requireUser } from "@/lib/serverAuth";
+import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
+
+/** 10 MB. Anything larger is refused before the body is buffered. */
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Accepted MIME types and the Cloudinary format each maps to. SVG and HTML are
+ * excluded on purpose: Cloudinary serves them from its own CDN with the
+ * attacker's content type, which turns a "document upload" into stored XSS on a
+ * trusted origin.
+ */
+const ALLOWED_TYPES: Record<string, string> = {
+  "application/pdf": "pdf",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "text/plain": "txt",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+};
 
 export async function POST(req: NextRequest) {
-  try {
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    const folder = (formData.get("folder") as string) || "wallet";
+  // Previously unauthenticated: the project's Cloudinary account was an open,
+  // unmetered file host and a bandwidth bill anyone could trigger.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
 
-    if (!file) {
+  const uid = auth.user.uid;
+
+  const limited = enforceRateLimit(req, { ...LIMITS.upload, uid });
+  if (!limited.ok) return limited.response;
+
+  try {
+    const contentLength = Number(req.headers.get("content-length") || "0");
+    if (contentLength > MAX_UPLOAD_BYTES + 1024) {
+      return NextResponse.json(
+        { error: `File is too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.` },
+        { status: 413 }
+      );
+    }
+
+    const formData = await req.formData();
+    const file = formData.get("file");
+
+    if (!(file instanceof File) || file.size === 0) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.` },
+        { status: 413 }
+      );
+    }
+
+    const mime = (file.type || "").toLowerCase();
+    const format = ALLOWED_TYPES[mime];
+    if (!format) {
+      return NextResponse.json(
+        {
+          error: `Unsupported file type${mime ? ` (${mime})` : ""}. Allowed: PDF, Word, PowerPoint, Excel, TXT, JPEG, PNG, WebP, HEIC.`,
+        },
+        { status: 415 }
+      );
+    }
+
+    // The folder is derived from the verified uid, never from the request body.
+    // A client-supplied folder let any caller write into any user's namespace.
+    const folder = `wallet/${uid}`;
 
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || process.env.CLOUDINARY_CLOUD_NAME;
     const apiKey = process.env.CLOUDINARY_API_KEY;
@@ -23,57 +88,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Convert File to Buffer / Base64 for Cloudinary upload
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Data = `data:${file.type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
-
-    const uploadFormData = new FormData();
-    uploadFormData.append("file", file);
-    uploadFormData.append("folder", folder);
-
-    // If apiKey & apiSecret are provided, sign the upload (most reliable and secure)
-    if (apiKey && apiSecret) {
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const paramsToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
-      const signature = crypto.createHash("sha1").update(paramsToSign).digest("hex");
-
-      uploadFormData.append("api_key", apiKey);
-      uploadFormData.append("timestamp", timestamp);
-      uploadFormData.append("signature", signature);
-    } else if (uploadPreset) {
-      // Fallback to unsigned upload preset
-      uploadFormData.append("upload_preset", uploadPreset);
-    } else {
+    if (!apiKey || !apiSecret) {
       return NextResponse.json(
-        { error: "Cloudinary credentials missing: please configure CLOUDINARY_API_KEY & CLOUDINARY_API_SECRET or UPLOAD_PRESET." },
+        { error: "Cloudinary server credentials are not configured." },
         { status: 500 }
       );
     }
 
-    const uploadRes = await fetch(
-      `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
-      {
-        method: "POST",
-        body: uploadFormData,
-      }
-    );
+    const uploadFormData = new FormData();
+    uploadFormData.append("file", file);
+    uploadFormData.append("folder", folder);
+    // Explicit format allow-list instead of relying on `auto`, so an
+    // unrecognised payload cannot be stored and served as an active content type.
+    uploadFormData.append("format", format);
+    uploadFormData.append("allowed_formats", Object.values(ALLOWED_TYPES).join(","));
+
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const paramsToSign = `folder=${folder}&format=${format}&timestamp=${timestamp}${apiSecret}`;
+    const signature = crypto.createHash("sha1").update(paramsToSign).digest("hex");
+
+    uploadFormData.append("api_key", apiKey);
+    uploadFormData.append("timestamp", timestamp);
+    uploadFormData.append("signature", signature);
+
+    // Unused, but kept so a preset-only deployment path stays obvious.
+    void uploadPreset;
+
+    const uploadRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+      method: "POST",
+      body: uploadFormData,
+      signal: AbortSignal.timeout(60_000),
+    });
 
     const resText = await uploadRes.text();
-    let data: any = {};
+    let data: Record<string, any> = {};
     try {
       data = JSON.parse(resText);
     } catch {
       return NextResponse.json(
-        { error: `Cloudinary response error (${uploadRes.status}): ${resText.slice(0, 150)}` },
-        { status: uploadRes.status || 500 }
+        { error: `Cloudinary returned an unreadable response (HTTP ${uploadRes.status}).` },
+        { status: 502 }
       );
     }
 
     if (!uploadRes.ok) {
       return NextResponse.json(
-        { error: data.error?.message || "Cloudinary upload failed." },
-        { status: uploadRes.status || 500 }
+        { error: data?.error?.message || "Cloudinary upload failed." },
+        { status: uploadRes.status >= 400 && uploadRes.status < 600 ? uploadRes.status : 502 }
       );
     }
 

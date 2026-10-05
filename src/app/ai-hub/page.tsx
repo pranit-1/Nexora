@@ -10,7 +10,7 @@ import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, collection, addDoc, getDocs, query, where, orderBy, limit } from "firebase/firestore";
 import { Opportunity } from "@/lib/mockData";
 import { useOpportunities } from "@/hooks/useOpportunities";
-import { AIServiceClient, ResumeAnalysisResult, InterviewFeedbackResult } from "@/lib/aiServiceClient";
+import { AIServiceClient, AIServiceUnavailableError, ResumeAnalysisResult, InterviewFeedbackResult } from "@/lib/aiServiceClient";
 import {
   Sparkles,
   CheckCircle,
@@ -553,6 +553,7 @@ function ResumeTab() {
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState("");
+  const [analysisError, setAnalysisError] = useState("");
 
   const fetchHistory = async () => {
     if (!currentUser) return;
@@ -634,6 +635,7 @@ function ResumeTab() {
   const analyzeResume = async () => {
     if (!resumeText.trim()) return;
     setLoading(true);
+    setAnalysisError("");
     try {
       const analysis = await AIServiceClient.analyzeResume(resumeText);
       setResult(analysis);
@@ -653,6 +655,12 @@ function ResumeTab() {
       }
     } catch (error) {
       console.error(error);
+      setResult(null);
+      setAnalysisError(
+        error instanceof AIServiceUnavailableError
+          ? error.message
+          : "Could not analyze your resume right now. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -744,6 +752,15 @@ function ResumeTab() {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Run AI Scan & ATS Grade"}
         </button>
       </div>
+
+      {analysisError && (
+        <div
+          role="alert"
+          className="p-4 bg-danger-surface border border-danger/30 rounded-2xl text-xs text-danger"
+        >
+          {analysisError}
+        </div>
+      )}
 
       {result && (
         <div className="border-t border-border pt-6 space-y-5">
@@ -853,6 +870,7 @@ function ChatTab() {
   const [messages, setMessages] = useState<{ role: "user" | "model"; text: string }[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
 
   const fetchChatHistory = async () => {
     if (!currentUser) return;
@@ -886,6 +904,7 @@ function ChatTab() {
     const newMessages = [...messages, { role: "user" as const, text: userMsg }];
     setMessages(newMessages);
     setLoading(true);
+    setChatError("");
 
     try {
       const chatResponse = await AIServiceClient.getChatbotResponse(
@@ -902,6 +921,14 @@ function ChatTab() {
       }
     } catch (err) {
       console.error(err);
+      // Show the failure in-thread instead of replacing it with a canned reply,
+      // which used to look like a genuine answer from the advisor.
+      setChatError(
+        err instanceof AIServiceUnavailableError
+          ? err.message
+          : "The advisor is unavailable right now. Please try again."
+      );
+      setMessages(newMessages);
     } finally {
       setLoading(false);
     }
@@ -944,6 +971,14 @@ function ChatTab() {
               </div>
             </div>
           )}
+          {chatError && (
+            <div
+              role="alert"
+              className="bg-danger-surface border border-danger/30 text-danger rounded-2xl px-4 py-3 text-xs"
+            >
+              {chatError}
+            </div>
+          )}
         </div>
 
         <form onSubmit={sendMessage} className="mt-4 flex gap-2">
@@ -980,6 +1015,7 @@ function InterviewTab() {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<InterviewFeedbackResult | null>(null);
+  const [interviewError, setInterviewError] = useState("");
 
   const startInterview = () => {
     // Generate questions locally based on role for rule compliance
@@ -1015,6 +1051,7 @@ function InterviewTab() {
       // Evaluate answers with Gemini
       setLoading(true);
       setStage("feedback");
+      setInterviewError("");
       try {
         const payload = questions.map((q, idx) => ({
           question: q,
@@ -1034,6 +1071,14 @@ function InterviewTab() {
         }
       } catch (err) {
         console.error(err);
+        setFeedback(null);
+        setStage("interviewing");
+        setCurrentIdx(questions.length - 1);
+        setInterviewError(
+          err instanceof AIServiceUnavailableError
+            ? err.message
+            : "Could not review your answers right now. Please try again."
+        );
       } finally {
         setLoading(false);
       }
@@ -1124,6 +1169,13 @@ function InterviewTab() {
               <Loader2 className="w-8 h-8 text-primary animate-spin" />
               <span className="text-xs text-foreground-muted">Gemini is evaluating your responses...</span>
             </div>
+          ) : interviewError ? (
+            <div
+              role="alert"
+              className="p-4 bg-danger-surface border border-danger/30 rounded-2xl text-xs text-danger"
+            >
+              {interviewError}
+            </div>
           ) : (
             feedback && (
               <div className="space-y-5">
@@ -1198,6 +1250,7 @@ function AnalyticsTab() {
     performanceScore: 0,
   });
   const [summary, setSummary] = useState("");
+  const [summaryError, setSummaryError] = useState("");
 
   // Profile completion is calculated from the actual fields the user has
   // filled in — NOT a fixed placeholder. Each field is weighted equally.
@@ -1248,10 +1301,21 @@ function AnalyticsTab() {
 
       setStats(currentStats);
 
-      // Generate Gemini tracking text
-      const progressSummary = await AIServiceClient.trackConfidence(currentStats);
-      setSummary(progressSummary);
-
+      // Generate Gemini tracking text. Failure must not blank out the real
+      // Firestore-derived stats above, so the narrative is handled separately.
+      setSummaryError("");
+      try {
+        const progressSummary = await AIServiceClient.trackConfidence(currentStats);
+        setSummary(progressSummary);
+      } catch (e) {
+        console.error(e);
+        setSummary("");
+        setSummaryError(
+          e instanceof AIServiceUnavailableError
+            ? e.message
+            : "Could not generate a progress summary right now."
+        );
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -1318,8 +1382,13 @@ function AnalyticsTab() {
             Monthly AI Progress Summary (Gemini)
           </span>
           <p className="text-foreground text-xs leading-relaxed mt-2 whitespace-pre-line font-medium">
-            {summary}
+            {summary || "No summary available."}
           </p>
+          {summaryError && (
+            <p role="alert" className="text-danger text-[10px] mt-2">
+              {summaryError}
+            </p>
+          )}
         </div>
       </div>
     </div>

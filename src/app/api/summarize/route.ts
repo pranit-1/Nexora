@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { AIRouterService } from "@/lib/aiProviders";
 import { getCachedSummary, saveSummary } from "@/lib/storage/summariesStore";
+import { requireUser } from "@/lib/serverAuth";
+import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
+import { validateOutboundUrl } from "@/lib/urlGuard";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -103,27 +106,44 @@ function buildFallback(args: {
 }
 
 export async function POST(request: Request) {
-  try {
-    const body = await request.json().catch(() => ({}));
-    const url: string = body.url || body.sourceUrl || "";
-    const title: string = body.title || "";
-    const orgName: string = body.orgName || body.organization || "";
-    const category: string = body.category || "";
-    const deadline: string = body.deadline || "";
-    const country: string = body.country || "";
-    const field: string = body.field || "";
-    const eligibility: string = body.eligibility || "";
+  // Paid LLM + server-side fetch of a caller-supplied URL. Requires a verified
+  // Firebase session; previously this was fully open (SSRF + free LLM for anyone).
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
 
-    if (!url || !/^https?:\/\//i.test(url)) {
-      return NextResponse.json({ error: "Valid url required" }, { status: 400 });
+  const limited = enforceRateLimit(request, { ...LIMITS.summarize, uid: auth.user.uid });
+  if (!limited.ok) return limited.response;
+
+  try {
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "A JSON object body is required" }, { status: 400 });
     }
 
-    // 1. Serve cache instantly (repeat clicks → no re-scrape / no AI cost)
-    const cached = getCachedSummary(url);
+    const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+    const url = str(body.url) || str(body.sourceUrl);
+    const title = str(body.title);
+    const orgName = str(body.orgName) || str(body.organization);
+    const category = str(body.category);
+    const deadline = str(body.deadline);
+    const country = str(body.country);
+    const field = str(body.field);
+    const eligibility = str(body.eligibility);
+
+    // SSRF guard: rejects loopback / RFC1918 / link-local (cloud metadata) /
+    // CGNAT / IPv6-local targets, non-http(s) schemes and embedded credentials.
+    const checked = validateOutboundUrl(url);
+    if (!checked.ok) {
+      return NextResponse.json({ error: checked.reason }, { status: 400 });
+    }
+    const safeUrl = checked.url.toString();
+
+    // 1. Serve cache instantly (repeat clicks: no re-scrape / no AI cost)
+    const cached = getCachedSummary(safeUrl);
     if (cached) {
       return NextResponse.json({
         success: true,
-        url,
+        url: safeUrl,
         title: cached.title || title,
         orgName: cached.orgName || orgName,
         summary: cached.summary,
@@ -135,17 +155,39 @@ export async function POST(request: Request) {
     // 2. Fetch full page (with charset-aware decode to avoid mojibake)
     let text = "";
     try {
-      const res = await fetch(url, {
+      const res = await fetch(safeUrl, {
         headers: {
           "User-Agent": "NexoraOpportunityBot/1.0 (+https://nexora.vercel.app)",
           Accept: "text/html,application/xhtml+xml",
         },
         signal: AbortSignal.timeout(15000),
+        // Manual redirect handling: an open redirect on an allowed host would
+        // otherwise walk straight past the host validation above.
+        redirect: "manual",
       });
-      if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
-      const buf = await res.arrayBuffer();
-      const contentType = res.headers.get("content-type") || "";
-      text = stripHtml(decodeBody(buf, contentType));
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location");
+        const followed = location ? validateOutboundUrl(new URL(location, safeUrl).toString()) : null;
+        if (!followed?.ok) {
+          throw new Error("Blocked cross-origin redirect");
+        }
+        const followRes = await fetch(followed.url, {
+          headers: {
+            "User-Agent": "NexoraOpportunityBot/1.0 (+https://nexora.vercel.app)",
+            Accept: "text/html,application/xhtml+xml",
+          },
+          signal: AbortSignal.timeout(15000),
+          redirect: "error",
+        });
+        if (!followRes.ok) throw new Error(`Fetch failed ${followRes.status}`);
+        const followBuf = await followRes.arrayBuffer();
+        text = stripHtml(decodeBody(followBuf, followRes.headers.get("content-type") || ""));
+      } else {
+        if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
+        const buf = await res.arrayBuffer();
+        const contentType = res.headers.get("content-type") || "";
+        text = stripHtml(decodeBody(buf, contentType));
+      }
     } catch {
       text = "";
     }
@@ -186,7 +228,7 @@ Bullet list of 5-8 key facts the user MUST know (most important info compressed)
 
 If any info is not found on the page, write "Check official page" rather than guessing. Keep total under 450 words.
 
-Context (card info): Title="${title}" Organization="${orgName}" Category="${category}" Deadline="${deadline}" Country="${country}" Field="${field}" Eligibility="${eligibility}" URL="${url}"
+Context (card info): Title="${title}" Organization="${orgName}" Category="${category}" Deadline="${deadline}" Country="${country}" Field="${field}" Eligibility="${eligibility}" URL="${safeUrl}"
 
 FULL PAGE TEXT:
 """
@@ -196,44 +238,51 @@ ${raw}
         const summary = await AIRouterService.requestAI(prompt, false);
         const summaryText = typeof summary === "string" ? summary : JSON.stringify(summary);
         if (summaryText && summaryText.trim().length > 50) {
-          saveSummary(url, { summary: summaryText, provider: "openrouter-key1", title, orgName });
+          saveSummary(safeUrl, { summary: summaryText, provider: "ai-router", title, orgName });
           return NextResponse.json({
             success: true,
-            url,
+            url: safeUrl,
             title,
             orgName,
             summary: summaryText,
             sourceLength: raw.length,
-            provider: "openrouter-key1",
+            provider: "ai-router",
           });
         }
         throw new Error("Empty AI output");
       }
       throw new Error("Page content too short for AI");
     } catch (aiErr: any) {
-      // 4. Smart fallback from card metadata + clean snippets (never raw dump)
+      // 4. Smart fallback from card metadata + clean snippets (never raw dump).
+      // NOTE: this is deliberately NOT persisted — a transient provider outage must
+      // not write a metadata template into the 30-day cache and suppress the real
+      // summary for every later visitor.
       console.warn("[summarize] AI failed, using metadata fallback:", aiErr.message);
-      const fallback = buildFallback({ title, orgName, url, category, deadline, country, field, eligibility, snippets, reason: aiErr.message || "offline" });
-      saveSummary(url, { summary: fallback, provider: "fallback-metadata", title, orgName });
+      const fallback = buildFallback({ title, orgName, url: safeUrl, category, deadline, country, field, eligibility, snippets, reason: aiErr.message || "offline" });
       return NextResponse.json({
         success: true,
-        url,
+        url: safeUrl,
         title,
         orgName,
         summary: fallback,
         sourceLength: raw.length,
         provider: "fallback-metadata",
-        warning: aiErr.message,
+        warning: "AI provider unavailable — showing a metadata-derived summary. Try again shortly.",
       });
     }
   } catch (err: any) {
+    console.error("[summarize] Fatal:", err);
     return NextResponse.json({ error: err.message || "Summarize failed" }, { status: 500 });
   }
 }
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const target = url.searchParams.get("url");
-  if (!target) return NextResponse.json({ error: "Missing ?url=" }, { status: 400 });
-  return POST(new Request(request.url, { method: "POST", body: JSON.stringify({ url: target }), headers: { "Content-Type": "application/json" } } as any));
+// The GET variant was removed deliberately. It let any web page trigger a
+// paid LLM call and a server-side fetch of an arbitrary URL just by loading
+// <img src="/api/summarize?url=http://169.254.169.254/...">. Use POST with an
+// Authorization header.
+export async function GET() {
+  return NextResponse.json(
+    { error: "Use POST with a valid Authorization header." },
+    { status: 405, headers: { Allow: "POST" } }
+  );
 }

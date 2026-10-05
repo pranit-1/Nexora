@@ -1,5 +1,6 @@
 import { WALLET_CATEGORIES, normalizeCategory } from "./categories";
 import type { WalletCategory } from "@/lib/types";
+import { authedFetch } from "@/lib/apiClient";
 
 export type CategorySource = "content" | "ai" | "manual" | "unknown";
 
@@ -124,6 +125,25 @@ const RULES: Record<Exclude<WalletCategory, "Other">, Rule[]> = {
   ],
 };
 
+/**
+ * Sum of the positive weights per category — the highest score that category can
+ * theoretically reach. Used to normalise a raw score into a 0..1 strength so
+ * confidence means the same thing across categories whose rule sets have very
+ * different totals (Resume tops out at 20.5, Projects at 21.5, and so on).
+ *
+ * Negative weights (the "looks like a marksheet" discriminators) are excluded,
+ * since they exist to penalise, not to be earned.
+ */
+const MAX_SCORE_BY_CATEGORY: Record<string, number> = Object.fromEntries(
+  Object.entries(RULES).map(([category, rules]) => [
+    category,
+    rules.reduce((sum, r) => sum + Math.max(0, r.weight), 0),
+  ])
+);
+
+/** Below this the classification is shown to the user as uncertain. */
+const REVIEW_THRESHOLD = 0.55;
+
 function scoreCategories(text: string) {
   const scores: Record<string, number> = {};
   const hits: Record<string, string[]> = {};
@@ -177,22 +197,37 @@ export function classifyByContent(rawText: string): ClassificationResult {
     };
   }
 
-  const margin = topScore - Math.max(0, runnerUpScore);
-  const confidence = Math.min(0.97, Math.max(0.4, 0.4 + 0.07 * topScore + 0.08 * margin));
+  // Confidence is built from two independent, scale-free signals:
+  //
+  //   strength    — how much of the winning category's signature matched, so a
+  //                 single weak keyword scores low instead of looking certain.
+  //   marginRatio — how far ahead of the runner-up the winner is, relative to its
+  //                 own score, so an ambiguous two-way tie reads as uncertain.
+  //
+  // The old formula was `0.4 + 0.07 * topScore + 0.08 * margin` on the raw sums.
+  // Because the raw sums run into the tens, that expression exceeded 1.0 for
+  // anything beyond a couple of weak matches, so the `Math.min(0.97, ...)` clamp
+  // pinned almost every classification at 0.97 and the "needsReview" gate could
+  // essentially never fire. Confidence carried no information at all.
+  const maxScore = MAX_SCORE_BY_CATEGORY[topCategory] || 1;
+  const strength = Math.min(1, Math.max(0, topScore / maxScore));
+  const marginRatio = Math.min(1, Math.max(0, (topScore - Math.max(0, runnerUpScore)) / Math.max(topScore, 1)));
+
+  const confidence = Math.min(0.97, Math.max(0.05, 0.05 + 0.7 * strength + 0.25 * marginRatio));
 
   return {
     category: topCategory as WalletCategory,
     confidence: Number(confidence.toFixed(2)),
     source: "content",
     reason: `Matched: ${topHits.slice(0, 3).join(", ")}`,
-    needsReview: confidence < 0.55,
+    needsReview: confidence < REVIEW_THRESHOLD,
   };
 }
 
 export async function classifyWithAI(
   opts: Pick<ClassifyOptions, "text" | "imageDataUrl" | "mimeType" | "name">
 ): Promise<ClassificationResult> {
-  const res = await fetch("/api/wallet/categorize", {
+  const res = await authedFetch("/api/wallet/categorize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -211,10 +246,15 @@ export async function classifyWithAI(
 
   return {
     category,
-    confidence: typeof body.confidence === "number" ? body.confidence : 0.6,
+    // A missing confidence must not become a reassuring 0.6 — that reads as
+    // "the model was fairly sure". Treat it as unknown and flag for review.
+    confidence: typeof body.confidence === "number" ? body.confidence : 0,
     source: "ai",
     reason: body.reason || "Classified by AI",
-    needsReview: typeof body.needsReview === "boolean" ? body.needsReview : false,
+    needsReview:
+      typeof body.needsReview === "boolean"
+        ? body.needsReview
+        : typeof body.confidence !== "number" || body.confidence < 0.55,
   };
 }
 

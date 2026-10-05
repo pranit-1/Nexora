@@ -3,6 +3,8 @@
 // GROQ_API_KEYS="key1,key2,key3"
 // GROQ_MODEL="llama-3.1-8b-instant" (optional override)
 
+import { aiFormatError, isAiFormatError, parseJsonLoose } from "./json";
+
 export class GroqService {
   private static getKeys(): string[] {
     const keysStr = process.env.GROQ_API_KEYS || "";
@@ -16,6 +18,16 @@ export class GroqService {
 
   private static getModel(): string {
     return process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  }
+
+  /**
+   * Upstream timeout. Without one, an accepted-but-never-answered request holds
+   * the whole rotation open and the key is counted as neither success nor
+   * failure.
+   */
+  private static get timeoutMs(): number {
+    const raw = Number(process.env.AI_REQUEST_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 1_000 ? raw : 45_000;
   }
 
   /** Mask key for security logs */
@@ -33,6 +45,7 @@ export class GroqService {
     const model = this.getModel();
     let attempts = 0;
     const maxAttempts = keys.length;
+    let lastError = "";
 
     while (attempts < maxAttempts) {
       const activeKey = keys[this.currentKeyIndex];
@@ -51,14 +64,24 @@ export class GroqService {
           body.response_format = { type: "json_object" };
         }
 
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${activeKey}`,
-          },
-          body: JSON.stringify(body),
-        });
+        const timeoutMs = this.timeoutMs;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${activeKey}`,
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
 
         // 1. Rate limit or quota exceeded
         if (response.status === 429) {
@@ -89,31 +112,50 @@ export class GroqService {
         }
 
         if (jsonMode) {
-          try {
-            const parsed = JSON.parse(text.trim());
-            console.log(`[GroqService] Key ${this.currentKeyIndex} (${maskedKey}) succeeded!`);
-            return parsed;
-          } catch (parseErr: any) {
-            console.warn(`[GroqService] Key ${this.currentKeyIndex} (${maskedKey}) returned invalid JSON. Rotating key. Error: ${parseErr.message}`);
-            this.rotateKey(keys.length);
-            attempts++;
-            continue;
+          // The call already returned 200 with a valid body, so this key is
+          // healthy. Non-JSON here is the model ignoring `response_format`, not
+          // a key fault — the old code rotated on it, burning a working
+          // credential on a formatting problem and reporting the result as a
+          // total key failure. Salvage first, then fail loudly.
+          const parsed = parseJsonLoose(text);
+          if (parsed === undefined) {
+            throw aiFormatError(
+              "The AI model returned a non-JSON response for a JSON request. The key is healthy; the model's output format is not."
+            );
           }
+          console.log(`[GroqService] Key ${this.currentKeyIndex} (${maskedKey}) succeeded!`);
+          return parsed;
         }
 
         console.log(`[GroqService] Key ${this.currentKeyIndex} (${maskedKey}) succeeded!`);
         return text;
       } catch (err: any) {
-        console.error(`[GroqService] Connection/parsing error with key index ${this.currentKeyIndex} (${maskedKey}):`, err.message);
+        // Never rotate on a model-format failure: every remaining key would hit
+        // the same formatting problem and the user would see a misleading
+        // "all keys failed".
+        if (isAiFormatError(err)) {
+          throw err;
+        }
+        const isTimeout = err?.name === "AbortError";
+        const reason = isTimeout ? `timed out after ${this.timeoutMs}ms` : err?.message || String(err);
+        console.error(
+          `[GroqService] ${isTimeout ? "Timeout" : "Connection/parsing error"} with key index ${this.currentKeyIndex} (${maskedKey}):`,
+          reason
+        );
         this.rotateKey(keys.length);
         attempts++;
+        lastError = reason;
         if (attempts >= maxAttempts) {
-          throw new Error(`All available Groq API keys failed. Last error: ${err.message}`);
+          throw new Error(`All available Groq API keys failed. Last error: ${lastError}`);
         }
       }
     }
 
-    throw new Error("Groq request failed due to unknown reasons after rotating through all keys.");
+    throw new Error(
+      lastError
+        ? `All available Groq API keys failed. Last error: ${lastError}`
+        : "Groq request failed due to unknown reasons after rotating through all keys."
+    );
   }
 
   private static rotateKey(totalKeys: number) {

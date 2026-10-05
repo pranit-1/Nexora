@@ -29,6 +29,9 @@ export const ENGINE_VERSION = 2;
  * `potentialFill` is what a dimension typically reaches once the user actually
  * fills it in, so `potential` is always >= `overall`. `oneDoc` is the rough
  * score a single new document buys, used for the "worth about +N points" hints.
+ *
+ * Weights sum to exactly 1.00. They used to sum to 1.02, which meant the UI
+ * printed a literal "102% weight" on the performance page.
  */
 const DIMENSION_META: Record<
   PerformanceDimensionKey,
@@ -38,13 +41,72 @@ const DIMENSION_META: Record<
   credentials: { label: "Credentials", weight: 0.12, potentialFill: 70, oneDoc: 50 },
   recognition: { label: "Recognition", weight: 0.1, potentialFill: 70, oneDoc: 55 },
   projects: { label: "Projects", weight: 0.12, potentialFill: 75, oneDoc: 55 },
-  skills: { label: "Technical Skills", weight: 0.12, potentialFill: 75, oneDoc: 50 },
-  recency: { label: "Recency & Momentum", weight: 0.08, potentialFill: 70, oneDoc: 40 },
+  skills: { label: "Technical Skills", weight: 0.11, potentialFill: 75, oneDoc: 50 },
+  recency: { label: "Recency & Momentum", weight: 0.07, potentialFill: 70, oneDoc: 40 },
   network: { label: "Network & Visibility", weight: 0.07, potentialFill: 70, oneDoc: 35 },
   github: { label: "GitHub & Open Source", weight: 0.12, potentialFill: 80, oneDoc: 45 },
   coding: { label: "Coding Platforms", weight: 0.1, potentialFill: 80, oneDoc: 40 },
   readiness: { label: "Application Readiness", weight: 0.04, potentialFill: 70, oneDoc: 0 },
 };
+
+/**
+ * Maximum raw points each dimension's scorer can award, i.e. the sum of every
+ * unconditional bonus it can reach.
+ *
+ * This table exists because the scorers below were written with ad-hoc point
+ * values whose reachable totals were never reconciled with the 0..100 scale they
+ * are displayed on. The totals were academics 128, credentials 100,
+ * recognition 108, projects 106, skills 100, recency 80, network 86 and
+ * readiness 108 (readiness additionally hard-capped at 92 to hide the overflow).
+ * Any dimension that ran over 100 saturated against `clamp`, which destroyed the
+ * discrimination in the top of the range and made a strong profile
+ * indistinguishable from a very strong one. It also made `potentialFill` (tuned
+ * against a 0..100 assumption) unreliable, which is why `potential` needed a
+ * `Math.max(overall, ...)` guard.
+ *
+ * Dividing by the true maximum is the minimal correct fix: it keeps every
+ * individual signal worth exactly what it was worth relative to its siblings,
+ * and only corrects the scale. A user now reaches 100 in a dimension only by
+ * satisfying literally every signal that dimension checks for.
+ */
+const DIMENSION_RAW_MAX: Record<PerformanceDimensionKey, number> = {
+  // 25 + min(24, (n-1)*12) + 30 (>=90%) + 8 (class 12) + 10 (subjects) + 5 (class 10)
+  // + 8 (institution) + 6 (roll no) + 6 (field/year) + 6 (fresh)
+  academics: 128,
+  // 30 + min(36, (n-1)*12) + 12 (2+ issuers) + 12 (fresh) + 10 (skills)
+  credentials: 100,
+  // 35 + min(45, (n-1)*15) + 15 (intl/national) + 5 (issuer) + 8 (fresh)
+  recognition: 108,
+  // 30 + min(45, (n-1)*15) + 12 (linked) + 13 (tech>=2) + 6 (skills)
+  projects: 106,
+  // 15 + 35 (tech) + 25 (skills) + 15 (languages) + 10 (resume corroborates)
+  skills: 100,
+  // 10 + 35 (3+ in 6mo) + 20 (3+ in 1yr) + 15 (resume <90d)
+  recency: 80,
+  // 5 + 30 (link kinds) + 10 (linkedin+github) + 8 (portfolio) + 20 (doc links)
+  // + 8 (awards) + 5 (certs)
+  network: 86,
+  // 30 (resume) + 10 (fresh) + 12 (contact) + 12 (links) + 14 (profile links)
+  // + 10 (nothing needs review) + 8 (nothing unfiled) + 12 (4+ documents)
+  readiness: 108,
+  // Fed in already normalised from the GitHub / coding scorers.
+  github: 100,
+  coding: 100,
+};
+
+/**
+ * Maps a dimension's raw accumulated points onto 0..100 against its real
+ * maximum. Replaces a bare `clamp`, which silently flattened every dimension
+ * that could overshoot.
+ */
+function normalizeDimension(
+  key: PerformanceDimensionKey,
+  raw: number
+): number {
+  const max = DIMENSION_RAW_MAX[key];
+  if (!max || max <= 0) return clamp(raw);
+  return clamp((raw / max) * 100);
+}
 
 const clamp = (n: number, min = 0, max = 100) => Math.min(max, Math.max(min, Math.round(n)));
 
@@ -160,7 +222,7 @@ function scoreAcademics(docs: WalletDocument[]): PerformanceDimension {
   }
   if (hasFreshDoc(results, 730)) score += 6;
 
-  return { key: "academics", ...meta, score: clamp(score), docCount: results.length, missing: false, evidence, notes };
+  return { key: "academics", ...meta, score: normalizeDimension("academics", score), docCount: results.length, missing: false, evidence, notes };
 }
 
 function scoreCredentials(docs: WalletDocument[]): PerformanceDimension {
@@ -200,7 +262,7 @@ function scoreCredentials(docs: WalletDocument[]): PerformanceDimension {
     evidence.push(`Skills evidenced: ${skills.slice(0, 4).join(", ")}`);
   }
 
-  return { key: "credentials", ...meta, score: clamp(score), docCount: certs.length, missing: false, evidence, notes };
+  return { key: "credentials", ...meta, score: normalizeDimension("credentials", score), docCount: certs.length, missing: false, evidence, notes };
 }
 
 function scoreRecognition(docs: WalletDocument[]): PerformanceDimension {
@@ -225,7 +287,9 @@ function scoreRecognition(docs: WalletDocument[]): PerformanceDimension {
     score += 10;
     evidence.push(`${top}-level award`);
   } else {
-    notes.push("Award level could not be detected.");
+    // No level in the text means no level bonus. Awarding the lower tier anyway
+    // would reward a document for a claim it never made.
+    notes.push("Award level could not be read from the document, so no level bonus was applied.");
   }
 
   if (awards.some((d) => insightOf(d)?.issuer || insightOf(d)?.institution)) {
@@ -235,7 +299,7 @@ function scoreRecognition(docs: WalletDocument[]): PerformanceDimension {
   }
   if (hasFreshDoc(awards, 1095)) score += 8;
 
-  return { key: "recognition", ...meta, score: clamp(score), docCount: awards.length, missing: false, evidence, notes };
+  return { key: "recognition", ...meta, score: normalizeDimension("recognition", score), docCount: awards.length, missing: false, evidence, notes };
 }
 
 function scoreProjects(docs: WalletDocument[]): PerformanceDimension {
@@ -272,7 +336,7 @@ function scoreProjects(docs: WalletDocument[]): PerformanceDimension {
 
   if (projects.some((d) => (insightOf(d)?.skills || []).length)) score += 6;
 
-  return { key: "projects", ...meta, score: clamp(score), docCount: projects.length, missing: false, evidence, notes };
+  return { key: "projects", ...meta, score: normalizeDimension("projects", score), docCount: projects.length, missing: false, evidence, notes };
 }
 
 function scoreReadiness(docs: WalletDocument[], needsReviewCount: number, links: ProfileLink[]): PerformanceDimension {
@@ -352,7 +416,10 @@ function scoreReadiness(docs: WalletDocument[], needsReviewCount: number, links:
     notes.push(`Only ${docs.length} document${docs.length === 1 ? "" : "s"} uploaded — supporting evidence is thin.`);
   }
 
-  return { key: "readiness", ...meta, score: clamp(Math.min(score, 92)), docCount: resumes.length || docs.length, missing: false, evidence, notes };
+  // The old `Math.min(score, 92)` was a band-aid over this scorer being able to
+  // reach 108 raw points. Normalizing against the true maximum replaces it, so
+  // the cap is now a real consequence of the evidence rather than a constant.
+  return { key: "readiness", ...meta, score: normalizeDimension("readiness", score), docCount: resumes.length || docs.length, missing: false, evidence, notes };
 }
 
 // ─── NEW DIMENSIONS ──────────────────────────────────────────────────────────
@@ -387,7 +454,7 @@ function scoreSkills(docs: WalletDocument[]): PerformanceDimension {
   const hasResume = docs.some((d) => d.category === "Resume");
   if (hasResume && (allTech.length >= 3 || allSkills.length >= 5)) score += 10;
 
-  return { key: "skills", ...meta, score: clamp(score), docCount: docs.filter((d) => insightOf(d)?.skills?.length || insightOf(d)?.technologies?.length).length, missing: false, evidence, notes };
+  return { key: "skills", ...meta, score: normalizeDimension("skills", score), docCount: docs.filter((d) => insightOf(d)?.skills?.length || insightOf(d)?.technologies?.length).length, missing: false, evidence, notes };
 }
 
 function scoreRecency(docs: WalletDocument[]): PerformanceDimension {
@@ -447,7 +514,7 @@ function scoreRecency(docs: WalletDocument[]): PerformanceDimension {
     }
   }
 
-  return { key: "recency", ...meta, score: clamp(score), docCount: dates.length, missing: false, evidence, notes };
+  return { key: "recency", ...meta, score: normalizeDimension("recency", score), docCount: dates.length, missing: false, evidence, notes };
 }
 
 function scoreNetwork(docs: WalletDocument[], links: ProfileLink[]): PerformanceDimension {
@@ -482,7 +549,7 @@ function scoreNetwork(docs: WalletDocument[], links: ProfileLink[]): Performance
   if (docs.some((d) => d.category === "Awards")) score += 8;
   if (docs.some((d) => d.category === "Certificates")) score += 5;
 
-  return { key: "network", ...meta, score: clamp(score), docCount: links.length + docLinks.length, missing: false, evidence, notes };
+  return { key: "network", ...meta, score: normalizeDimension("network", score), docCount: links.length + docLinks.length, missing: false, evidence, notes };
 }
 
 function scoreGitHub(githubData?: { score: number; signals: string[]; topRepos: any[] }): PerformanceDimension {
@@ -494,7 +561,7 @@ function scoreGitHub(githubData?: { score: number; signals: string[]; topRepos: 
     return { key: "github", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["No GitHub profile connected or no public repositories found."] };
   }
 
-  let score = githubData.score;
+  const score = githubData.score;
   evidence.push(...githubData.signals);
   if (githubData.topRepos?.length) {
     evidence.push(`Top repo: ${githubData.topRepos[0].repo.name} (${githubData.topRepos[0].score}/100)`);
@@ -512,7 +579,7 @@ function scoreCodingPlatforms(codingData?: { score: number; byPlatform: Record<s
     return { key: "coding", ...meta, score: 0, docCount: 0, missing: true, evidence, notes: ["No coding platform profiles connected (LeetCode, CodeChef, Codeforces, etc.)."] };
   }
 
-  let score = codingData.score;
+  const score = codingData.score;
   evidence.push(...codingData.signals);
   const platforms = Object.entries(codingData.byPlatform).filter(([, s]) => s > 0);
   if (platforms.length) {

@@ -1,3 +1,5 @@
+import { authedFetch } from "@/lib/apiClient";
+
 export interface ResumeAnalysisResult {
   atsScore: number;
   strengths: string[];
@@ -15,89 +17,110 @@ export interface InterviewFeedbackResult {
   followUpQuestions: string[];
 }
 
+/**
+ * Thrown when the AI backend could not produce a real answer.
+ *
+ * This class used to swallow every failure and return a hardcoded, plausible
+ * looking result — a fixed `atsScore: 65`, a canned chatbot reply, a canned
+ * `confidenceScore: 70` — which the UI then rendered as if a model had produced
+ * it. Fabricated scores are worse than no scores: a student acted on them.
+ * Callers must handle this and show an honest "unavailable" state.
+ */
+export class AIServiceUnavailableError extends Error {
+  readonly reason: string;
+  constructor(reason: string, message?: string) {
+    super(message || "The AI service is unavailable right now.");
+    this.name = "AIServiceUnavailableError";
+    this.reason = reason;
+  }
+}
+
 export class AIServiceClient {
-  private static async postRequest(action: string, data: any): Promise<any> {
+  private static async postRequest(action: string, data: unknown): Promise<any> {
+    let response: Response;
     try {
-      const response = await fetch("/api/ai", {
+      response = await authedFetch("/api/ai", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, data }),
       });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `Server responded with status ${response.status}`);
-      }
-
-      const body = await response.json();
-      return body.result;
-    } catch (error: any) {
-      console.error(`AI Client Error for action ${action}:`, error);
-      throw error;
+    } catch (e) {
+      console.error(`AI Client network error for action ${action}:`, e);
+      throw new AIServiceUnavailableError("network", "Could not reach the AI service. Check your connection.");
     }
+
+    if (!response.ok) {
+      let message = `The AI service returned ${response.status}.`;
+      try {
+        const errData = await response.json();
+        if (errData && typeof errData.error === "string" && errData.error.length > 0) {
+          message = errData.error;
+        }
+      } catch {
+        // non-JSON error body; keep the status-derived message
+      }
+      if (response.status === 401) {
+        throw new AIServiceUnavailableError("unauthenticated", "Please sign in to use AI features.");
+      }
+      if (response.status === 429) {
+        throw new AIServiceUnavailableError("rate_limited", "Too many AI requests. Wait a moment and try again.");
+      }
+      throw new AIServiceUnavailableError("provider", message);
+    }
+
+    const body = await response.json();
+    return body?.result;
   }
 
   public static async analyzeResume(resumeText: string): Promise<ResumeAnalysisResult> {
-    try {
-      return await this.postRequest("analyzeResume", { resumeText });
-    } catch {
-      // Return rule-based / fallback mock response so app never crashes
-      return {
-        atsScore: 65,
-        strengths: ["Clean resume structure", "Relevant education background"],
-        weaknesses: ["Lack of action verbs", "Skills list is too short"],
-        missingSkills: ["Cloud Technologies", "CI/CD pipelines"],
-        formattingFeedback: "Consider using single-column layouts for improved ATS readability.",
-        improvementSuggestions: [
-          "Quantify your accomplishments using metrics.",
-          "Add more technical skills relevant to your career targets.",
-        ],
-      };
+    const result = await this.postRequest("analyzeResume", { resumeText });
+    if (!result || typeof result !== "object" || typeof result.atsScore !== "number") {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an unreadable resume analysis.");
     }
+    return {
+      atsScore: result.atsScore,
+      strengths: Array.isArray(result.strengths) ? result.strengths : [],
+      weaknesses: Array.isArray(result.weaknesses) ? result.weaknesses : [],
+      missingSkills: Array.isArray(result.missingSkills) ? result.missingSkills : [],
+      formattingFeedback: typeof result.formattingFeedback === "string" ? result.formattingFeedback : "",
+      improvementSuggestions: Array.isArray(result.improvementSuggestions) ? result.improvementSuggestions : [],
+    };
   }
 
   public static async getChatbotResponse(
     message: string,
     history: { role: "user" | "model"; text: string }[],
-    profileContext: any
+    profileContext: unknown
   ): Promise<string> {
-    try {
-      return await this.postRequest("chatbot", { message, history, profileContext });
-    } catch {
-      return "Hello! The AI Assistant is currently operating in offline backup mode. I can help answer general questions. Let me know if you need help matching opportunities or updating your profile!";
+    const result = await this.postRequest("chatbot", { message, history, profileContext });
+    if (typeof result !== "string" || result.trim().length === 0) {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an empty response.");
     }
+    return result;
   }
 
   public static async getInterviewFeedback(
     jobTitle: string,
     answers: { question: string; answer: string }[]
   ): Promise<InterviewFeedbackResult> {
-    try {
-      return await this.postRequest("interview", { jobTitle, answers });
-    } catch {
-      return {
-        technicalFeedback: "The response demonstrates a basic conceptual understanding. Try to elaborate on structural details and system designs.",
-        communicationFeedback: "Answers are clear but could be more structured. Consider using the STAR method (Situation, Task, Action, Result) for explaining project work.",
-        confidenceScore: 70,
-        improvementSuggestions: [
-          "Provide concrete code or architectural examples.",
-          "Keep answers structured and avoid running off-topic.",
-        ],
-        followUpQuestions: [
-          "Can you explain a challenging bug you recently fixed?",
-          "How do you ensure test coverage for your backend endpoints?",
-        ],
-      };
+    const result = await this.postRequest("interview", { jobTitle, answers });
+    if (!result || typeof result !== "object" || typeof result.technicalFeedback !== "string") {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an unreadable interview review.");
     }
+    return {
+      technicalFeedback: result.technicalFeedback,
+      communicationFeedback: typeof result.communicationFeedback === "string" ? result.communicationFeedback : "",
+      confidenceScore: typeof result.confidenceScore === "number" ? result.confidenceScore : 0,
+      improvementSuggestions: Array.isArray(result.improvementSuggestions) ? result.improvementSuggestions : [],
+      followUpQuestions: Array.isArray(result.followUpQuestions) ? result.followUpQuestions : [],
+    };
   }
 
-  public static async trackConfidence(scores: any): Promise<string> {
-    try {
-      return await this.postRequest("trackConfidence", { scores });
-    } catch {
-      return "Excellent effort! You have completed multiple mock exercises and profile scans this week. Keep maintaining this pace to achieve your technical targets.";
+  public static async trackConfidence(scores: unknown): Promise<string> {
+    const result = await this.postRequest("trackConfidence", { scores });
+    if (typeof result !== "string" || result.trim().length === 0) {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an empty progress summary.");
     }
+    return result;
   }
 }

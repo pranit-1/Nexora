@@ -3,8 +3,16 @@
 // - Remotive:   https://remotive.com/api/remote-jobs         (remote jobs)
 // Both are auto-approved as trusted-feed.
 
-import { fetchJson, parseDeadline } from "./utils";
+import { fetchJson, asText, ROLLING_DEADLINE } from "./utils";
 import type { ScrapedOpportunity } from "./types";
+
+// Neither board publishes an application closing date. They publish when the
+// posting was created. This file used to pass that posting date to
+// parseDeadline(), producing a deadline in the past on the day it was scraped,
+// so every job record was born expired and pruned before a user ever saw it —
+// which is why the shipped data file claims 17 JobsAPIs records and contains
+// zero. A job board posting has no deadline; say so rather than inventing one.
+const NO_DEADLINE = ROLLING_DEADLINE;
 
 export async function scrapeJobsApis(): Promise<ScrapedOpportunity[]> {
   const out: ScrapedOpportunity[] = [];
@@ -12,19 +20,25 @@ export async function scrapeJobsApis(): Promise<ScrapedOpportunity[]> {
   // ── Arbeitnow ───────────────────────────────────────────────────────
   try {
     const data = await fetchJson("https://www.arbeitnow.com/api/job-board-api");
-    const jobs: any[] = data?.data || [];
-    for (const j of jobs.slice(0, 30)) {
-      const link: string = j.url || j.slug ? `https://www.arbeitnow.com/view/${j.slug}` : "https://www.arbeitnow.com";
-      const isInternship = /intern/i.test(j.title || "") || /intern/i.test(j.description || "");
+    const jobs: unknown[] = Array.isArray(data?.data) ? data.data : [];
+    for (const raw of jobs.slice(0, 30)) {
+      if (!raw || typeof raw !== "object") continue;
+      const j = raw as Record<string, unknown>;
+      const slug = asText(j.slug, 200);
+      const link = slug ? `https://www.arbeitnow.com/view/${slug}` : "https://www.arbeitnow.com";
+      const title = asText(j.title, 150);
+      const description = asText(j.description, 4000) || title;
+      const isInternship = /intern/i.test(title) || /intern/i.test(description);
+      const tags = Array.isArray(j.tags) ? j.tags.map((t: any) => asText(t, 60)).join(" ") : "";
       out.push({
-        title: (j.title || "Job Opening").trim().slice(0, 140),
-        orgName: (j.company_name || "Arbeitnow Employer").trim(),
-        description: stripDesc(j.description || j.title || ""),
+        title: title || "Job Opening",
+        orgName: asText(j.company_name, 180) || "Arbeitnow Employer",
+        description: stripDesc(description),
         eligibility: "Check official listing for eligibility and requirements.",
-        deadline: parseDeadline(j.created_at),
-        country: j.location || "Global",
+        deadline: NO_DEADLINE,
+        country: asText(j.location, 120) || "Global",
         category: isInternship ? "Internships" : "Internships",
-        field: inferField(j.title + " " + (j.tags || []).join(" ")),
+        field: inferField(`${title} ${tags}`),
         applyLink: link,
         requiredDocuments: ["Resume", "Cover Letter"],
         sourceUrl: link,
@@ -34,35 +48,41 @@ export async function scrapeJobsApis(): Promise<ScrapedOpportunity[]> {
       });
     }
   } catch (err: any) {
-    console.warn("[Scraper:Arbeitnow] failed:", err.message);
+    console.warn("[Scraper:Arbeitnow] failed:", err?.message ?? err);
   }
 
   // ── Remotive (remote jobs — great for students wanting remote work) ─
   try {
     const data = await fetchJson("https://remotive.com/api/remote-jobs?limit=10");
-    const jobs: any[] = data?.jobs || [];
-    for (const j of jobs.slice(0, 30)) {
-      if (!j.title || !j.url) continue;
-      const isInternship = /intern/i.test(j.title) || (j.job_type || "").toLowerCase().includes("intern");
+    const jobs: unknown[] = Array.isArray(data?.jobs) ? data.jobs : [];
+    for (const raw of jobs.slice(0, 30)) {
+      if (!raw || typeof raw !== "object") continue;
+      const j = raw as Record<string, unknown>;
+      const title = asText(j.title, 150);
+      const url = asText(j.url, 500);
+      if (!title || !url) continue;
+      const description = asText(j.description, 4000) || title;
+      const tags = Array.isArray(j.tags) ? j.tags.map((t: any) => asText(t, 60)).join(" ") : "";
+      const isInternship = /intern/i.test(title) || asText(j.job_type, 60).toLowerCase().includes("intern");
       out.push({
-        title: j.title.trim().slice(0, 140),
-        orgName: (j.company_name || "Remotive Employer").trim(),
-        description: stripDesc(j.description || j.title || ""),
-        eligibility: j.candidate_required_location || "Remote — open globally, check listing.",
-        deadline: parseDeadline(j.publication_date),
+        title: title.slice(0, 140),
+        orgName: asText(j.company_name, 180) || "Remotive Employer",
+        description: stripDesc(description),
+        eligibility: asText(j.candidate_required_location, 200) || "Remote — open globally, check listing.",
+        deadline: NO_DEADLINE,
         country: "Global",
         category: isInternship ? "Internships" : "Internships",
-        field: inferField(j.title + " " + (j.category || "") + " " + (j.tags || []).join(" ")),
-        applyLink: j.url,
+        field: inferField(`${title} ${asText(j.category, 80)} ${tags}`),
+        applyLink: url,
         requiredDocuments: ["Resume"],
-        sourceUrl: j.url,
+        sourceUrl: url,
         sourceType: "trusted-feed",
         autoApprove: false,
         scraperName: "Remotive",
       });
     }
   } catch (err: any) {
-    console.warn("[Scraper:Remotive] failed:", err.message);
+    console.warn("[Scraper:Remotive] failed:", err?.message ?? err);
   }
 
   // Dedup by applyLink

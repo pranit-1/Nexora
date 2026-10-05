@@ -7,6 +7,8 @@
 // - Zero Leakage Rule: The standby bucket is NEVER touched until the active bucket is COMPLETELY EMPTY.
 // - When the active bucket reaches 0 keys, roles instantly SWAP (Standby becomes Active, and the old bucket becomes the new empty bucket).
 
+import { aiFormatError, isAiFormatError, parseJsonLoose } from "./json";
+
 export interface KeyTelemetry {
   index: number;
   keyId: string;
@@ -29,6 +31,16 @@ export class OpenRouterService {
   private static queueA: number[] = [];
   private static queueB: number[] = [];
   private static initialized = false;
+
+  /**
+   * Upstream timeout. Without one, a connection that is accepted but never
+   * answered holds the request open until the platform kills it, and the key is
+   * counted as neither success nor failure.
+   */
+  private static get timeoutMs(): number {
+    const raw = Number(process.env.AI_REQUEST_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 1_000 ? raw : 45_000;
+  }
 
   public static getAllKeys(): string[] {
     const indexed: string[] = [];
@@ -117,25 +129,62 @@ export class OpenRouterService {
   }
 
   /**
-   * Check if active bucket is empty. If empty, trigger full failover swap to the other bucket.
+   * A key is only allowed to serve once its cooldown has elapsed.
+   *
+   * `cooldownUntil` used to be written by `ejectKeyToFallback` and then never
+   * read, so the cooldown was decorative: as soon as a swap promoted the standby
+   * bucket, every key in it was reset to "idle" and could be handed straight
+   * back to an upstream that had just rate-limited it. That is what turns a
+   * single 429 burst into all keys locked out at once.
+   */
+  private static isCoolingDown(index: number): boolean {
+    const tel = this.telemetry.get(index);
+    if (!tel?.cooldownUntil) return false;
+    return tel.cooldownUntil > Date.now();
+  }
+
+  /** Milliseconds until the last key in rotation becomes usable again. */
+  private static longestCooldownMs(): number {
+    const now = Date.now();
+    let longest = 0;
+    for (const tel of this.telemetry.values()) {
+      if (tel.cooldownUntil && tel.cooldownUntil > now) {
+        longest = Math.max(longest, tel.cooldownUntil - now);
+      }
+    }
+    return longest;
+  }
+
+  /** First key in `list` that is actually allowed to serve right now. */
+  private static firstEligible(list: number[]): number | undefined {
+    return list.find((index) => !this.isCoolingDown(index));
+  }
+
+  /**
+   * Check if active bucket has a usable key. If not, trigger full failover swap
+   * to the other bucket. Returns false only when no key anywhere can serve.
    */
   private static ensureActiveBucket(): boolean {
     const currentActiveList = this.activeBucket === "A" ? this.queueA : this.queueB;
 
-    if (currentActiveList.length > 0) {
-      return true; // Still have keys in active bucket
+    if (this.firstEligible(currentActiveList) !== undefined) {
+      return true; // Still have a usable key in the active bucket
     }
 
-    // Active bucket is completely empty! Swap roles
+    // Active bucket has nothing usable! Swap roles.
     const nextBucket = this.activeBucket === "A" ? "B" : "A";
     const nextList = nextBucket === "A" ? this.queueA : this.queueB;
 
-    if (nextList.length === 0) {
-      console.error("[OpenRouterService] ❌ Both Queue-A and Queue-B are completely empty!");
+    // Refuse to promote a key whose cooldown has not elapsed. Swapping anyway
+    // is what made the cooldown unenforced.
+    if (this.firstEligible(nextList) === undefined) {
+      console.error(
+        "[OpenRouterService] ❌ No OpenRouter key is currently usable in either bucket (all are cooling down)."
+      );
       return false;
     }
 
-    console.log(`[OpenRouterService] 🔄 Active Queue-${this.activeBucket} is now EMPTY! Swapping to Queue-${nextBucket} (${nextList.length} keys ready).`);
+    console.log(`[OpenRouterService] 🔄 Active Queue-${this.activeBucket} has no usable key! Swapping to Queue-${nextBucket}.`);
     this.activeBucket = nextBucket;
 
     // Refresh telemetry bucket labels
@@ -143,7 +192,7 @@ export class OpenRouterService {
       const tel = this.telemetry.get(idx);
       if (tel) {
         tel.currentBucket = `${nextBucket === "A" ? "Queue-A" : "Queue-B"} (Active)` as any;
-        tel.status = "idle";
+        if (!this.isCoolingDown(idx)) tel.status = "idle";
       }
     });
 
@@ -214,17 +263,29 @@ export class OpenRouterService {
     this.initQueues();
     const model = image ? this.getVisionModel() : this.getModel();
     let attempts = 0;
+    // One pass over every key plus one retry pass, since a key can fail
+    // transiently without being exhausted.
     const maxAttempts = keys.length * 2;
+    let lastError = "";
 
     while (attempts < maxAttempts) {
       const hasAvailable = this.ensureActiveBucket();
       if (!hasAvailable) {
-        throw new Error("All OpenRouter API keys in both queues are currently exhausted or cooling down.");
+        const waitMs = this.longestCooldownMs();
+        throw new Error(
+          `All OpenRouter API keys are cooling down. The last one frees up in ${Math.ceil(waitMs / 1000)}s.`
+        );
       }
 
-      // Pick the first key currently at the front of the active bucket
+      // Pick the first key currently allowed to serve at the front of the active bucket
       const activeList = this.activeBucket === "A" ? this.queueA : this.queueB;
-      const keyIndex = activeList[0];
+      const keyIndex = this.firstEligible(activeList);
+      if (keyIndex === undefined) {
+        // ensureActiveBucket already returned true, so this is unreachable in
+        // practice; fail closed rather than indexing with undefined.
+        attempts++;
+        continue;
+      }
       const activeKey = keys[keyIndex];
       const maskedKey = this.maskKey(activeKey);
       const tel = this.telemetry.get(keyIndex)!;
@@ -265,11 +326,21 @@ export class OpenRouterService {
           headers["X-Title"] = process.env.NEXT_PUBLIC_APP_NAME;
         }
 
-        const response = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-        });
+        const timeoutMs = this.timeoutMs;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
 
         const promptTokens = Math.ceil(prompt.length / 4);
 
@@ -309,29 +380,54 @@ export class OpenRouterService {
         tel.status = "idle";
 
         if (jsonMode) {
-          try {
-            const parsed = JSON.parse(text.trim());
-            return parsed;
-          } catch (parseErr: any) {
+          // The key just answered 200 with a valid body, so it is healthy. If the
+          // payload is not JSON that is the model ignoring `response_format`, not
+          // a key fault — the old code ejected the key anyway, which burned a
+          // working credential on a formatting problem and masked the real cause
+          // behind "all keys failed". Salvage first, then fail loudly.
+          const parsed = parseJsonLoose(text);
+          if (parsed === undefined) {
             tel.failedRequests++;
-            this.ejectKeyToFallback(keyIndex, 1);
-            attempts++;
-            continue;
+            tel.status = "idle";
+            throw aiFormatError(
+              "The AI model returned a non-JSON response for a JSON request. The key is healthy; the model's output format is not."
+            );
           }
+          return parsed;
         }
 
         return text;
       } catch (err: any) {
-        console.error(`[OpenRouterService] Connection error with key #${keyIndex + 1}:`, err.message);
+        // A format failure is a request bug, not a key fault: rethrow without
+        // ejecting so one bad key cannot cascade into a total outage.
+        if (isAiFormatError(err)) {
+          throw err;
+        }
+        const isTimeout = err?.name === "AbortError";
+        lastError = isTimeout
+          ? `timed out after ${this.timeoutMs}ms`
+          : err?.message || String(err);
+        console.error(
+          `[OpenRouterService] ${isTimeout ? "Timeout" : "Connection error"} with key #${keyIndex + 1}:`,
+          lastError
+        );
         tel.failedRequests++;
-        this.ejectKeyToFallback(keyIndex, 3);
+        // A timeout means the credential authenticated fine but the upstream was
+        // slow, so cool it down briefly instead of parking it for minutes.
+        this.ejectKeyToFallback(keyIndex, isTimeout ? 1 : 3);
         attempts++;
         if (attempts >= maxAttempts) {
-          throw new Error(`All available OpenRouter keys across alternating queues failed. Last error: ${err.message}`);
+          throw new Error(
+            `All available OpenRouter keys failed. Last error: ${lastError}`
+          );
         }
       }
     }
 
-    throw new Error("OpenRouter request failed across alternating queue cycles.");
+    throw new Error(
+      lastError
+        ? `All available OpenRouter keys failed. Last error: ${lastError}`
+        : "OpenRouter request failed across alternating queue cycles."
+    );
   }
 }

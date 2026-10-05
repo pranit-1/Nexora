@@ -1,5 +1,5 @@
 // ─── Scholarships & Fellowships scrapers ───────────────────────────────
-import { fetchText, loadCheerio, cleanText, absoluteUrl, stripHtml } from "./utils";
+import { fetchText, loadCheerio, cleanText, absoluteUrl, stripHtml, firstLineOf } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 
 // RSS-based scholarship feeds (trusted — autoApprove logic handled by caller)
@@ -78,7 +78,7 @@ export async function scrapeScholarshipHtml(): Promise<ScrapedOpportunity[]> {
       const seen = new Set<string>();
       cards.slice(0, 30).each((_, el) => {
         const $el = $(el);
-        const title = cleanText($el.find("h3, h2, .title, [class*='title']").first().text() || $el.text().split("\n")[0] || "");
+        const title = cleanText($el.find("h3, h2, .title, [class*='title']").first().text() || firstLineOf($el.text()));
         if (!title || title.length < 10 || title.length > 180) return;
         const key = title.toLowerCase();
         if (seen.has(key)) return;

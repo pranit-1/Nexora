@@ -34,6 +34,7 @@ import {
 import { extractInsights } from "@/lib/wallet/documentInsights";
 import { computePerformanceProfile } from "@/lib/wallet/performanceProfile";
 import { refreshPerformanceProfile } from "@/lib/performanceProfileClient";
+import { authedFetch } from "@/lib/apiClient";
 import {
   displayUrl,
   kindAccent,
@@ -121,6 +122,9 @@ export default function WalletPage() {
   const [fileQueue, setFileQueue] = useState<QueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
+  const [uploadError, setUploadError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   // AI Analysis state (removed per-file LLM review)
@@ -248,24 +252,35 @@ export default function WalletPage() {
   const handleUploadAll = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || fileQueue.length === 0) return;
+    // Snapshot the queue: files may be added while this loop is running, and
+    // those must not be silently dropped when the queue is pruned at the end.
+    const queue = [...fileQueue];
+    if (queue.some((item) => item.reading)) {
+      setUploadError("Wait for text extraction to finish before uploading.");
+      return;
+    }
 
     setUploading(true);
+    setUploadError("");
     let successCount = 0;
+    const failures: string[] = [];
+    const failedIds = new Set<string>();
 
-    for (let i = 0; i < fileQueue.length; i++) {
-      const item = fileQueue[i];
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
       setUploadProgress({
         current: i + 1,
-        total: fileQueue.length,
+        total: queue.length,
         currentName: item.name,
       });
 
       try {
         const formData = new FormData();
         formData.append("file", item.file);
-        formData.append("folder", `wallet/${currentUser.uid}`);
+        // The folder is derived from the verified token server-side. The client
+        // used to send `wallet/${uid}`, which let it choose another user's path.
 
-        const res = await fetch("/api/wallet/upload", {
+        const res = await authedFetch("/api/wallet/upload", {
           method: "POST",
           body: formData,
         });
@@ -314,24 +329,30 @@ export default function WalletPage() {
         successCount++;
       } catch (err: any) {
         console.error("Upload error for file:", item.file.name, err);
-        alert(`Error uploading "${item.file.name}": ${err.message || "Upload failed"}`);
+        failedIds.add(item.id);
+        failures.push(`${item.file.name}: ${err?.message || "Upload failed"}`);
       }
     }
 
     setUploading(false);
     setUploadProgress(null);
-    setFileQueue([]);
+    // Only clear the rows that actually succeeded, so a failure is retryable
+    // instead of vanishing.
+    setFileQueue((prev) => prev.filter((item) => !queue.some((q) => q.id === item.id && !failedIds.has(q.id))));
+    setUploadError(failures.length > 0 ? failures.join("\n") : "");
 
     // More documents = more facts, so rebuild the score immediately.
     if (successCount > 0) await refreshPerformanceProfile(currentUser.uid);
   };
 
   const handleDelete = async (id: string) => {
+    const docToDelete = documents.find((d) => d.id === id);
+    if (!docToDelete) return;
+    setDeletingId(id);
+    setActionError("");
     try {
-      const docToDelete = documents.find((d) => d.id === id);
-
-      if (docToDelete?.storagePath) {
-        const res = await fetch("/api/wallet/delete", {
+      if (docToDelete.storagePath) {
+        const res = await authedFetch("/api/wallet/delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ publicId: docToDelete.storagePath }),
@@ -339,35 +360,67 @@ export default function WalletPage() {
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          console.error("Cloudinary delete failed:", errData.error);
+          // Deleting the Firestore record while the remote file survives leaves an
+          // orphaned upload that the user can no longer see or remove, so stop.
+          throw new Error(
+            errData?.error || "Could not delete the stored file. Nothing was removed."
+          );
         }
       }
 
       await deleteDoc(doc(db, "wallet", id));
-    } catch (err) {
+      if (currentUser) await refreshPerformanceProfile(currentUser.uid);
+    } catch (err: any) {
       console.error("Delete document error:", err);
+      setActionError(err?.message || "Failed to delete this document.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
   const handleAIVerify = async (docId: string, docName: string, category: WalletCategory) => {
     setAnalyzingId(docId);
+    setActionError("");
+    const target = documents.find((d) => d.id === docId);
+    const storedText = target?.extractedText?.trim() || "";
+
+    if (!storedText) {
+      setActionError(
+        "No text was extracted from this file, so there is nothing for the model to read. Re-upload it or set the category manually."
+      );
+      setAnalyzingId(null);
+      return;
+    }
+
     try {
-      await new Promise((res) => setTimeout(res, 2000));
+      const result = await classifyDocument({
+        text: storedText,
+        name: docName,
+        useAI: true,
+        preferAI: true,
+      });
 
-      let analysis = "";
-      if (category === "Resume") {
-        analysis = `### 🌸 Resume AI Audit Score: 87/100\n- **Strengths**: Strong inclusion of leadership credentials and hackathon participation.\n- **Opportunities**: Expand the "Projects" section by highlighting technologies (e.g. React, Next.js, Gemini API).\n- **Match Suggestion**: Excellent fit for the "Generation Google Scholarship" and "NASA internship" due to strong CS background.`;
-      } else if (category === "Certificates") {
-        analysis = `### 🌸 Certification Verified!\n- **Issuer**: Google Cloud Certified Associate\n- **Authenticity**: Verified by automated document scan.\n- **Impact**: Boosts your matching probability for technical internships by +15%.`;
-      } else if (category === "ID Documents") {
-        analysis = `### 🌸 ID Documents Verification Success\n- **Verification status**: Matches profile name successfully.\n- **Security Check**: Encryption matches privacy standards. Fully secured in NEXORA's safe vault.`;
-      } else {
-        analysis = `### 🌸 AI Evaluation for "${docName}"\n- **Status**: Document analyzed successfully.\n- **Advice**: Link this project / certificate under your Profile details to show to prospective organization sponsors.`;
+      const lines: string[] = [];
+      lines.push(`### Re-checked: ${docName}`);
+      lines.push(`- **Detected category**: ${result.category}`);
+      lines.push(
+        `- **Confidence**: ${Math.round(result.confidence * 100)}% (${result.source === "ai" ? "from the AI categorizer" : "from local rules only — the AI call did not run"})`
+      );
+      if (result.reason) lines.push(`- **Reasoning**: ${result.reason}`);
+      lines.push(
+        `- **Matches the saved category "${category}": ${result.category === category ? "yes" : "no — review this"}`
+      );
+      if (result.needsReview) {
+        lines.push("- **Needs review**: confidence was too low to lock in automatically.");
       }
+      lines.push(
+        "- This is a content-based category check. It does **not** verify that a certificate is genuine or that an ID matches your profile."
+      );
 
-      setAiReport((prev) => ({ ...prev, [docId]: analysis }));
-    } catch (error) {
+      setAiReport((prev) => ({ ...prev, [docId]: lines.join("\n") }));
+    } catch (error: any) {
       console.error(error);
+      setActionError(error?.message || "Could not run the AI check right now.");
     } finally {
       setAnalyzingId(null);
     }
@@ -829,9 +882,34 @@ export default function WalletPage() {
               </div>
             )}
 
+            {/* Upload failures, kept visible so they can be retried */}
+            {actionError && (
+              <div
+                role="alert"
+                className="p-2.5 bg-danger-surface border border-danger/30 rounded-xl text-[11px] text-danger"
+              >
+                {actionError}
+              </div>
+            )}
+            {uploadError && (
+              <div
+                role="alert"
+                className="p-2.5 bg-danger-surface border border-danger/30 rounded-xl"
+              >
+                <p className="text-[11px] font-bold text-danger">Some files failed to upload</p>
+                <ul className="mt-1 space-y-0.5">
+                  {uploadError.split("\n").map((line, i) => (
+                    <li key={i} className="text-[10px] text-danger/90 break-words">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <motion.button
               type="submit"
-              disabled={uploading || fileQueue.length === 0}
+              disabled={uploading || fileQueue.length === 0 || fileQueue.some((i) => i.reading)}
               whileHover={!uploading && fileQueue.length > 0 ? { scale: 1.02 } : {}}
               whileTap={!uploading && fileQueue.length > 0 ? { scale: 0.98 } : {}}
               transition={{ type: "spring", stiffness: 380, damping: 18 }}
@@ -1141,8 +1219,8 @@ export default function WalletPage() {
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
                         transition={{ type: "spring", stiffness: 400, damping: 18 }}
-                        className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all"
-                        title="AI Audit"
+                        className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all disabled:opacity-50"
+                        title="Re-check this document's category with AI"
                       >
                         {analyzingId === document.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -1164,13 +1242,18 @@ export default function WalletPage() {
                       </motion.a>
                       <motion.button
                         onClick={() => handleDelete(document.id)}
+                        disabled={deletingId === document.id}
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
                         transition={{ type: "spring", stiffness: 400, damping: 18 }}
-                        className="p-2 text-foreground-muted hover:text-danger hover:bg-surface-raised rounded-xl transition-all"
+                        className="p-2 text-foreground-muted hover:text-danger hover:bg-surface-raised rounded-xl transition-all disabled:opacity-50"
                         title="Delete"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        {deletingId === document.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
                       </motion.button>
                     </div>
                   </div>

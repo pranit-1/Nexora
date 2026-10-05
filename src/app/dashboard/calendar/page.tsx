@@ -191,7 +191,7 @@ export default function CalendarPage() {
       return;
     }
 
-    let icsContent = [
+    const icsContent = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
       "PRODID:-//NEXORA//Student Career Hub Calendar//EN",

@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { useNotifications } from "@/hooks/useNotifications";
+import { authedFetch } from "@/lib/apiClient";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -22,11 +23,13 @@ import {
 import ThemeToggle from "@/components/ThemeToggle";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { currentUser, profile, updateUserProfile, loading } = useAuth();
+  const { currentUser, profile, refreshProfile, loading } = useAuth();
   const { unreadCount } = useNotifications(currentUser?.uid);
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [roleError, setRoleError] = useState("");
+  const [switchingRole, setSwitchingRole] = useState(false);
 
   // Fallback to "user" if not set
   const currentRole = profile?.role || "user";
@@ -57,18 +60,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     },
   ];
 
-  const handleRoleChange = async (role: "user" | "organization" | "admin") => {
+  /**
+   * Switches between the "user" and "organization" personas.
+   *
+   * This used to write `role` straight to Firestore from the browser for a third
+   * option too — `admin` — which `firestore.rules` rejects outright. The failure
+   * was swallowed by a bare `console.error`, so the button silently did nothing
+   * while still advertising an escalation path.
+   *
+   * Two changes: `admin` is gone from this control (it is granted server-side
+   * only, from the allow-list, via `POST /api/admin/resolve-role`), and the write
+   * goes through `POST /api/account/role`, which is the only path that can
+   * actually persist a role change for a non-admin.
+   */
+  const handleRoleChange = async (role: "user" | "organization") => {
+    if (switchingRole) return;
+    setRoleError("");
+    setSwitchingRole(true);
     try {
-      await updateUserProfile({ role });
-      if (role === "organization") {
-        router.push("/dashboard/organization");
-      } else if (role === "admin") {
-        router.push("/dashboard/admin");
-      } else {
-        router.push("/dashboard");
-      }
+      const res = await authedFetch("/api/account/role", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Could not switch role (${res.status})`);
+
+      await refreshProfile();
+      router.push(role === "organization" ? "/dashboard/organization" : "/dashboard");
     } catch (err) {
       console.error("Failed to update role:", err);
+      setRoleError(err instanceof Error ? err.message : "Could not switch role.");
+    } finally {
+      setSwitchingRole(false);
     }
   };
 
@@ -95,12 +119,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <UserCheck className="w-3.5 h-3.5 text-primary" />
           <span>Active Persona Role</span>
         </div>
-        <div className="grid grid-cols-3 gap-1">
-          {(["user", "organization", "admin"] as const).map((r) => (
+        <div className="grid grid-cols-2 gap-1">
+          {(["user", "organization"] as const).map((r) => (
             <button
               key={r}
+              type="button"
+              disabled={switchingRole}
               onClick={() => handleRoleChange(r)}
-              className={`py-1.5 px-1 rounded-lg text-[9px] font-extrabold capitalize transition-all border ${
+              aria-pressed={currentRole === r}
+              className={`py-1.5 px-1 rounded-lg text-[9px] font-extrabold capitalize transition-all border disabled:opacity-50 ${
                 currentRole === r
                   ? "bg-primary border-primary text-white shadow-sm dark:shadow-[0_2px_8px_rgba(255,60,110,0.3)]"
                   : "bg-surface border-border text-foreground-muted hover:bg-surface-raised hover:text-foreground"
@@ -110,6 +137,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </button>
           ))}
         </div>
+        {roleError && (
+          <p role="alert" className="text-[10px] text-danger leading-relaxed">
+            {roleError}
+          </p>
+        )}
       </div>
 
       {/* Navigation */}
@@ -217,15 +249,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <UserCheck className="w-3.5 h-3.5 text-primary" />
                   <span>Role Persona</span>
                 </div>
-                <div className="grid grid-cols-3 gap-1">
-                  {(["user", "organization", "admin"] as const).map((r) => (
+                <div className="grid grid-cols-2 gap-1">
+                  {(["user", "organization"] as const).map((r) => (
                     <button
                       key={r}
+                      type="button"
+                      disabled={switchingRole}
                       onClick={() => {
                         handleRoleChange(r);
                         setMobileOpen(false);
                       }}
-                      className={`py-1 px-0.5 rounded-lg text-[9px] font-extrabold capitalize border ${
+                      aria-pressed={currentRole === r}
+                      className={`py-1 px-0.5 rounded-lg text-[9px] font-extrabold capitalize border disabled:opacity-50 ${
                         currentRole === r
                           ? "bg-primary border-primary text-white shadow-sm"
                           : "bg-surface border-border text-foreground-muted hover:bg-surface-raised"
@@ -235,6 +270,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </button>
                   ))}
                 </div>
+                {roleError && (
+                  <p role="alert" className="text-[10px] text-danger leading-relaxed">
+                    {roleError}
+                  </p>
+                )}
               </div>
 
               {/* Nav Links */}

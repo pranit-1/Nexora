@@ -14,9 +14,9 @@ import {
   linkWithCredential,
   User as FirebaseUser,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
-import { isAllowedAdminEmail } from "@/lib/adminConfig";
+import { authedFetch } from "@/lib/apiClient";
 
 interface UserProfile {
   username: string;
@@ -39,6 +39,8 @@ interface AuthContextType {
   currentUser: FirebaseUser | null;
   profile: UserProfile | null;
   loading: boolean;
+  /** Canonical server-resolved role. Never derived from a client-side allow-list. */
+  isAdmin: boolean;
   // email+username signup
   signup: (username: string, name: string, email: string, password: string) => Promise<any>;
   login: (email: string, password: string) => Promise<any>;
@@ -70,7 +72,7 @@ async function usernameAvailable(username: string): Promise<boolean> {
     const snap = await getDoc(doc(db, "usernames", key));
     return !snap.exists();
   } catch {
-    // Read blocked (rules) or offline → assume available; real uniqueness
+    // Read blocked (rules) or offline: assume available; real uniqueness
     // is enforced at claim time via Firestore rules on the usernames collection.
     return true;
   }
@@ -80,20 +82,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [roleCheckedUid, setRoleCheckedUid] = useState<string | null>(null);
+
+  /**
+   * Ask the server what this user's role actually is.
+   *
+   * The role used to be computed in the browser from an allow-list that shipped
+   * in the public bundle, and written with `updateDoc` - so anyone could read the
+   * admin list and self-promote. The server now owns the decision.
+   */
+  async function resolveRoleFromServer(): Promise<boolean> {
+    try {
+      const res = await authedFetch("/api/admin/resolve-role", { method: "POST" });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data?.role === "admin";
+    } catch (e) {
+      console.error("Error resolving role:", e);
+      return false;
+    }
+  }
 
   async function refreshProfile(uid?: string) {
     const activeUid = uid || currentUser?.uid;
     if (!activeUid) return;
     try {
-      const snap = await getDoc(doc(db, "users", activeUid));
+      const [snap, isAdmin] = await Promise.all([
+        getDoc(doc(db, "users", activeUid)),
+        resolveRoleFromServer(),
+      ]);
       if (snap.exists()) {
-        const data = snap.data() as UserProfile;
-        if (isAllowedAdminEmail(data.email) && data.role !== "admin") {
-          await updateDoc(doc(db, "users", activeUid), { role: "admin" });
-          data.role = "admin";
-        }
-        setProfile(data);
+        setProfile(snap.data() as UserProfile);
       }
+      setRoleCheckedUid(isAdmin ? activeUid : null);
     } catch (error) {
       console.error("Error loading user profile:", error);
     }
@@ -107,14 +128,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const key = normalizeUsername(username);
     if (!(await usernameAvailable(username))) throw new Error("Username already taken");
 
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    // Firebase normalises token emails to lowercase and the `usernames` rule
+    // compares this value against the token, so store it in the same casing or
+    // a user who typed "Nikhil@Gmail.com" would be denied their own claim.
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
     await updateProfile(cred.user, { displayName: name });
+
+    // Claim the username BEFORE writing the profile. If the claim is lost (another
+    // signup won the race between our availability check and this write), rolling
+    // back is a single auth-user delete; the old order left the profile advertising
+    // a username owned by somebody else, which then could never be claimed again.
+    try {
+      await setDoc(doc(db, "usernames", key), {
+        uid: cred.user.uid,
+        username: key,
+        email: normalizedEmail,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error("Failed to claim username doc", e);
+      try {
+        await cred.user.delete();
+      } catch (cleanupErr) {
+        console.error("Failed to roll back incomplete signup", cleanupErr);
+      }
+      throw new Error(
+        "That username was taken while you were signing up. Please pick another and try again."
+      );
+    }
 
     const initialProfile: UserProfile = {
       username: key,
       name,
-      email,
-      role: isAllowedAdminEmail(email) ? "admin" : "user",
+      email: normalizedEmail,
+      // Always start as "user". The server promotes to "admin" via
+      // /api/admin/resolve-role; the client must not decide this.
+      role: "user",
       authProvider: "password",
       bio: "",
       education: "",
@@ -127,12 +178,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     await setDoc(doc(db, "users", cred.user.uid), initialProfile);
-    // Claim username atomically-ish (firestore rules should enforce unique)
-    try {
-      await setDoc(doc(db, "usernames", key), { uid: cred.user.uid, username: key, email, createdAt: new Date().toISOString() });
-    } catch (e) {
-      console.warn("Failed to claim username doc", e);
-    }
     setProfile(initialProfile);
     return cred;
   }
@@ -147,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (raw.includes("@")) {
       return signInWithEmailAndPassword(auth, raw, password);
     }
-    // Otherwise treat as username → resolve to email via usernames collection
+    // Otherwise treat as username: resolve to email via usernames collection
     const key = normalizeUsername(raw);
     const snap = await getDoc(doc(db, "usernames", key));
     if (!snap.exists()) {
@@ -166,12 +211,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const snap = await getDoc(doc(db, "users", uid));
     if (!snap.exists()) {
-      // No profile yet → must complete username/name/password
+      // No profile yet: must complete username/name/password
       const draft: any = {
         username: "",
         name: cred.user.displayName || "",
         email: cred.user.email || "",
-        role: isAllowedAdminEmail(cred.user.email) ? "admin" : "user",
+        role: "user",
         authProvider: "google",
         bio: "",
         education: "",
@@ -189,16 +234,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = snap.data() as UserProfile;
-    // If existing profile but username missing/empty → needs completion
+    // If existing profile but username missing/empty: needs completion
     if (!data.username || data.username.trim() === "") {
       setProfile(data);
       return { cred, needsCompletion: true };
     }
 
-    if (isAllowedAdminEmail(data.email) && data.role !== "admin") {
-      await updateDoc(doc(db, "users", uid), { role: "admin" });
-      data.role = "admin";
-    }
     setProfile(data);
     return { cred, needsCompletion: false };
   }
@@ -212,19 +253,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Link password so user can also login with username/password
     const email = user.email;
     if (!email) throw new Error("Google account has no email");
+    const normalizedEmail = email.trim().toLowerCase();
     try {
       const credential = EmailAuthProvider.credential(email, password);
       await linkWithCredential(user, credential);
     } catch (e: any) {
       // If already linked (provider already exists) or other error, surface but don't block profile completion
       if (e.code === "auth/provider-already-linked" || e.code === "auth/credential-already-in-use") {
-        // already linked — okay
+        // already linked - okay
       } else if (e.code === "auth/requires-recent-login") {
         throw new Error("Please re-login with Google and try again (recent login required to set password).");
       } else {
         // If linking fails for other reason, still allow profile completion but log
         console.warn("Password linking failed:", e);
-        // Optionally fall back to just setting profile without linking — user can still login via Google
+        // Optionally fall back to just setting profile without linking - user can still login via Google
         // But per requirement, we want password set; rethrow to let user retry with different password
         if (e.code !== "auth/weak-password") throw e;
         else throw e;
@@ -234,13 +276,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await updateProfile(user, { displayName: name });
 
     const uid = user.uid;
+
+    // Same ordering rule as `signup`: claim the name before the profile points
+    // at it, and fail loudly instead of silently leaving a dangling username.
+    // No auth-user rollback here — the Google account already existed.
+    try {
+      await setDoc(doc(db, "usernames", key), {
+        uid,
+        username: key,
+        email: normalizedEmail,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error("Failed to claim username doc", e);
+      throw new Error(
+        "That username was taken while you were completing your profile. Please pick another."
+      );
+    }
+
     const snap = await getDoc(doc(db, "users", uid));
     const existing = snap.exists() ? (snap.data() as any) : {};
     const updated: UserProfile = {
       username: key,
       name,
-      email,
-      role: existing.role || (isAllowedAdminEmail(email) ? "admin" : "user"),
+      email: normalizedEmail,
+      role: typeof existing.role === "string" ? existing.role : "user",
       authProvider: "google+password",
       bio: existing.bio || "",
       education: existing.education || "",
@@ -253,11 +313,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       updatedAt: new Date().toISOString(),
     };
     await setDoc(doc(db, "users", uid), updated, { merge: true });
-    try {
-      await setDoc(doc(db, "usernames", key), { uid, username: key, email, createdAt: new Date().toISOString() });
-    } catch (e) {
-      console.warn("Failed to claim username doc", e);
-    }
     setProfile(updated);
   }
 
@@ -276,8 +331,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const key = normalizeUsername(data.username);
       if (key !== profile?.username) {
         if (!(await usernameAvailable(data.username))) throw new Error("Username already taken");
-        // claim new, but ideally release old — keep simple for now
-        await setDoc(doc(db, "usernames", key), { uid: currentUser.uid, username: key, email: profile?.email || currentUser.email || "", createdAt: new Date().toISOString() });
+        // The claim must carry the token's own lowercase email or the
+        // `usernames` rule rejects it and the rename silently half-applies.
+        const claimEmail = (profile?.email || currentUser.email || "").trim().toLowerCase();
+        await setDoc(doc(db, "usernames", key), {
+          uid: currentUser.uid,
+          username: key,
+          email: claimEmail,
+          createdAt: new Date().toISOString(),
+        });
+        // Release the previous name so it is not stranded; rules allow the owner
+        // to delete their own claim.
+        const previous = profile?.username;
+        if (previous && normalizeUsername(previous) !== key) {
+          try {
+            await deleteDoc(doc(db, "usernames", normalizeUsername(previous)));
+          } catch (e) {
+            console.warn("Failed to release previous username claim", e);
+          }
+        }
         data.username = key;
       }
     }
@@ -292,6 +364,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await refreshProfile(user.uid);
       } else {
         setProfile(null);
+        setRoleCheckedUid(null);
       }
       setLoading(false);
     });
@@ -303,6 +376,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     currentUser,
     profile,
     loading,
+    isAdmin: roleCheckedUid !== null && roleCheckedUid === currentUser?.uid,
     signup,
     login,
     loginWithIdentifier,
@@ -315,5 +389,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refreshProfile,
   };
 
-  return <AuthContext.Provider value={value}>{!loading && children}</AuthContext.Provider>;
+  // `children` used to be withheld until auth resolved, which blanked every
+  // public page (landing, explore, login) on first paint. Consumers that need to
+  // wait should read `loading` themselves.
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

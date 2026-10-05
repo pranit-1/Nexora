@@ -1,14 +1,23 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
+import { usernameRegex } from "@/lib/schemas";
+import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  // Public endpoint (it runs before signup, when there is no session yet) but
+  // rate limited and no longer fail-open: a backend failure must not report a
+  // taken username as available.
+  const limited = enforceRateLimit(request, LIMITS.usernameCheck);
+  if (!limited.ok) return limited.response;
+
   const url = new URL(request.url);
   const u = (url.searchParams.get("u") || "").trim().toLowerCase();
-  if (!u || !/^[a-z0-9_]{3,20}$/.test(u)) {
+  if (!u || !usernameRegex.test(u)) {
     return NextResponse.json({ available: false, reason: "invalid" }, { status: 400 });
   }
+
   try {
     const db = getAdminDb();
     const snap = await db.doc(`usernames/${u}`).get();
@@ -18,11 +27,15 @@ export async function GET(request: Request) {
     if (!q.empty) return NextResponse.json({ available: false });
     return NextResponse.json({ available: true });
   } catch (e: any) {
-    // if admin not configured (local dev without keys), fallback to available: true for UX
+    // Local dev without credentials: keep signup usable, but say so explicitly
+    // rather than silently claiming the name is free.
     if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY && !process.env.FIREBASE_PROJECT_ID) {
-      return NextResponse.json({ available: true, fallback: true });
+      return NextResponse.json({ available: true, unverified: true });
     }
     console.error("[username-check] error", e.message);
-    return NextResponse.json({ available: false, error: e.message }, { status: 500 });
+    return NextResponse.json(
+      { available: false, error: "Could not verify availability. Please try again." },
+      { status: 503 }
+    );
   }
 }

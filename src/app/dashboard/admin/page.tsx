@@ -5,7 +5,7 @@ import { db } from "@/lib/firebase";
 import { collection, query, getDocs, updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { isAllowedAdminEmail } from "@/lib/adminConfig";
+import { authedFetch } from "@/lib/apiClient";
 import {
   ShieldCheck,
   Building,
@@ -29,7 +29,7 @@ import {
 import type { OrgOpportunity, AdminStats, OrgRequest } from "@/lib/types";
 
 export default function AdminPage() {
-  const { currentUser, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading, isAdmin } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<AdminStats>({
     totalUsers: 0,
@@ -52,14 +52,34 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!currentUser || !isAllowedAdminEmail(currentUser.email)) {
+    if (!currentUser || !isAdmin) {
       router.push("/dashboard");
     }
-  }, [currentUser, authLoading, router]);
+  }, [currentUser, authLoading, isAdmin, router]);
+
+  // Declared before the effect that calls it: `fetchTelemetry` is referenced
+  // inside `loadAdminData`'s sibling call, and a `const` arrow function used
+  // above its declaration is a temporal-dead-zone hazard the lint rule catches.
+  const fetchTelemetry = async () => {
+    try {
+      setTelemetryLoading(true);
+      const res = await authedFetch("/api/ai");
+      if (res.ok) {
+        const data = await res.json();
+        setTelemetry(data.telemetry);
+      } else if (res.status === 401 || res.status === 403) {
+        setTelemetry(null);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch AI telemetry:", e);
+    } finally {
+      setTelemetryLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!currentUser) return;
-    if (!isAllowedAdminEmail(currentUser.email)) return;
+    if (!isAdmin) return;
 
     // Load admin panel dashboard data
     const loadAdminData = async () => {
@@ -70,15 +90,22 @@ export default function AdminPage() {
         userSnap.forEach((u) => users.push({ id: u.id, ...u.data() }));
         setUsersList(users);
 
-        // 2. Fetch community posts
-        const postSnap = await getDocs(collection(db, "community_posts"));
-        let postCount = 0;
-        postSnap.forEach(() => postCount++);
-
-        // 3. Fetch applications
-        const appSnap = await getDocs(collection(db, "applications"));
+        // 2/3. Counts for applications and community posts come from the server
+        // (Admin-SDK aggregation). Reading them from the browser meant
+        // downloading every applicant's document just to increment a counter,
+        // and Firestore rejects an unfiltered `applications` query outright
+        // because the read rule depends on `resource.data.uid` -- so the totals
+        // silently rendered as 0.
+        const overviewRes = await authedFetch("/api/admin/overview");
         let appCount = 0;
-        appSnap.forEach(() => appCount++);
+        let postCount = 0;
+        if (overviewRes.ok) {
+          const overview = await overviewRes.json();
+          appCount = Number(overview?.totalApplications) || 0;
+          postCount = Number(overview?.totalCommunityPosts) || 0;
+        } else {
+          console.warn("Admin overview counts unavailable:", overviewRes.status);
+        }
 
         // 4. Fetch Org Opportunities (for moderation)
         const orgOppQuery = query(collection(db, "org_opportunities"));
@@ -125,21 +152,6 @@ export default function AdminPage() {
     loadAdminData();
     fetchTelemetry();
   }, [currentUser]);
-
-  const fetchTelemetry = async () => {
-    try {
-      setTelemetryLoading(true);
-      const res = await fetch("/api/ai");
-      if (res.ok) {
-        const data = await res.json();
-        setTelemetry(data.telemetry);
-      }
-    } catch (e) {
-      console.warn("Failed to fetch AI telemetry:", e);
-    } finally {
-      setTelemetryLoading(false);
-    }
-  };
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -194,7 +206,7 @@ export default function AdminPage() {
     }
   };
 
-  if (loading || authLoading || !currentUser || !isAllowedAdminEmail(currentUser.email)) {
+  if (loading || authLoading || !currentUser || !isAdmin) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-primary animate-spin" />
@@ -700,16 +712,17 @@ export default function AdminPage() {
               <select
                 value={selectedUser.role || "user"}
                 onChange={(e) => handleRoleChange(selectedUser.id, e.target.value as any)}
-                disabled={isAllowedAdminEmail(selectedUser.email)}
+                disabled={selectedUser.role === "admin"}
                 className="w-full text-xs font-bold p-2.5 bg-surface-raised border border-border rounded-xl outline-none text-foreground focus:border-primary disabled:opacity-50"
               >
                 <option value="user">User</option>
                 <option value="organization">Organization</option>
                 {selectedUser.role === "admin" && <option value="admin">Admin</option>}
               </select>
-              {isAllowedAdminEmail(selectedUser.email) && (
+              {selectedUser.role === "admin" && (
                 <p className="text-[10px] text-foreground-muted mt-1.5">
-                  This user&apos;s admin access is locked via the hardcoded allowlist and can&apos;t be changed here.
+                  Admin access is granted server-side from the deployment allow-list and can&apos;t be
+                  changed here.
                 </p>
               )}
             </div>

@@ -1,12 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { requireUser } from "@/lib/serverAuth";
+import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
+
+/** Uploads are stored under `wallet/<uid>/-`, so ownership is a prefix check. */
+function ownedFolder(uid: string): string {
+  return `wallet/${uid}/`;
+}
 
 export async function POST(req: NextRequest) {
+  // Previously unauthenticated: anyone could destroy any asset in the Cloudinary
+  // account by supplying an arbitrary public_id.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+
+  const uid = auth.user.uid;
+
+  const limited = enforceRateLimit(req, { ...LIMITS.walletDelete, uid });
+  if (!limited.ok) return limited.response;
+
   try {
-    const { publicId } = await req.json();
+    const body = (await req.json().catch(() => null)) as { publicId?: unknown } | null;
+    const publicId = typeof body?.publicId === "string" ? body.publicId.trim() : "";
 
     if (!publicId) {
       return NextResponse.json({ error: "Missing publicId" }, { status: 400 });
+    }
+
+    // Ownership check. Never trust the caller-supplied id on its own: refuse
+    // anything outside this user's own wallet folder, and refuse path traversal.
+    const folder = ownedFolder(uid);
+    if (!publicId.startsWith(folder) || publicId.includes("..") || publicId.includes("\\")) {
+      return NextResponse.json(
+        { error: "You can only delete documents from your own wallet." },
+        { status: 403 }
+      );
     }
 
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
@@ -33,7 +61,7 @@ export async function POST(req: NextRequest) {
 
       const res = await fetch(
         `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`,
-        { method: "POST", body: formData }
+        { method: "POST", body: formData, signal: AbortSignal.timeout(15000) }
       );
       return res.json();
     };
@@ -44,15 +72,15 @@ export async function POST(req: NextRequest) {
     // If it's a raw file (e.g. .docx, .txt), it won't be found as an image. Try raw deletion.
     if (data.result !== "ok") {
       const rawData = await deleteFromCloudinary("raw");
-      if (rawData.result === "ok" || rawData.result === "not found") {
+      if (rawData.result === "ok") {
         data = rawData;
       }
     }
 
-    if (data.result !== "ok" && data.result !== "not found") {
+    if (data.result !== "ok") {
       return NextResponse.json(
         { error: `Cloudinary delete failed: ${data.result}` },
-        { status: 500 }
+        { status: data.result === "not found" ? 404 : 500 }
       );
     }
 

@@ -3,12 +3,13 @@
 // re-scrape on every change. Includes expiry filtering (pending keep, expired remove)
 // and capping at 400.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { join } from "path";
 import type { ScrapedOpportunity } from "@/lib/ingestion/scrapers/types";
 
 const STORAGE_DIR = join(process.cwd(), "storage");
 const STORAGE_FILE = join(STORAGE_DIR, "scraped-opportunities.json");
+const STORAGE_TMP = `${STORAGE_FILE}.tmp`;
 export const MAX_STORED = 400;
 
 export interface StoredData {
@@ -21,6 +22,29 @@ export interface StoredData {
 
 function ensureDir() {
   if (!existsSync(STORAGE_DIR)) mkdirSync(STORAGE_DIR, { recursive: true });
+}
+
+/**
+ * Atomic write: temp file in the same directory, then rename.
+ *
+ * Writing straight to the target left a truncated, unparseable JSON file if the
+ * process was frozen or killed mid-write. `readStore` swallows parse errors and
+ * returns null, so the next scrape treated the store as empty and overwrote it,
+ * discarding every previously scraped opportunity.
+ */
+function writeStoreAtomic(payload: StoredData) {
+  ensureDir();
+  try {
+    writeFileSync(STORAGE_TMP, JSON.stringify(payload, null, 2), "utf-8");
+    renameSync(STORAGE_TMP, STORAGE_FILE);
+  } catch (e) {
+    console.error("[scrapedStore] atomic write failed:", (e as Error).message);
+    try {
+      if (existsSync(STORAGE_TMP)) unlinkSync(STORAGE_TMP);
+    } catch {
+      // best effort
+    }
+  }
 }
 
 export function isExpired(deadline: string): boolean {
@@ -88,7 +112,7 @@ export function writeStore(opportunities: ScrapedOpportunity[], perSourceCounts?
     opportunities: deduped,
     perSourceCounts,
   };
-  writeFileSync(STORAGE_FILE, JSON.stringify(payload, null, 2), "utf-8");
+  writeStoreAtomic(payload);
   return payload;
 }
 
@@ -116,7 +140,7 @@ export function mergeAndPersist(newOpps: ScrapedOpportunity[], perSourceCounts?:
     opportunities: capped,
     perSourceCounts: perSourceCounts || existing?.perSourceCounts,
   };
-  writeFileSync(STORAGE_FILE, JSON.stringify(payload, null, 2), "utf-8");
+  writeStoreAtomic(payload);
   return payload;
 }
 
@@ -127,7 +151,7 @@ export function pruneExpiredAndPersist(): { removed: number; remaining: number }
   if (removed === 0) {
     // Still update lastExpiryCheckAt
     existing.lastExpiryCheckAt = new Date().toISOString();
-    writeFileSync(STORAGE_FILE, JSON.stringify(existing, null, 2), "utf-8");
+    writeStoreAtomic(existing);
     return { removed: 0, remaining: kept.length };
   }
   const payload: StoredData = {
@@ -136,7 +160,7 @@ export function pruneExpiredAndPersist(): { removed: number; remaining: number }
     lastExpiryCheckAt: new Date().toISOString(),
     generatedAt: new Date().toISOString(),
   };
-  writeFileSync(STORAGE_FILE, JSON.stringify(payload, null, 2), "utf-8");
+  writeStoreAtomic(payload);
   console.log(`[scrapedStore] pruned ${removed} expired, ${kept.length} remain`);
   return { removed, remaining: kept.length };
 }

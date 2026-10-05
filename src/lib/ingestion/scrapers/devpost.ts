@@ -1,5 +1,5 @@
 // ─── Devpost — official hackathon API (trusted-feed) ───────────────────
-import { fetchJson, parseDeadline } from "./utils";
+import { fetchJson, parseDeadline, asText } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 
 const ENDPOINTS = [
@@ -13,44 +13,68 @@ export async function scrapeDevpost(): Promise<ScrapedOpportunity[]> {
   const seen = new Set<string>();
 
   for (const url of ENDPOINTS) {
+    let hackathons: unknown[] = [];
     try {
       const data = await fetchJson(url);
-      const hackathons: any[] = data?.hackathons || [];
-      for (const h of hackathons) {
-        const link: string = h.url || h.hackathon_url || "";
-        if (!link || seen.has(link)) continue;
-        seen.add(link);
-
-        // Prize parsing: h.prize_amount may be like "$10,000" or ""
-        const prize = h.prize_amount ? `Prize pool: ${h.prize_amount}` : "";
-        const themes: string = (h.themes || []).map((t: any) => t.name).join(", ");
-
-        out.push({
-          title: (h.title || "Untitled Hackathon").trim(),
-          orgName: (h.organization_name || "Devpost").trim() || "Devpost",
-          description:
-            cleanDesc(h.tagline || h.description || "") ||
-            `Hackathon on Devpost. ${themes ? `Themes: ${themes}. ` : ""}${prize}`.trim() ||
-            "Join this hackathon on Devpost and build something amazing.",
-          eligibility: h.eligibility || "Open to all students and developers — check official page for details.",
-          deadline: parseDeadline(h.submission_period_dates),
-          country: typeof h.displayed_location === "string" && h.displayed_location.includes("Online")
-            ? "Global"
-            : typeof h.displayed_location === "object"
-            ? (h.displayed_location?.location || "Global")
-            : String(h.displayed_location || "Global"),
-          category: "Hackathons",
-          field: themes ? themes.split(",")[0].trim() || "Computer Science" : "Computer Science",
-          applyLink: link,
-          requiredDocuments: ["Resume", "Project submission"],
-          sourceUrl: link,
-          sourceType: "trusted-feed",
-          autoApprove: true,
-          scraperName: "Devpost",
-        });
-      }
+      if (Array.isArray(data?.hackathons)) hackathons = data.hackathons;
     } catch (err: any) {
-      console.warn(`[Scraper:Devpost] ${url} failed:`, err.message);
+      console.warn(`[Scraper:Devpost] ${url} failed:`, err?.message ?? err);
+      continue;
+    }
+
+    // One malformed record must not cost us the whole endpoint. Previously the
+    // per-record mapping ran inside the endpoint's try, so a single non-string
+    // field threw a TypeError and discarded all 40 rows in that batch — which
+    // is why the shipped data file shows "Devpost": 0.
+    for (const raw of hackathons) {
+      const h = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+
+      const link = asText(h.url, 500) || asText(h.hackathon_url, 500);
+      if (!link || seen.has(link)) continue;
+      seen.add(link);
+
+      const themes = Array.isArray(h.themes)
+        ? h.themes
+            .map((t: any) => asText(t, 80))
+            .filter(Boolean)
+            .join(", ")
+        : asText(h.themes, 300);
+
+      const prizeAmount = asText(h.prize_amount, 60);
+      const prize = prizeAmount ? `Prize pool: ${prizeAmount}` : "";
+      const tagline = asText(h.tagline, 400);
+      const description = asText(h.description, 4000);
+
+      const location = h.displayed_location;
+      let country = "Global";
+      if (typeof location === "string") {
+        country = location.includes("Online") ? "Global" : asText(location, 120) || "Global";
+      } else if (location && typeof location === "object") {
+        const loc = (location as Record<string, unknown>).location;
+        country = asText(loc, 120) || "Global";
+      }
+
+      out.push({
+        title: asText(h.title, 180) || "Untitled Hackathon",
+        orgName: asText(h.organization_name, 180) || "Devpost",
+        description:
+          cleanDesc(tagline || description) ||
+          `Hackathon on Devpost. ${themes ? `Themes: ${themes}. ` : ""}${prize}`.trim() ||
+          "Join this hackathon on Devpost and build something amazing.",
+        eligibility:
+          asText(h.eligibility, 400) ||
+          "Open to all students and developers — check official page for details.",
+        deadline: parseDeadline(h.submission_period_dates),
+        country,
+        category: "Hackathons",
+        field: themes.split(",")[0].trim() || "Computer Science",
+        applyLink: link,
+        requiredDocuments: ["Resume", "Project submission"],
+        sourceUrl: link,
+        sourceType: "trusted-feed",
+        autoApprove: true,
+        scraperName: "Devpost",
+      });
     }
   }
 

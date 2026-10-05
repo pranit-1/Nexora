@@ -5,30 +5,38 @@ import {
   getActiveOpportunitiesFromFirestore,
   pruneExpiredFromFirestore,
 } from "@/lib/firestoreSync";
+import { requireCron } from "@/lib/serverAuth";
+import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-function isAuthorized(request: Request): boolean {
-  if (process.env.NODE_ENV !== "production") return true;
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const authHeader = request.headers.get("authorization");
-  if (authHeader === `Bearer ${secret}`) return true;
-  const url = new URL(request.url);
-  return url.searchParams.get("secret") === secret;
-}
-
-// GET /api/scrape?preview=1  -> serve directly from Firestore (auto-pruning expired)
-// GET /api/scrape?force=1    -> run scrapers, upsert deduplicated to Firestore, prune expired
+// GET /api/scrape?preview=1  -> PUBLIC, read-only. Serve the active dataset from Firestore.
+// GET /api/scrape?force=1    -> CRON ONLY. Run scrapers, upsert deduplicated, prune expired.
+// GET /api/scrape?source=x   -> CRON ONLY. Scrape a single source and upsert it.
+// Any combination of preview + source/force is rejected: `preview` must never grant a write.
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const preview = url.searchParams.get("preview") === "1";
   const force = url.searchParams.get("force") === "1";
   const source = url.searchParams.get("source");
 
-  if (!preview && !isAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const wantsWrite = Boolean(force || source);
+  if (preview && wantsWrite) {
+    return NextResponse.json(
+      { error: "preview=1 is read-only and cannot be combined with force=1 or source=" },
+      { status: 400 }
+    );
+  }
+
+  const limited = enforceRateLimit(request, LIMITS.scrapePreview);
+  if (!limited.ok) return limited.response;
+
+  // `requireCron` fails closed in production when CRON_SECRET is missing/blank.
+  // The default branch (no preview flag) can also trigger the scrapers, so it is gated too.
+  if (wantsWrite || !preview) {
+    const auth = await requireCron(request);
+    if (!auth.ok) return auth.response;
   }
 
   try {
@@ -48,9 +56,12 @@ export async function GET(request: Request) {
         fellowships: async () => (await import("@/lib/ingestion/scrapers/fellowships")).scrapeFellowships(),
         generic: async () => (await import("@/lib/ingestion/scrapers/generic")).scrapeGenericPages(),
       };
-      const fn = map[source.toLowerCase()];
-      if (!fn) return NextResponse.json({ error: `Unknown source: ${source}` }, { status: 400 });
-      const scraped = await fn();
+      const key = source.toLowerCase();
+      // Object.hasOwn, not `map[key]` — otherwise ?source=constructor resolves to Object.
+      if (!Object.hasOwn(map, key)) {
+        return NextResponse.json({ error: `Unknown source: ${source}` }, { status: 400 });
+      }
+      const scraped = await map[key]();
 
       // Upsert these directly to Firestore so they persist without duplicates
       const syncResult = await syncOpportunitiesToFirestore(scraped);
@@ -69,12 +80,17 @@ export async function GET(request: Request) {
     const existing = await getActiveOpportunitiesFromFirestore();
 
     // If we have active opportunities in Firestore and force is not requested:
-    // Just run auto-prune on Firestore and return active data instantly!
+    // prune expired and return the active data. The prune is awaited — a fire-and-forget
+    // promise after the response is returned never completes on serverless.
     if (!force && existing.length > 0) {
-      // Async prune expired in background
-      pruneExpiredFromFirestore().catch((err) =>
-        console.warn("[api/scrape] background prune error:", err.message)
-      );
+      try {
+        const prune = await pruneExpiredFromFirestore();
+        if (prune.prunedCount > 0) {
+          console.log(`[api/scrape] pruned ${prune.prunedCount} expired opportunities`);
+        }
+      } catch (err: any) {
+        console.warn("[api/scrape] prune error:", err.message);
+      }
 
       return NextResponse.json({
         success: true,
@@ -89,10 +105,10 @@ export async function GET(request: Request) {
     // 2. Otherwise (or if force=1 / Firestore empty): Run scrapers & sync to Firestore
     console.log("[api/scrape] Running scrapers to sync into Firestore...");
     const scrapeResult = await runAllScrapers();
-    
+
     // Sync scraped opportunities to Firestore (No Duplicates + Auto Expiry Filter)
     const syncResult = await syncOpportunitiesToFirestore(scrapeResult.opportunities);
-    
+
     // Read back final active dataset from Firestore
     const finalOpps = await getActiveOpportunitiesFromFirestore();
 
@@ -112,8 +128,4 @@ export async function GET(request: Request) {
     console.error("[Scrape] Fatal:", err);
     return NextResponse.json({ error: err.message || "Scrape failed" }, { status: 500 });
   }
-}
-
-export async function POST(request: Request) {
-  return GET(request);
 }

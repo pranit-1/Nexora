@@ -2,6 +2,8 @@
 // Supported environment setup:
 // GEMINI_API_KEYS="key1,key2,key3"
 
+import { aiFormatError, isAiFormatError, parseJsonLoose } from "./aiProviders/json";
+
 export class GeminiRotatorService {
   private static getKeys(): string[] {
     const keysStr = process.env.GEMINI_API_KEYS || process.env.NEXT_PUBLIC_GEMINI_API_KEYS || "";
@@ -38,6 +40,16 @@ export class GeminiRotatorService {
     return process.env.GEMINI_MODEL || "gemini-1.5-flash";
   }
 
+  /**
+   * Upstream timeout. Without one, an accepted-but-never-answered request holds
+   * the whole rotation open and the key is counted as neither success nor
+   * failure.
+   */
+  private static get timeoutMs(): number {
+    const raw = Number(process.env.AI_REQUEST_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 1_000 ? raw : 45_000;
+  }
+
   private static async send(
     prompt: string,
     jsonMode: boolean = false,
@@ -51,6 +63,7 @@ export class GeminiRotatorService {
     const model = this.getModel();
     let attempts = 0;
     const maxAttempts = keys.length;
+    let lastError = "";
 
     while (attempts < maxAttempts) {
       const activeKey = keys[this.currentKeyIndex];
@@ -77,13 +90,23 @@ export class GeminiRotatorService {
           };
         }
 
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-        });
+        const timeoutMs = this.timeoutMs;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
 
         // 1. Check for rate limit or quota exceeded
         if (response.status === 429) {
@@ -116,22 +139,47 @@ export class GeminiRotatorService {
         console.log(`[GeminiRotator] Key ${this.currentKeyIndex} (${maskedKey}) succeeded!`);
         
         if (jsonMode) {
-          return JSON.parse(text.trim());
+          // The request returned 200, so the key is healthy. A non-JSON body
+          // here is the model ignoring `responseMimeType`, not a key fault — this
+          // used to throw into the catch below, rotate every remaining key, and
+          // report the outcome as a total credential failure.
+          const parsed = parseJsonLoose(text);
+          if (parsed === undefined) {
+            throw aiFormatError(
+              "The AI model returned a non-JSON response for a JSON request. The key is healthy; the model's output format is not."
+            );
+          }
+          return parsed;
         }
         return text;
 
       } catch (err: any) {
-        console.error(`[GeminiRotator] Connection/Parsing error with key index ${this.currentKeyIndex} (${maskedKey}):`, err.message);
-        // Rotate and try next key
+        // Never rotate on a model-format failure: every remaining key would hit
+        // the same formatting problem and the user would see a misleading
+        // "all keys failed".
+        if (isAiFormatError(err)) {
+          throw err;
+        }
+        const isTimeout = err?.name === "AbortError";
+        const reason = isTimeout ? `timed out after ${this.timeoutMs}ms` : err?.message || String(err);
+        console.error(
+          `[GeminiRotator] ${isTimeout ? "Timeout" : "Connection/Parsing error"} with key index ${this.currentKeyIndex} (${maskedKey}):`,
+          reason
+        );
         this.rotateKey(keys.length);
         attempts++;
+        lastError = reason;
         if (attempts >= maxAttempts) {
-          throw new Error(`All available Gemini API keys failed. Last error: ${err.message}`);
+          throw new Error(`All available Gemini API keys failed. Last error: ${lastError}`);
         }
       }
     }
 
-    throw new Error("Gemini request failed due to unknown reasons after rotating through all keys.");
+    throw new Error(
+      lastError
+        ? `All available Gemini API keys failed. Last error: ${lastError}`
+        : "Gemini request failed due to unknown reasons after rotating through all keys."
+    );
   }
 
   private static rotateKey(totalKeys: number) {

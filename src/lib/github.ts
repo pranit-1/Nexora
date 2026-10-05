@@ -52,13 +52,42 @@ export interface RepoScore {
 
 const GITHUB_API = "https://api.github.com";
 
-async function ghFetch(path: string, token?: string): Promise<any> {
+function ghTimeoutMs(): number {
+  const raw = Number(process.env.GITHUB_FETCH_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 1_000 ? raw : 10_000;
+}
+
+/**
+ * `fetch` with a hard deadline. GitHub is called from the performance-profile
+ * route alongside the coding-platform fan-out inside a single serverless
+ * request; without a bound, one stalled socket holds that whole request open
+ * until the platform kills it and the user gets a timeout instead of a profile.
+ */
+async function ghFetchWithTimeout(path: string, token?: string): Promise<any> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "Nexora-Performance-Analyzer",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${GITHUB_API}${path}`, { headers, next: { revalidate: 3600 } });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ghTimeoutMs());
+  let res: Response;
+  try {
+    res = await fetch(`${GITHUB_API}${path}`, {
+      headers,
+      next: { revalidate: 3600 },
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") {
+      throw new Error(`GitHub request timed out after ${ghTimeoutMs()}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (!res.ok) {
     if (res.status === 403) throw new Error("GitHub API rate limited");
     if (res.status === 404) throw new Error("Not found");
@@ -175,21 +204,48 @@ function scoreMaintenance(repo: GitHubRepo): { score: number; signals: string[] 
 }
 
 export async function fetchGitHubUser(username: string, token?: string): Promise<GitHubUser> {
-  return ghFetch(`/users/${username}`, token);
+  return ghFetchWithTimeout(`/users/${username}`, token);
 }
+
+/**
+ * Repositories actually inspected per profile.
+ *
+ * The old cap was 500, and every one of them got a *sequential awaited*
+ * `/languages` call — up to 500 blocking HTTP round-trips inside a single
+ * serverless request that shares its 120s budget with the coding-platform
+ * fan-out. Unauthenticated GitHub allows 60 requests/hour, so a prolific user
+ * would 403 partway through and lose the whole profile.
+ *
+ * `aggregateGitHubScore` only consumes the top 5 repos by score plus a handful
+ * of `scored.some(...)` existence checks, so a deep history cannot change the
+ * outcome. The endpoint is already sorted `pushed desc`, so the recent work — the
+ * part a visitor actually sees on a profile — is kept.
+ */
+const REPO_SCAN_LIMIT = 30;
 
 export async function fetchUserRepos(username: string, token?: string): Promise<GitHubRepo[]> {
   const repos: GitHubRepo[] = [];
   let page = 1;
-  while (true) {
-    const batch = await ghFetch(`/users/${username}/repos?per_page=100&page=${page}&sort=pushed&direction=desc`, token);
+
+  while (repos.length < REPO_SCAN_LIMIT) {
+    const remaining = REPO_SCAN_LIMIT - repos.length;
+    const batch: any[] = await ghFetchWithTimeout(
+      `/users/${username}/repos?per_page=${Math.min(100, remaining)}&page=${page}&sort=pushed&direction=desc`,
+      token
+    );
     if (!batch.length) break;
-    for (const r of batch) {
-      if (r.fork && r.stars < 5) continue; // skip low-signal forks
-      let languages: Record<string, number> = {};
-      try {
-        languages = await ghFetch(`/repos/${username}/${r.name}/languages`, token);
-      } catch { /* ignore */ }
+
+    // Language data for the whole batch concurrently instead of one awaited
+    // round-trip at a time. Each call carries its own deadline, so one slow repo
+    // cannot stall the rest.
+    const languages = await Promise.all(
+      batch.map((r) =>
+        ghFetchWithTimeout(`/repos/${username}/${r.name}/languages`, token).catch(() => ({}) as Record<string, number>)
+      )
+    );
+
+    batch.forEach((r, i) => {
+      if (r.fork && r.stars < 5) return; // skip low-signal forks
       repos.push({
         name: r.name,
         fullName: r.full_name,
@@ -197,7 +253,7 @@ export async function fetchUserRepos(username: string, token?: string): Promise<
         stars: r.stargazers_count,
         forks: r.forks_count,
         language: r.language,
-        languages,
+        languages: languages[i] || {},
         topics: r.topics || [],
         createdAt: r.created_at,
         updatedAt: r.updated_at,
@@ -210,16 +266,17 @@ export async function fetchUserRepos(username: string, token?: string): Promise<
         defaultBranch: r.default_branch,
         url: r.html_url,
       });
-    }
+    });
+
     if (batch.length < 100) break;
     page++;
-    if (page > 5) break; // cap at 500 repos
+    if (page > 5) break; // hard ceiling regardless of the scan limit
   }
   return repos;
 }
 
 export async function fetchRepoLanguages(owner: string, repo: string, token?: string): Promise<Record<string, number>> {
-  return ghFetch(`/repos/${owner}/${repo}/languages`, token);
+  return ghFetchWithTimeout(`/repos/${owner}/${repo}/languages`, token);
 }
 
 export function scoreRepository(repo: GitHubRepo): RepoScore {

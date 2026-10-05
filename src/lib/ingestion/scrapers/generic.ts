@@ -3,7 +3,7 @@
 // They return RawListing-shaped data via direct ScrapedOpportunity where
 // structure is known, otherwise minimal ScrapedOpportunity with AI-friendly text.
 
-import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline, stripHtml } from "./utils";
+import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline, stripHtml, firstLineOf } from "./utils";
 import type { ScrapedOpportunity } from "./types";
 import type { RawListing } from "../sources";
 
@@ -111,7 +111,7 @@ export async function scrapeGenericPages(): Promise<ScrapedOpportunity[]> {
 
       cards.slice(0, 30).each((_, el) => {
         const $el = $(el);
-        const title = cleanText($el.find(page.titleSelector).first().text() || $el.text().split("\n")[0] || "");
+        const title = cleanText($el.find(page.titleSelector).first().text() || firstLineOf($el.text()));
         if (!title || title.length < 10 || title.length > 160) return;
         const key = title.toLowerCase();
         if (seen.has(key)) return;

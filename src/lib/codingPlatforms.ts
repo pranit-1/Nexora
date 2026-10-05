@@ -51,6 +51,38 @@ export function detectPlatform(url: string): { platform: CodingProfile["platform
   return null;
 }
 
+/** Per-request ceiling for any single outbound call. */
+function requestTimeoutMs(): number {
+  const raw = Number(process.env.CODING_FETCH_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 1_000 ? raw : 10_000;
+}
+
+/**
+ * `fetch` with a hard deadline.
+ *
+ * Every platform fetcher below swallows its own errors and returns a
+ * `rawData.error` profile, so nothing in this file ever rejects. That safety
+ * net is worthless without a deadline: an accepted-but-never-answered request
+ * simply never settles, `Promise.all` in the performance-profile route never
+ * resolves, and the caller burns the whole serverless budget (120s) before the
+ * platform kills it — losing the GitHub data that had already been fetched and
+ * returning the user a 504 instead of a profile. These are third-party scrapers
+ * over public endpoints; a bounded wait is the only safe assumption.
+ */
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit = {},
+  timeoutMs: number = requestTimeoutMs()
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchLeetCode(username: string): Promise<CodingProfile> {
   // LeetCode GraphQL endpoint (public)
   const query = `
@@ -65,7 +97,7 @@ async function fetchLeetCode(username: string): Promise<CodingProfile> {
     }
   `;
   try {
-    const res = await fetch("https://leetcode.com/graphql", {
+    const res = await fetchWithTimeout("https://leetcode.com/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json", "User-Agent": "Nexora" },
       body: JSON.stringify({ query, variables: { username } }),
@@ -104,7 +136,7 @@ async function fetchLeetCode(username: string): Promise<CodingProfile> {
 
 async function fetchCodeChef(username: string): Promise<CodingProfile> {
   try {
-    const res = await fetch(`https://codechef-api.vercel.app/${username}`, {
+    const res = await fetchWithTimeout(`https://codechef-api.vercel.app/${username}`, {
       headers: { "User-Agent": "Nexora" },
       next: { revalidate: 3600 },
     });
@@ -129,8 +161,8 @@ async function fetchCodeChef(username: string): Promise<CodingProfile> {
 async function fetchCodeforces(username: string): Promise<CodingProfile> {
   try {
     const [userRes, ratingRes] = await Promise.all([
-      fetch(`https://codeforces.com/api/user.info?handles=${username}`, { next: { revalidate: 3600 } }),
-      fetch(`https://codeforces.com/api/user.rating?handle=${username}`, { next: { revalidate: 3600 } }),
+      fetchWithTimeout(`https://codeforces.com/api/user.info?handles=${username}`, { next: { revalidate: 3600 } }),
+      fetchWithTimeout(`https://codeforces.com/api/user.rating?handle=${username}`, { next: { revalidate: 3600 } }),
     ]);
     const userData = await userRes.json();
     const ratingData = await ratingRes.json();

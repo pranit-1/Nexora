@@ -5,9 +5,13 @@
 
 import { AIRouterService } from "@/lib/aiProviders";
 import { readStore } from "./scrapedStore";
-import { getCachedSummary, saveSummary } from "./summariesStore";
+import { getCachedSummary, saveSummary, flushSummaryWrites } from "./summariesStore";
 
 const CONCURRENCY = 3;
+
+/** Upper bound on one batch. Each item is a paid AI call. */
+const MAX_LIMIT = 100;
+const DEFAULT_LIMIT = 15;
 
 export interface BatchSummaryStats {
   processed: number;
@@ -18,6 +22,8 @@ export interface BatchSummaryStats {
   errors: string[];
   totalStored: number;
   totalSummarized: number;
+  limit: number;
+  limitClamped: boolean;
 }
 
 function buildPrompt(o: any): string {
@@ -92,12 +98,25 @@ export async function summarizePendingOpportunities(
 ): Promise<BatchSummaryStats> {
   const store = readStore();
   const opps: any[] = (store?.opportunities as any[]) || [];
-  const limit = opts.limit && opts.limit > 0 ? opts.limit : 15;
+
+  // `?limit=100000` used to be honoured verbatim. Every item in the batch is a
+  // paid AI call, so an unbounded (or merely careless) limit could spend an
+  // arbitrary amount of money in a single request. Clamp, and say so.
+  const requested = Number(opts.limit);
+  const limit =
+    Number.isFinite(requested) && requested > 0
+      ? Math.min(Math.floor(requested), MAX_LIMIT)
+      : DEFAULT_LIMIT;
+  const limitClamped = Number.isFinite(requested) && requested > MAX_LIMIT;
   const force = !!opts.force;
 
+  let skippedNoUrl = 0;
   const toProcess = opps.filter((o: any) => {
     const applyLink = (o.applyLink || o.sourceUrl || "") as string;
-    if (!applyLink) return false;
+    if (!applyLink) {
+      skippedNoUrl++;
+      return false;
+    }
     if (!force && getCachedSummary(applyLink)) return false;
     return true;
   }).slice(0, limit);
@@ -107,7 +126,6 @@ export async function summarizePendingOpportunities(
   let aiCalls = 0;
   const errors: string[] = [];
 
-  const results: { ok: boolean }[] = new Array(toProcess.length).fill({ ok: false, err: "" } as any);
   let index = 0;
 
   async function worker() {
@@ -120,11 +138,9 @@ export async function summarizePendingOpportunities(
       try {
         const summary = await summarizeOne(o);
         aiCalls++;
-        saveSummary(applyLink, { summary, provider: "openrouter-key1", title, orgName });
+        await saveSummary(applyLink, { summary, provider: "openrouter-key1", title, orgName });
         saved++;
-        results[i] = { ok: true };
       } catch (err: any) {
-        results[i] = { ok: false } as any;
         failed++;
         errors.push(`${title.slice(0, 30)}: ${(err.message || "AI failed").slice(0, 70)}`);
       }
@@ -135,16 +151,32 @@ export async function summarizePendingOpportunities(
   const workerCount = Math.min(CONCURRENCY, toProcess.length || 1);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
+  // `saveSummary` serialises its disk writes behind a queue, so the route must
+  // await the queue or it can return before the summaries have actually landed
+  // (and, on a frozen serverless instance, lose them entirely).
+  await flushSummaryWrites();
+
   const summarized = opps.filter((o: any) => !!getCachedSummary(o.applyLink || o.sourceUrl || "")).length;
+
+  if (limitClamped) {
+    errors.push(
+      `Requested limit ${requested} was clamped to ${MAX_LIMIT}. Each summary is a paid AI call, so a single request cannot fan out without bound.`
+    );
+  }
+  if (skippedNoUrl > 0) {
+    errors.push(`${skippedNoUrl} stored opportunit${skippedNoUrl > 1 ? "ies have" : "y has"} no apply or source URL and cannot be summarized.`);
+  }
 
   return {
     processed: toProcess.length,
     aiCalls,
     saved,
-    cachedSkipped: opps.length - toProcess.length,
+    cachedSkipped: opps.length - toProcess.length - skippedNoUrl,
     failed,
     errors: errors.slice(0, 20),
     totalStored: opps.length,
     totalSummarized: summarized,
+    limit,
+    limitClamped,
   };
 }

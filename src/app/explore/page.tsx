@@ -33,6 +33,7 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { seedOpportunityNotification } from "@/lib/automationEngine";
+import { authedFetch } from "@/lib/apiClient";
 
 const filterPanelVariants: Variants = {
   hidden: { opacity: 0, x: -16 },
@@ -247,13 +248,23 @@ function ExploreContent() {
 
   const openSummarize = async (opp: any) => {
     const targetUrl = opp.sourceUrl || opp.applyLink;
+    if (!currentUser) {
+      // The endpoint now requires a verified token; do not spend a round trip
+      // on a guaranteed 401.
+      setSelectedOpp(opp);
+      setModalOpen(true);
+      setSummarizing(false);
+      setSummaryText("");
+      setSummaryError("Sign in to get an AI summary of this opportunity.");
+      return;
+    }
     setSelectedOpp(opp);
     setModalOpen(true);
     setSummarizing(true);
     setSummaryError("");
     setSummaryText("");
     try {
-      const res = await fetch("/api/summarize", {
+      const res = await authedFetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -269,9 +280,12 @@ function ExploreContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Summarize failed");
-      setSummaryText(data.summary || "No summary returned.");
+      if (typeof data.summary !== "string" || !data.summary.trim()) {
+        throw new Error("The AI did not return a summary for this opportunity.");
+      }
+      setSummaryText(data.summary);
     } catch (e: any) {
-      setSummaryError(e.message);
+      setSummaryError(e.message || "Could not summarize this opportunity.");
     } finally {
       setSummarizing(false);
     }

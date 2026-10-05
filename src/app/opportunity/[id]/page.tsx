@@ -15,8 +15,7 @@ import {
   setDoc,
   updateDoc,
   arrayUnion,
-  arrayRemove,
-  increment
+  arrayRemove
 } from "firebase/firestore";
 import {
   Calendar,
@@ -79,15 +78,18 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
 
   // Real view-count tracking. Runs exactly ONCE per opportunity id per page
   // visit — deliberately NOT dependent on `opportunities` (which comes from
-  // a live onSnapshot listener). Incrementing viewCount changes the very
-  // doc that listener watches, so depending on `opportunities` here would
-  // re-trigger this effect every time the increment lands, causing an
-  // infinite write loop. The ref guard makes this a true one-shot.
+  // a live onSnapshot listener). The ref guard makes this a true one-shot.
+  //
+  // This used to write straight to Firestore from the browser, which is why
+  // `org_opportunities` had to be world-writable in the rules. The increment is
+  // now an Admin-SDK server call so the collection can stay locked down.
   useEffect(() => {
     if (viewCountedRef.current === id) return;
     viewCountedRef.current = id;
-    updateDoc(doc(db, "org_opportunities", id), {
-      viewCount: increment(1),
+    fetch("/api/opportunities/view", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
     }).catch((err) => console.warn("View count increment failed:", err));
   }, [id]);
 

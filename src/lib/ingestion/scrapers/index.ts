@@ -50,8 +50,21 @@ export async function runAllScrapers(): Promise<ScrapeResult> {
       const { name, data } = r.value;
       perSourceCounts[name] = data.length;
       opportunities.push(...data);
+
+      // Almost every scraper catches its own fetch/parse errors and returns `[]`.
+      // That means `Promise.allSettled` essentially never rejects, so a scraper
+      // broken by a CSS change or a rate limit was indistinguishable from one
+      // that legitimately found nothing — `errors` stayed empty and the run was
+      // logged as healthy. This is what let "Devpost: 0" sit unnoticed in the
+      // data file. A zero-yield source is now reported so it shows up in
+      // `ingestion_logs`.
+      if (data.length === 0) {
+        const msg = `Source "${name}" returned 0 opportunities. This is either an upstream outage or a broken parser — verify before trusting the run.`;
+        errors.push(msg);
+        console.warn(`[Scraper] ${msg}`);
+      }
     } else {
-      const msg = r.reason?.message || String(r.reason);
+      const msg = `${r.reason?.message || String(r.reason)} (source name unavailable: the task rejected before returning)`;
       errors.push(msg);
       console.warn(`[Scraper] A scraper task failed:`, msg);
     }
@@ -68,6 +81,11 @@ export async function runAllScrapers(): Promise<ScrapeResult> {
     const fallbackRaw = await scrapeGenericAsRaw(fallbackUrls);
     rawListings.push(...fallbackRaw);
     perSourceCounts["GenericRaw(AI)"] = fallbackRaw.length;
+    if (fallbackRaw.length === 0) {
+      errors.push(
+        "GenericRaw fallback returned 0 listings from 3 URLs — all three are likely blocked or their markup changed."
+      );
+    }
   } catch (err: any) {
     errors.push(`GenericRaw fallback failed: ${err.message}`);
   }

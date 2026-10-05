@@ -1,15 +1,22 @@
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  doc,
-  getDocs,
-  setDoc,
-  query,
-  where,
-  writeBatch,
-  DocumentData,
-} from "firebase/firestore";
+import { getAdminDb } from "@/lib/firebaseAdmin";
+import { FieldPath } from "firebase-admin/firestore";
+import type { DocumentData } from "firebase-admin/firestore";
 import type { ScrapedOpportunity } from "@/lib/ingestion/scrapers/types";
+
+/**
+ * This module is SERVER-ONLY. It is imported by `instrumentation.ts`, the
+ * ingestion runner, and the cron-protected `/api/scrape` + `/api/seed` routes.
+ *
+ * It previously used the anonymous *client* SDK (`@/lib/firebase`), which has no
+ * credentials on the server. That forced `org_opportunities` to be declared
+ * world-writable in `firestore.rules` so the sync could land at all: any visitor
+ * could rewrite or delete the entire opportunity catalogue. Using the Admin SDK
+ * bypasses rules entirely with a trusted service account, so the collection can
+ * finally be locked down.
+ */
+function adminDb() {
+  return getAdminDb();
+}
 
 /**
  * Checks whether a given deadline string has already passed.
@@ -74,11 +81,18 @@ export function generateOpportunityDocId(opp: {
       .replace(/^https?:\/\//, "")
       .replace(/\?.*$/, "")
       .replace(/\/+$/, "");
-    const slug = cleanUrl
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 90);
-    if (slug.length >= 6) return `opp-${slug}`;
+    const slug = cleanUrl.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    // A bare `.slice(0, 90)` used to drop the *distinguishing* tail of the URL:
+    // Internshala's 4 distinct job URLs all share their first 90 characters, so
+    // they collapsed to 2 ids and `batch.set({merge:true})` let the last one win
+    // while the others vanished. Instead keep a readable head AND append a
+    // short digest of the FULL normalized URL, so two URLs that share a prefix
+    // can never produce the same id.
+    if (slug.length >= 6) {
+      const digest = shortHash(slug);
+      const head = slug.slice(0, Math.max(20, 90 - digest.length - 1));
+      return `opp-${head}-${digest}`;
+    }
   }
 
   const cleanOrg = (opp.orgName || "org")
@@ -94,7 +108,29 @@ export function generateOpportunityDocId(opp: {
     .replace(/^-+|-+$/g, "")
     .slice(0, 50);
 
-  return `opp-${cleanOrg}-${cleanTitle}`;
+  // Same prefix-collision problem in the title fallback: two listings by the
+  // same org with a long shared title prefix collided. Digest the raw
+  // title+org pair so the id stays unique.
+  const digest = shortHash(`${cleanOrg}|${(opp.title || "").trim().toLowerCase()}`);
+  return `opp-${cleanOrg}-${cleanTitle}-${digest}`;
+}
+
+/**
+ * Deterministic 8-char base36 digest (FNV-1a).
+ *
+ * Chosen over `crypto.createHash` because this module is imported by both the
+ * Admin SDK path and client-side callers, and because the value only needs to
+ * be stable and collision-resistant within a single collection, not
+ * cryptographically secure.
+ */
+function shortHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    // 32-bit FNV prime multiply, kept in uint32 range.
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36).padStart(7, "0").slice(0, 8);
 }
 
 /**
@@ -154,13 +190,47 @@ export interface SyncResult {
   newOrUpdated: number;
   skippedExpired: number;
   prunedExpired: number;
+  created: number;
+  preservedAdminStatus: number;
   errors: string[];
+}
+
+/** Statuses a human admin may have set. Ingestion must never overwrite these. */
+const HUMAN_DECIDED_STATUSES = new Set(["pending", "rejected"]);
+
+/**
+ * Reads the current `status` of the given document IDs.
+ *
+ * Needed because `batch.set({merge:true})` writes `status` unconditionally, so
+ * every cron re-sync used to reset an admin's `pending`/`rejected` decision back
+ * to `approved` and quietly republish listings a human had pulled.
+ *
+ * Firestore caps an `in` query at 30 values, so callers chunk at 30.
+ */
+async function loadExistingStatuses(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const CHUNK = 30;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    if (chunk.length === 0) continue;
+    const snap = await adminDb()
+      .collection("org_opportunities")
+      .where(FieldPath.documentId(), "in", chunk)
+      .select("status")
+      .get();
+    snap.forEach((d) => {
+      const s = d.get("status");
+      if (typeof s === "string") out.set(d.id, s);
+    });
+  }
+  return out;
 }
 
 /**
  * Persists opportunities directly to the Firestore "org_opportunities" collection.
  * - Deduplication: Uses deterministic Doc ID so repeated runs UPDATE existing docs rather than duplicate.
  * - Auto-Pruning: Skips items whose deadline has passed and prunes existing expired items from Firestore.
+ * - Status safety: an admin's `pending`/`rejected` decision survives re-syncs.
  */
 export async function syncOpportunitiesToFirestore(
   opportunities: (ScrapedOpportunity | any)[]
@@ -168,6 +238,8 @@ export async function syncOpportunitiesToFirestore(
   const errors: string[] = [];
   let newOrUpdated = 0;
   let skippedExpired = 0;
+  let created = 0;
+  let preservedAdminStatus = 0;
 
   const validOpps: Array<{ id: string; data: any }> = [];
 
@@ -183,6 +255,12 @@ export async function syncOpportunitiesToFirestore(
     const inferredIncomeLimit = inferIncomeLimit(opp);
     // Infer degree level from eligibility/description
     const inferredDegreeLevel = inferDegreeLevel(opp);
+
+    // `autoApprove === false` is the scraper's explicit "send to moderation"
+    // signal. Anything else keeps the historical behaviour of publishing straight
+    // to the live explore feed, so switching a source to `autoApprove: false` is
+    // now the single lever for moderating it.
+    const initialStatus = opp.autoApprove === false ? "pending" : "approved";
 
     const payload = {
       title: opp.title || "Untitled Opportunity",
@@ -200,7 +278,7 @@ export async function syncOpportunitiesToFirestore(
       source: "automated",
       sourceType: opp.sourceType || "trusted-feed",
       scraperName: opp.scraperName || "NEXORA Ingestion",
-      status: "approved", // auto-approved for live explore feed
+      status: initialStatus,
       postedByUid: "automated-ingestion",
       updatedAt: new Date().toISOString(),
       incomeLimit: inferredIncomeLimit,
@@ -210,14 +288,44 @@ export async function syncOpportunitiesToFirestore(
     validOpps.push({ id: docId, data: payload });
   }
 
+  // Look up what already exists so we never clobber a human moderation decision.
+  let existing = new Map<string, string>();
+  try {
+    existing = await loadExistingStatuses(validOpps.map((o) => o.id));
+  } catch (err: any) {
+    // Fail CLOSED: writing blind would resurrect every admin-rejected listing.
+    errors.push(`Status lookup failed, sync aborted to avoid overwriting admin decisions: ${err.message}`);
+    return {
+      totalProcessed: opportunities.length,
+      newOrUpdated: 0,
+      skippedExpired,
+      prunedExpired: 0,
+      created: 0,
+      preservedAdminStatus: 0,
+      errors,
+    };
+  }
+
+  for (const item of validOpps) {
+    const prior = existing.get(item.id);
+    if (prior === undefined) {
+      created++;
+      continue;
+    }
+    if (prior !== item.data.status && HUMAN_DECIDED_STATUSES.has(prior)) {
+      delete item.data.status;
+      preservedAdminStatus++;
+    }
+  }
+
   // 2. Batch write to Firestore in chunks of 250 (Firestore limit is 500)
   const CHUNK_SIZE = 250;
   for (let i = 0; i < validOpps.length; i += CHUNK_SIZE) {
     const chunk = validOpps.slice(i, i + CHUNK_SIZE);
     try {
-      const batch = writeBatch(db);
+      const batch = adminDb().batch();
       for (const item of chunk) {
-        const ref = doc(db, "org_opportunities", item.id);
+        const ref = adminDb().collection("org_opportunities").doc(item.id);
         batch.set(
           ref,
           {
@@ -234,8 +342,8 @@ export async function syncOpportunitiesToFirestore(
       // Fallback: write doc by doc
       for (const item of chunk) {
         try {
-          const ref = doc(db, "org_opportunities", item.id);
-          await setDoc(ref, item.data, { merge: true });
+          const ref = adminDb().collection("org_opportunities").doc(item.id);
+          await ref.set(item.data, { merge: true });
           newOrUpdated++;
         } catch (e: any) {
           errors.push(`Failed doc ${item.id}: ${e.message}`);
@@ -258,6 +366,8 @@ export async function syncOpportunitiesToFirestore(
     newOrUpdated,
     skippedExpired,
     prunedExpired,
+    created,
+    preservedAdminStatus,
     errors,
   };
 }
@@ -271,11 +381,10 @@ export async function pruneExpiredFromFirestore(): Promise<{ prunedCount: number
   let prunedCount = 0;
 
   try {
-    const q = query(
-      collection(db, "org_opportunities"),
-      where("status", "==", "approved")
-    );
-    const snap = await getDocs(q);
+    const oppQuery = adminDb()
+      .collection("org_opportunities")
+      .where("status", "==", "approved");
+    const snap = await oppQuery.get();
 
     const expiredDocIds: string[] = [];
     snap.forEach((d) => {
@@ -293,9 +402,9 @@ export async function pruneExpiredFromFirestore(): Promise<{ prunedCount: number
     const CHUNK_SIZE = 250;
     for (let i = 0; i < expiredDocIds.length; i += CHUNK_SIZE) {
       const chunk = expiredDocIds.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
+      const batch = adminDb().batch();
       for (const docId of chunk) {
-        batch.delete(doc(db, "org_opportunities", docId));
+        batch.delete(adminDb().collection("org_opportunities").doc(docId));
       }
       await batch.commit();
       prunedCount += chunk.length;
@@ -314,11 +423,10 @@ export async function pruneExpiredFromFirestore(): Promise<{ prunedCount: number
  * Reads all active, approved opportunities directly from Firestore.
  */
 export async function getActiveOpportunitiesFromFirestore(): Promise<DocumentData[]> {
-  const q = query(
-    collection(db, "org_opportunities"),
-    where("status", "==", "approved")
-  );
-  const snap = await getDocs(q);
+  const q = adminDb()
+    .collection("org_opportunities")
+    .where("status", "==", "approved");
+  const snap = await q.get();
   const out: DocumentData[] = [];
   snap.forEach((d) => {
     const data = d.data();
