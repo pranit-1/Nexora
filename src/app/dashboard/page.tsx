@@ -17,12 +17,9 @@ import {
   ArrowRight,
   Trash2,
   Wallet,
-  Gauge,
   ChevronRight,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchPerformanceProfile } from "@/lib/performanceProfileClient";
-import type { PerformanceSnapshot } from "@/lib/types";
 import { Card, Chip, EmptyState } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 
@@ -53,8 +50,8 @@ function SkeletonDashboard() {
         <div className="skeleton hidden h-14 w-40 rounded-lg sm:block" />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="skeleton h-36 rounded-lg" />
         ))}
       </div>
@@ -79,7 +76,6 @@ export default function Dashboard() {
   const [savedOpps, setSavedOpps] = useState<Opportunity[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [docCount, setDocCount] = useState<number>(0);
-  const [performance, setPerformance] = useState<PerformanceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -120,12 +116,6 @@ export default function Dashboard() {
         const qDocs = query(collection(db, "wallet"), where("uid", "==", currentUser.uid));
         const docsSnap = await getDocs(qDocs);
         setDocCount(docsSnap.size);
-
-        // 4. Fetch performance profile score
-        const perfData = await fetchPerformanceProfile(currentUser.uid);
-        if (perfData) {
-          setPerformance(perfData);
-        }
       } catch (error) {
         console.error("Error loading dashboard data:", error);
       } finally {
@@ -157,9 +147,6 @@ export default function Dashboard() {
     return diffDays > 0 && diffDays <= 30;
   }).length;
 
-  const overallScore = performance ? Math.round(performance.overall) : null;
-  const scoreBand = performance?.band || "developing";
-
   const tabSummaries = [
     {
       title: "Opportunity Wallet",
@@ -168,14 +155,6 @@ export default function Dashboard() {
       href: "/dashboard/wallet",
       icon: Wallet,
       pill: "Vault",
-    },
-    {
-      title: "Performance Score",
-      metric: overallScore !== null ? `${overallScore}/100` : "Audit Ready",
-      subtext: overallScore !== null ? `Profile status: ${scoreBand.toUpperCase()}` : "Compute readiness score",
-      href: "/dashboard/performance",
-      icon: Gauge,
-      pill: overallScore !== null ? `${overallScore}%` : "Track",
     },
     {
       title: "Calendar Hub",
@@ -237,7 +216,7 @@ export default function Dashboard() {
       </Reveal>
 
       {/* Summary grid */}
-      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {tabSummaries.map((tab) => {
           const Icon = tab.icon;
           return (

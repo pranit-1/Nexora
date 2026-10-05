@@ -162,12 +162,13 @@ function DimensionBar({
 }
 
 export default function PerformancePage() {
-  const { currentUser } = useAuth();
+  const { currentUser, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<PerformanceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    if (authLoading) return;
     if (!currentUser) {
       setLoading(false);
       return;
@@ -184,12 +185,14 @@ export default function PerformancePage() {
         .then((fresh) => { if (fresh) setProfile(fresh); })
         .catch(() => {/* non-critical */});
     } else {
-      // No cached snapshot yet — compute for the first time (shows spinner)
+      // No cached snapshot yet — compute for the first time
       const fresh = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true });
-      setProfile(fresh);
+      if (fresh) {
+        setProfile(fresh);
+      }
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [currentUser, authLoading]);
 
   useEffect(() => {
     load();
@@ -203,7 +206,7 @@ export default function PerformancePage() {
     setRefreshing(false);
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-secondary" />
