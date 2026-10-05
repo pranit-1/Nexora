@@ -17,13 +17,13 @@ export const dynamic = "force-dynamic";
  * from the stored one.
  */
 export async function POST(request: Request) {
-  const auth = await requireUser(request);
-  if (!auth.ok) return auth.response;
-
-  const uid = auth.user.uid;
-  const docRef = getAdminDb().doc(`users/${uid}`);
-
   try {
+    const auth = await requireUser(request);
+    if (!auth.ok) return auth.response;
+
+    const uid = auth.user.uid;
+    const docRef = getAdminDb().doc(`users/${uid}`);
+
     const snap = await docRef.get();
     const existing = snap.data() as Record<string, unknown> | undefined;
 
@@ -56,7 +56,8 @@ export async function POST(request: Request) {
     await docRef.set(patch, { merge: true });
     return NextResponse.json({ uid, role: computedRole, changed: true });
   } catch (e) {
-    console.error("[admin/resolve]", (e as Error)?.message);
-    return NextResponse.json({ error: "Could not resolve your role." }, { status: 500 });
+    const msg = (e as Error)?.message || String(e);
+    console.error("[admin/resolve] Crash:", msg, (e as Error)?.stack);
+    return NextResponse.json({ error: `Could not resolve role: ${msg}`, details: msg }, { status: 500 });
   }
 }
