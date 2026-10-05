@@ -94,7 +94,9 @@ service cloud.firestore {
         && subsetOfKeys(request.resource.data, [
              "username", "name", "email", "role", "authProvider",
              "bio", "education", "skills", "interests", "location",
-             "category", "income", "createdAt", "updatedAt"
+             "category", "income", "createdAt", "updatedAt",
+             "performanceScore", "performanceBand", "performanceCoverage", "performanceDocCount",
+             "studentLevel", "studentLevelDescription", "performanceUpdatedAt"
            ]);
 
       allow update: if isAdmin()
@@ -105,7 +107,9 @@ service cloud.firestore {
             && subsetOfKeys(request.resource.data, [
                  "username", "name", "email", "role", "authProvider",
                  "bio", "education", "skills", "interests", "location",
-                 "category", "income", "createdAt", "updatedAt"
+                 "category", "income", "createdAt", "updatedAt",
+                 "performanceScore", "performanceBand", "performanceCoverage", "performanceDocCount",
+                 "studentLevel", "studentLevelDescription", "performanceUpdatedAt"
                ]));
 
       allow delete: if isAdmin();

@@ -405,20 +405,22 @@ async function build(uid: string, refreshNarrative: boolean, force: boolean) {
     bandLabel: bandLabel(finalProfile.band),
   };
 
+  const cleanSnapshot: Record<string, any> = JSON.parse(JSON.stringify(snapshot));
+
   const mustPersist = stale || wantsNarrative;
   if (mustPersist) {
-    await ref.set(snapshot, { merge: true });
+    await ref.set(cleanSnapshot, { merge: true });
     // Mirror the headline numbers onto the user document so the profile page
     // and any other surface can read them without a second query.
     await db.doc(`users/${uid}`).set(
       {
-        performanceScore: finalProfile.overall,
-        performanceBand: finalProfile.band,
-        performanceCoverage: finalProfile.coverage,
-        performanceDocCount: finalProfile.docCount,
+        performanceScore: finalProfile.overall ?? 0,
+        performanceBand: finalProfile.band || "empty",
+        performanceCoverage: finalProfile.coverage ?? 0,
+        performanceDocCount: finalProfile.docCount ?? 0,
         studentLevel: finalProfile.studentLevel || null,
         studentLevelDescription: finalProfile.studentLevelDescription || null,
-        performanceUpdatedAt: finalProfile.computedAt,
+        performanceUpdatedAt: finalProfile.computedAt || new Date().toISOString(),
       },
       { merge: true }
     );
@@ -485,7 +487,14 @@ export async function POST(request: Request) {
     const data = await build(targetUid, refresh, force);
     return NextResponse.json(data);
   } catch (e) {
-    console.error("[performance-profile] POST", (e as Error)?.message);
-    return NextResponse.json({ error: "Could not build the performance profile" }, { status: 500 });
+    const errorMsg = (e as Error)?.message || String(e);
+    console.error("[performance-profile] POST Error:", errorMsg, (e as Error)?.stack);
+    return NextResponse.json(
+      { 
+        error: `Could not build performance profile: ${errorMsg}`,
+        details: errorMsg 
+      }, 
+      { status: 500 }
+    );
   }
 }
