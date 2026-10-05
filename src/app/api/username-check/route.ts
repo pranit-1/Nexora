@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAdminDb } from "@/lib/firebaseAdmin";
+import { getAdminDb, hasAdminCredentials } from "@/lib/firebaseAdmin";
 import { usernameRegex } from "@/lib/schemas";
 import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
 
@@ -18,6 +18,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ available: false, reason: "invalid" }, { status: 400 });
   }
 
+  if (!hasAdminCredentials()) {
+    return NextResponse.json({ available: true, unverified: true });
+  }
+
   try {
     const db = getAdminDb();
     const snap = await db.doc(`usernames/${u}`).get();
@@ -27,11 +31,6 @@ export async function GET(request: Request) {
     if (!q.empty) return NextResponse.json({ available: false });
     return NextResponse.json({ available: true });
   } catch (e: any) {
-    // Local dev without credentials: keep signup usable, but say so explicitly
-    // rather than silently claiming the name is free.
-    if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY && !process.env.FIREBASE_PROJECT_ID) {
-      return NextResponse.json({ available: true, unverified: true });
-    }
     console.error("[username-check] error", e.message);
     return NextResponse.json(
       { available: false, error: "Could not verify availability. Please try again." },

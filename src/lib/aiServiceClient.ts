@@ -9,13 +9,7 @@ export interface ResumeAnalysisResult {
   improvementSuggestions: string[];
 }
 
-export interface InterviewFeedbackResult {
-  technicalFeedback: string;
-  communicationFeedback: string;
-  confidenceScore: number;
-  improvementSuggestions: string[];
-  followUpQuestions: string[];
-}
+
 
 /**
  * Thrown when the AI backend could not produce a real answer.
@@ -99,22 +93,7 @@ export class AIServiceClient {
     return result;
   }
 
-  public static async getInterviewFeedback(
-    jobTitle: string,
-    answers: { question: string; answer: string }[]
-  ): Promise<InterviewFeedbackResult> {
-    const result = await this.postRequest("interview", { jobTitle, answers });
-    if (!result || typeof result !== "object" || typeof result.technicalFeedback !== "string") {
-      throw new AIServiceUnavailableError("malformed", "The AI returned an unreadable interview review.");
-    }
-    return {
-      technicalFeedback: result.technicalFeedback,
-      communicationFeedback: typeof result.communicationFeedback === "string" ? result.communicationFeedback : "",
-      confidenceScore: typeof result.confidenceScore === "number" ? result.confidenceScore : 0,
-      improvementSuggestions: Array.isArray(result.improvementSuggestions) ? result.improvementSuggestions : [],
-      followUpQuestions: Array.isArray(result.followUpQuestions) ? result.followUpQuestions : [],
-    };
-  }
+
 
   public static async trackConfidence(scores: unknown): Promise<string> {
     const result = await this.postRequest("trackConfidence", { scores });

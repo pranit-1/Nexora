@@ -10,7 +10,7 @@ import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, collection, addDoc, getDocs, query, where, orderBy, limit } from "firebase/firestore";
 import { Opportunity } from "@/lib/mockData";
 import { useOpportunities } from "@/hooks/useOpportunities";
-import { AIServiceClient, AIServiceUnavailableError, ResumeAnalysisResult, InterviewFeedbackResult } from "@/lib/aiServiceClient";
+import { AIServiceClient, AIServiceUnavailableError, ResumeAnalysisResult } from "@/lib/aiServiceClient";
 import {
   Sparkles,
   CheckCircle,
@@ -37,17 +37,12 @@ const TABS = [
   { id: "recommendations", label: "Opportunity Matcher", icon: Award },
   { id: "resume", label: "ATS Resume Scan", icon: FileText },
   { id: "chat", label: "Career Chatbot", icon: MessageSquare },
-  { id: "interview", label: "Interview Coach", icon: Zap },
   { id: "analytics", label: "Performance Tracker", icon: LineChart },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
-const INTERVIEW_ROLES = [
-  { value: "Frontend Engineer", label: "Frontend Engineer" },
-  { value: "Backend Engineer", label: "Backend Engineer" },
-  { value: "Product Manager", label: "Product Manager" },
-];
+
 
 /**
  * Match strength is expressed with three tokens, not three hardcoded hexes.
@@ -84,9 +79,7 @@ export default function AIHub() {
   const { currentUser, loading: authLoading } = useAuth();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<
-    "recommendations" | "resume" | "chat" | "interview" | "analytics"
-  >("recommendations");
+  const [activeTab, setActiveTab] = useState<TabId>("recommendations");
 
   useEffect(() => {
     if (!authLoading && !currentUser) {
@@ -112,8 +105,7 @@ export default function AIHub() {
             <span className="eyebrow text-secondary">AI Hub Workspace</span>
             <h1 className="mt-4 text-display-sm text-foreground">Intelligent Career Guidance</h1>
             <p className="mt-4 max-w-2xl text-base text-foreground-muted">
-              Check opportunities, analyze your resume, mock-interview with an AI coach, and chat
-              with our career assistant.
+              Check opportunities, analyze your resume, and chat with our career assistant.
             </p>
             <div className="rule-accent mt-8" />
           </Reveal>
@@ -161,7 +153,6 @@ export default function AIHub() {
                 {activeTab === "recommendations" && <RecommendationsTab />}
                 {activeTab === "resume" && <ResumeTab />}
                 {activeTab === "chat" && <ChatTab />}
-                {activeTab === "interview" && <InterviewTab />}
                 {activeTab === "analytics" && <AnalyticsTab />}
               </motion.div>
             </div>
@@ -1046,224 +1037,7 @@ function ChatTab() {
 }
 
 /* ==========================================================================
-   TAB 6: INTERVIEW COACH
-   ========================================================================== */
-function InterviewTab() {
-  const { currentUser } = useAuth();
-  const [jobTitle, setJobTitle] = useState("Frontend Engineer");
-  const [stage, setStage] = useState<"setup" | "interviewing" | "feedback">("setup");
-  const [questions, setQuestions] = useState<string[]>([]);
-  const [answers, setAnswers] = useState<string[]>([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [feedback, setFeedback] = useState<InterviewFeedbackResult | null>(null);
-  const [interviewError, setInterviewError] = useState("");
-
-  const startInterview = () => {
-    // Generate questions locally based on role for rule compliance
-    const interviewQuestionsMap: Record<string, string[]> = {
-      "Frontend Engineer": [
-        "What are the benefits of Server Components vs Client Components in Next.js?",
-        "Explain how closures work in JavaScript and why you might use one.",
-        "How do you optimize page loading performance in React applications?"
-      ],
-      "Backend Engineer": [
-        "How would you handle database connection pooling in a scalable Node.js application?",
-        "Explain the differences between SQL and NoSQL database structures.",
-        "What are the best practices for designing a secure and scalable REST API?"
-      ],
-      "Product Manager": [
-        "How do you prioritize features for a product roadmap under resource constraints?",
-        "Explain how you would measure user engagement metrics for a new feature.",
-        "How do you manage disagreements between design and software engineering teams?"
-      ]
-    };
-
-    const qs = interviewQuestionsMap[jobTitle] || interviewQuestionsMap["Frontend Engineer"];
-    setQuestions(qs);
-    setAnswers(new Array(qs.length).fill(""));
-    setCurrentIdx(0);
-    setStage("interviewing");
-  };
-
-  const handleAnswerSubmit = async () => {
-    if (currentIdx < questions.length - 1) {
-      setCurrentIdx((prev) => prev + 1);
-    } else {
-      // Evaluate answers with Gemini
-      setLoading(true);
-      setStage("feedback");
-      setInterviewError("");
-      try {
-        const payload = questions.map((q, idx) => ({
-          question: q,
-          answer: answers[idx],
-        }));
-
-        const result = await AIServiceClient.getInterviewFeedback(jobTitle, payload);
-        setFeedback(result);
-
-        if (currentUser) {
-          await addDoc(collection(db, "interviews"), {
-            uid: currentUser.uid,
-            jobTitle,
-            feedback: result,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      } catch (err) {
-        console.error(err);
-        setFeedback(null);
-        setStage("interviewing");
-        setCurrentIdx(questions.length - 1);
-        setInterviewError(
-          err instanceof AIServiceUnavailableError
-            ? err.message
-            : "Could not review your answers right now. Please try again."
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      <div>
-        <span className="eyebrow">Instrument 04</span>
-        <h2 className="mt-2 font-display text-2xl text-foreground">AI Technical Interview Coach</h2>
-        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
-          Simulate structured questions based on chosen roles and receive technical feedback
-          summaries from Gemini.
-        </p>
-      </div>
-
-      {stage === "setup" && (
-        <Card tone="raised" className="space-y-6 p-6">
-          <Select
-            label="Select position role"
-            value={jobTitle}
-            onChange={(e) => setJobTitle(e.target.value)}
-            options={INTERVIEW_ROLES}
-          />
-          <Button block onClick={startInterview}>
-            Begin Interview Session
-          </Button>
-        </Card>
-      )}
-
-      {stage === "interviewing" && questions.length > 0 && (
-        <div className="space-y-5">
-          <div className="flex items-center justify-between gap-4">
-            <span className="eyebrow">
-              Question {currentIdx + 1} of {questions.length}
-            </span>
-            <Chip tone="gold">{jobTitle}</Chip>
-          </div>
-
-          <Card tone="inset" className="p-6">
-            <p className="font-display text-lg leading-relaxed text-foreground">
-              {questions[currentIdx]}
-            </p>
-          </Card>
-
-          <Textarea
-            label="Your answer"
-            rows={6}
-            placeholder="Type your response to the question in detail…"
-            value={answers[currentIdx]}
-            onChange={(e) => {
-              const updated = [...answers];
-              updated[currentIdx] = e.target.value;
-              setAnswers(updated);
-            }}
-          />
-
-          <Button block onClick={handleAnswerSubmit} disabled={!answers[currentIdx].trim()}>
-            {currentIdx < questions.length - 1 ? "Next Question" : "Complete & Evaluate"}
-          </Button>
-        </div>
-      )}
-
-      {stage === "feedback" && (
-        <div className="space-y-6">
-          {loading ? (
-            <div className="flex flex-col items-center gap-3 py-16">
-              <Loader2 className="h-7 w-7 spin text-secondary" />
-              <span className="text-sm text-foreground-muted">
-                Gemini is evaluating your responses…
-              </span>
-            </div>
-          ) : interviewError ? (
-            <ErrorState description={interviewError} />
-          ) : (
-            feedback && (
-              <Reveal className="space-y-5">
-                <div className="rounded-lg border border-border bg-surface-raised px-5 py-4">
-                  <span className="eyebrow">Confidence &amp; tone rating</span>
-                  <span className="mt-2 block font-display text-4xl leading-none text-foreground">
-                    {feedback.confidenceScore}
-                    <span className="text-lg text-foreground-subtle">/100</span>
-                  </span>
-                </div>
-
-                <Card tone="raised" className="space-y-3 p-5">
-                  <span className="eyebrow">Technical evaluation</span>
-                  <p className="text-sm leading-relaxed text-foreground">
-                    {feedback.technicalFeedback}
-                  </p>
-                </Card>
-
-                <Card tone="raised" className="space-y-3 p-5">
-                  <span className="eyebrow">Communication &amp; structure</span>
-                  <p className="text-sm leading-relaxed text-foreground">
-                    {feedback.communicationFeedback}
-                  </p>
-                </Card>
-
-                <Card tone="raised" className="space-y-3 p-5">
-                  <span className="eyebrow">Improvement suggestions</span>
-                  <ul className="space-y-2">
-                    {feedback.improvementSuggestions.map((s, i) => (
-                      <li key={i} className="flex gap-2.5 text-sm text-foreground">
-                        <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-foreground-subtle" />
-                        {s}
-                      </li>
-                    ))}
-                  </ul>
-                </Card>
-
-                {feedback.followUpQuestions && feedback.followUpQuestions.length > 0 && (
-                  <Card tone="raised" className="space-y-3 p-5">
-                    <span className="eyebrow">Follow-up questions to practice</span>
-                    <ul className="space-y-2">
-                      {feedback.followUpQuestions.map((q, i) => (
-                        <li key={i} className="border-l-2 border-border pl-3 font-display text-sm italic text-foreground">
-                          {q}
-                        </li>
-                      ))}
-                    </ul>
-                  </Card>
-                )}
-
-                <Button
-                  variant="secondary"
-                  block
-                  onClick={() => setStage("setup")}
-                >
-                  Start New Session
-                </Button>
-              </Reveal>
-            )
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ==========================================================================
-   TAB 7: ANALYTICS & CONFIDENCE TRACKER
+   TAB 4: ANALYTICS & CONFIDENCE TRACKER
    ========================================================================== */
 function AnalyticsTab() {
   const { currentUser, profile } = useAuth();
@@ -1271,7 +1045,6 @@ function AnalyticsTab() {
   const [stats, setStats] = useState({
     profileCompletion: 0,
     resumeScanScore: 0,
-    interviewSessionCount: 0,
     performanceScore: 0,
   });
   const [summary, setSummary] = useState("");
@@ -1310,16 +1083,10 @@ function AnalyticsTab() {
         latestATS = d.data().atsScore;
       });
 
-      const interviewSnap = await getDocs(
-        query(collection(db, "interviews"), where("uid", "==", currentUser.uid))
-      );
-      const interviewCount = interviewSnap.size;
-
       const currentStats = {
         profileCompletion: computeProfileCompletion(),
         // No resume analyzed yet == no score, not a fake placeholder number.
         resumeScanScore: latestATS ?? 0,
-        interviewSessionCount: interviewCount,
         // Real document-backed score from the wallet. 0 when the wallet is empty.
         performanceScore: (await fetchPerformanceProfile(currentUser.uid))?.overall ?? 0,
       };
@@ -1364,7 +1131,7 @@ function AnalyticsTab() {
   return (
     <div className="space-y-8">
       <div>
-        <span className="eyebrow">Instrument 05</span>
+        <span className="eyebrow">Instrument 04</span>
         <h2 className="mt-2 font-display text-2xl text-foreground">
           AI Performance &amp; Analytics
         </h2>
@@ -1374,7 +1141,7 @@ function AnalyticsTab() {
         </p>
       </div>
 
-      <Stagger className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StaggerItem>
           <Stat label="Profile Integrity" value={`${stats.profileCompletion}%`} size="sm" />
         </StaggerItem>
@@ -1383,9 +1150,6 @@ function AnalyticsTab() {
         </StaggerItem>
         <StaggerItem>
           <Stat label="Document Performance" value={`${stats.performanceScore}/100`} size="sm" />
-        </StaggerItem>
-        <StaggerItem>
-          <Stat label="Practice Interviews" value={stats.interviewSessionCount} size="sm" />
         </StaggerItem>
       </Stagger>
 
