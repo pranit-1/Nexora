@@ -28,6 +28,57 @@ import {
   X
 } from "lucide-react";
 import { fetchPerformanceProfile } from "@/lib/performanceProfileClient";
+import { Button, Card, Chip, EmptyState, ErrorState, Select, Stat, Textarea } from "@/components/ui";
+import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
+import { motion } from "framer-motion";
+
+/** Hoisted so the nav does not rebuild the array on every render. */
+const TABS = [
+  { id: "recommendations", label: "Opportunity Matcher", icon: Award },
+  { id: "resume", label: "ATS Resume Scan", icon: FileText },
+  { id: "chat", label: "Career Chatbot", icon: MessageSquare },
+  { id: "interview", label: "Interview Coach", icon: Zap },
+  { id: "analytics", label: "Performance Tracker", icon: LineChart },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+const INTERVIEW_ROLES = [
+  { value: "Frontend Engineer", label: "Frontend Engineer" },
+  { value: "Backend Engineer", label: "Backend Engineer" },
+  { value: "Product Manager", label: "Product Manager" },
+];
+
+/**
+ * Match strength is expressed with three tokens, not three hardcoded hexes.
+ * Previously each threshold pair (`bg-emerald-500/10 text-emerald-600 …`) was
+ * retyped by hand, so the same "strong" state was a slightly different green on
+ * every surface it appeared on.
+ */
+function matchTone(score: number) {
+  if (score >= 80) {
+    return {
+      bar: "bg-success",
+      text: "text-success",
+      chip: "success" as const,
+      panel: "bg-success-surface border-success/20",
+    };
+  }
+  if (score >= 60) {
+    return {
+      bar: "bg-secondary",
+      text: "text-secondary",
+      chip: "gold" as const,
+      panel: "bg-accent-gold-surface border-secondary/20",
+    };
+  }
+  return {
+    bar: "bg-warning",
+    text: "text-warning",
+    chip: "warning" as const,
+    panel: "bg-warning-surface border-warning/20",
+  };
+}
 
 export default function AIHub() {
   const { currentUser, loading: authLoading } = useAuth();
@@ -45,8 +96,9 @@ export default function AIHub() {
 
   if (authLoading || !currentUser) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-primary/30">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-7 w-7 spin text-secondary" />
+        <span className="sr-only">Loading your AI workspace</span>
       </div>
     );
   }
@@ -54,60 +106,64 @@ export default function AIHub() {
   return (
     <>
       <Navbar />
-      <main className="flex-grow bg-background min-h-screen py-10 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="mb-10 text-center sm:text-left">
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-primary bg-primary/10 px-3 py-1.5 rounded-full">
-              <Sparkles className="w-4 h-4" /> AI Hub Workspace
-            </span>
-            <h1 className="text-3xl sm:text-4xl font-black text-foreground mt-3 tracking-tight">
-              Intelligent Career Guidance
-            </h1>
-            <p className="text-sm text-foreground-muted mt-2 max-w-2xl">
-              Check opportunities, analyze your resume, mock-interview with an AI coach, and chat with our career assistant.
+      <main className="flex-grow bg-background">
+        <div className="shell py-16 lg:py-20">
+          <Reveal>
+            <span className="eyebrow text-secondary">AI Hub Workspace</span>
+            <h1 className="mt-4 text-display-sm text-foreground">Intelligent Career Guidance</h1>
+            <p className="mt-4 max-w-2xl text-base text-foreground-muted">
+              Check opportunities, analyze your resume, mock-interview with an AI coach, and chat
+              with our career assistant.
             </p>
-          </div>
+            <div className="rule-accent mt-8" />
+          </Reveal>
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            {/* Left Nav menu */}
-            <div className="lg:col-span-1 space-y-2 bg-surface/70 backdrop-blur border border-border p-5 rounded-3xl shadow-sm h-fit">
-              <h4 className="text-[10px] font-bold uppercase tracking-wider text-foreground-muted mb-4 px-3">
-                AI Instruments
-              </h4>
-              {[
-                { id: "recommendations", label: "Opportunity Matcher", icon: Award },
-                { id: "resume", label: "ATS Resume Scan", icon: FileText },
-                { id: "chat", label: "Career Chatbot", icon: MessageSquare },
-                { id: "interview", label: "Interview Coach", icon: Zap },
-                { id: "analytics", label: "Performance Tracker", icon: LineChart },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold text-left transition-all ${
-                      isActive
-                        ? "bg-primary text-primary-foreground shadow-md shadow-primary/10"
-                        : "text-foreground-muted hover:bg-primary/10 hover:text-primary"
-                    }`}
-                  >
-                    <Icon className="w-4.5 h-4.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="mt-12 grid grid-cols-1 gap-8 lg:grid-cols-[16rem_1fr] lg:gap-10">
+            {/* Instrument rail. Sticky so it stays reachable while a long tab
+                scrolls; `h-fit` on a grid child is not enough for that. */}
+            <nav aria-label="AI instruments" className="lg:sticky lg:top-24 lg:h-fit">
+              <span className="eyebrow mb-4 px-3">AI Instruments</span>
+              <ul className="space-y-1">
+                {TABS.map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <li key={tab.id}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(tab.id as TabId)}
+                        aria-current={isActive ? "page" : undefined}
+                        className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors duration-base ${
+                          isActive
+                            ? "bg-surface-ink text-background shadow-e2"
+                            : "text-foreground-muted hover:bg-surface-raised hover:text-foreground"
+                        }`}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className={isActive ? "font-semibold" : "font-medium"}>{tab.label}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </nav>
 
-            {/* Main Tabs Container */}
-            <div className="lg:col-span-3 bg-surface border border-border rounded-3xl p-6 sm:p-8 shadow-sm">
-              {activeTab === "recommendations" && <RecommendationsTab />}
-              {activeTab === "resume" && <ResumeTab />}
-              {activeTab === "chat" && <ChatTab />}
-              {activeTab === "interview" && <InterviewTab />}
-              {activeTab === "analytics" && <AnalyticsTab />}
+            {/* Tab panel. Keyed so the entrance animation replays on switch —
+                without the key the motion runs once and every later tab
+                appears instantly, which felt like a broken transition. */}
+            <div className="min-w-0">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              >
+                {activeTab === "recommendations" && <RecommendationsTab />}
+                {activeTab === "resume" && <ResumeTab />}
+                {activeTab === "chat" && <ChatTab />}
+                {activeTab === "interview" && <InterviewTab />}
+                {activeTab === "analytics" && <AnalyticsTab />}
+              </motion.div>
             </div>
           </div>
         </div>
@@ -134,11 +190,19 @@ interface MatchResult {
 }
 
 function ScoreBar({ score }: { score: number }) {
-  const color =
-    score >= 80 ? "bg-emerald-500" : score >= 60 ? "bg-primary" : "bg-amber-500";
+  const tone = matchTone(score);
   return (
-    <div className="w-full h-1.5 rounded-full bg-border/40 overflow-hidden mt-1">
-      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${score}%` }} />
+    <div
+      className="mt-2 h-1 w-full overflow-hidden rounded-full bg-border"
+      role="img"
+      aria-label={`Match score ${score} out of 100`}
+    >
+      <motion.div
+        className={`h-full rounded-full ${tone.bar}`}
+        initial={{ width: 0 }}
+        animate={{ width: `${score}%` }}
+        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      />
     </div>
   );
 }
@@ -355,184 +419,179 @@ const runMatcher = () => {
       !!profile.location);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Award className="w-5 h-5 text-primary" /> Opportunity Matcher
-          </h2>
-          <p className="text-xs text-foreground-muted mt-1">
-            Ranked highest to lowest match — based on your skills, interests, location, education, income &amp; bio.
+          <span className="eyebrow">Instrument 01</span>
+          <h2 className="mt-2 font-display text-2xl text-foreground">Opportunity Matcher</h2>
+          <p className="mt-2 max-w-xl text-sm text-foreground-muted">
+            Ranked highest to lowest match — based on your skills, interests, location,
+            education, income &amp; bio.
           </p>
         </div>
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={runMatcher}
           disabled={loading}
-          className="flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-all"
+          leadingIcon={
+            loading ? (
+              <Loader2 className="h-3.5 w-3.5 spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )
+          }
         >
-          {loading ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="w-3.5 h-3.5" />
-          )}
           Rematch
-        </button>
+        </Button>
       </div>
 
       {/* Profile completeness nudge */}
       {!hasProfile && !loading && (
-        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
-          <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="text-xs font-bold text-amber-600">Complete your profile for better matches</p>
-            <p className="text-xs text-foreground-muted mt-0.5">
-              Add skills, interests, location, and education in profile settings to unlock deep matching.
-            </p>
+        <Reveal>
+          <div className="flex items-start gap-3 rounded-lg border border-warning/25 bg-warning-surface p-4">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div>
+              <p className="text-sm font-semibold text-warning">
+                Complete your profile for better matches
+              </p>
+              <p className="mt-1 text-sm text-foreground-muted">
+                Add skills, interests, location, and education in profile settings to unlock
+                deep matching.
+              </p>
+            </div>
           </div>
-        </div>
+        </Reveal>
       )}
 
       {/* Results */}
-      <div className="space-y-4">
+      <div className="space-y-6">
         {loading ? (
-          <div className="py-12 flex flex-col items-center gap-3">
-            <Loader2 className="w-6 h-6 text-primary animate-spin" />
-            <p className="text-xs text-foreground-muted">
+          <div className="flex flex-col items-center gap-3 py-16">
+            <Loader2 className="h-6 w-6 spin text-secondary" />
+            <p className="text-sm text-foreground-muted">
               Scanning {opportunities.length} opportunities…
             </p>
           </div>
         ) : displayed.length === 0 ? (
-          <div className="py-10 text-center">
-            <TrendingUp className="w-8 h-8 text-foreground-muted mx-auto mb-3" />
-            <p className="text-sm font-bold text-foreground">No opportunities found</p>
-            <p className="text-xs text-foreground-muted mt-1">
-              Check back once opportunities are available in the database.
-            </p>
-          </div>
+          <EmptyState
+            icon={<TrendingUp className="h-5 w-5" />}
+            title="No opportunities found"
+            description="Check back once opportunities are available in the database."
+          />
         ) : (
           <>
-            <p className="text-xs text-foreground-muted font-semibold">
-              Showing{" "}
-              <span className="text-foreground font-bold">{displayed.length}</span> of{" "}
-              <span className="text-foreground font-bold">{recs.length}</span> opportunities — best matches first
+            <p className="text-xs text-foreground-subtle">
+              Showing <span className="font-semibold text-foreground">{displayed.length}</span>{" "}
+              of <span className="font-semibold text-foreground">{recs.length}</span>{" "}
+              opportunities — best matches first
             </p>
-            <div className="grid grid-cols-1 gap-5">
+            <Stagger as="ul" className="grid grid-cols-1 gap-4">
               {displayed.map(({ opportunity, score, signals }) => {
-                const scoreColor =
-                  score >= 80 ? "text-emerald-500" : score >= 60 ? "text-primary" : "text-amber-500";
-                const badgeColor =
-                  score >= 80
-                    ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                    : score >= 60
-                    ? "bg-primary/10 text-primary border-primary/20"
-                    : "bg-amber-500/10 text-amber-600 border-amber-500/20";
+                const tone = matchTone(score);
                 const { why, missing } = buildExplanation(score, signals, opportunity);
 
                 return (
-                  <div
-                    key={opportunity.id}
-                    className="bg-surface border border-border hover:border-primary/30 p-5 rounded-3xl shadow-sm hover:shadow-md transition-all"
-                  >
-                    {/* Top Row */}
-                    <div className="flex justify-between items-start gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                          <span className="text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                            {opportunity.category}
-                          </span>
-                          <span className="text-[9px] font-semibold text-foreground-muted">
-                            {opportunity.field}
-                          </span>
+                  <StaggerItem as="li" key={opportunity.id}>
+                    <Card className="p-5 sm:p-6">
+                      {/* Top Row */}
+                      <div className="flex items-start justify-between gap-5">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <Chip tone="gold">{opportunity.category}</Chip>
+                            <span className="text-2xs text-foreground-subtle">{opportunity.field}</span>
+                          </div>
+                          <h3 className="font-display text-lg leading-snug text-foreground">
+                            <Link
+                              href={`/opportunity/${opportunity.id}`}
+                              className="transition-colors duration-base hover:text-secondary"
+                            >
+                              {opportunity.title}
+                            </Link>
+                          </h3>
+                          <p className="mt-1 text-sm text-foreground-muted">
+                            {opportunity.organization} · {opportunity.country}
+                          </p>
                         </div>
-                        <h3 className="font-extrabold text-foreground text-sm leading-snug hover:text-primary transition-colors">
-                          <Link href={`/opportunity/${opportunity.id}`}>{opportunity.title}</Link>
-                        </h3>
-                        <p className="text-foreground-muted text-xs font-semibold mt-0.5">
-                          {opportunity.organization} · {opportunity.country}
-                        </p>
-                      </div>
 
-                      {/* Score Badge */}
-                      <div className={`text-center border rounded-2xl px-3 py-2 flex-shrink-0 ${badgeColor}`}>
-                        <span className={`block text-xl font-black ${scoreColor}`}>{score}%</span>
-                        <span className="block text-[9px] font-bold uppercase tracking-wider opacity-70">
-                          Match
-                        </span>
-                        <ScoreBar score={score} />
-                      </div>
-                    </div>
-
-                    {/* Signal Chips */}
-                    {signals.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-4">
-                        {signals.map((sig, idx) => (
+                        {/* Score */}
+                        <div className="w-24 shrink-0 text-right">
                           <span
-                            key={idx}
-                            className="inline-flex items-center gap-1 text-[10px] font-semibold bg-primary/10 border border-primary/15 text-foreground px-2.5 py-1 rounded-full"
+                            className={`block font-display text-3xl leading-none ${tone.text}`}
                           >
-                            <span>{sig.icon}</span>
-                            {sig.label}
-                            <span className="text-primary font-bold ml-0.5">+{sig.points}</span>
+                            {score}
                           </span>
-                        ))}
+                          <span className="eyebrow mt-1">Match</span>
+                          <ScoreBar score={score} />
+                        </div>
                       </div>
-                    )}
 
-                    {/* Smart Explanation */}
-                    <div className={`mt-4 p-3.5 rounded-2xl text-xs leading-relaxed ${
-                      score >= 80
-                        ? "bg-emerald-500/8 border border-emerald-500/15"
-                        : score >= 60
-                        ? "bg-primary/8 border border-primary/15"
-                        : "bg-amber-500/8 border border-amber-500/15"
-                    }`}>
-                      <p className="font-medium text-foreground">{why}</p>
-                      {missing.length > 0 && score < 70 && (
-                        <p className="mt-1.5 text-foreground-muted">
-                          💡 To improve this score, add your{" "}
-                          <span className="font-semibold text-foreground">
-                            {missing.slice(0, 2).join(" & ")}
-                          </span>{" "}
-                          to your profile.
-                        </p>
+                      {/* Signal Chips */}
+                      {signals.length > 0 && (
+                        <ul className="mt-5 flex flex-wrap gap-1.5">
+                          {signals.map((sig, idx) => (
+                            <li key={idx}>
+                              <Chip>
+                                <span>{sig.icon}</span>
+                                {sig.label}
+                                <span className="font-semibold text-secondary">+{sig.points}</span>
+                              </Chip>
+                            </li>
+                          ))}
+                        </ul>
                       )}
-                    </div>
 
-                    {/* Deadline + CTA */}
-                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
-                      <span className="text-[10px] text-foreground-muted font-semibold">
-                        Deadline:{" "}
-                        <span className="text-foreground">
-                          {opportunity.deadline
-                            ? new Date(opportunity.deadline).toLocaleDateString("en-IN", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })
-                            : "Open"}
+                      {/* Explanation */}
+                      <div className={`mt-5 rounded-md border p-4 ${tone.panel}`}>
+                        <p className="text-sm leading-relaxed text-foreground">{why}</p>
+                        {missing.length > 0 && score < 70 && (
+                          <p className="mt-2 text-sm text-foreground-muted">
+                            To improve this score, add your{" "}
+                            <span className="font-medium text-foreground">
+                              {missing.slice(0, 2).join(" & ")}
+                            </span>{" "}
+                            to your profile.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Deadline + CTA */}
+                      <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
+                        <span className="text-xs text-foreground-subtle">
+                          Deadline{" "}
+                          <span className="font-medium text-foreground">
+                            {opportunity.deadline
+                              ? new Date(opportunity.deadline).toLocaleDateString("en-IN", {
+                                  day: "numeric",
+                                  month: "short",
+                                  year: "numeric",
+                                })
+                              : "Open"}
+                          </span>
                         </span>
-                      </span>
-                      <Link
-                        href={`/opportunity/${opportunity.id}`}
-                        className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline"
-                      >
-                        View Details <ArrowRight className="w-3 h-3" />
-                      </Link>
-                    </div>
-                  </div>
+                        <Link
+                          href={`/opportunity/${opportunity.id}`}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
+                        >
+                          View Details
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </div>
+                    </Card>
+                  </StaggerItem>
                 );
               })}
-            </div>
+            </Stagger>
 
-            {/* Load more */}
             {recs.length > showCount && (
-              <button
+              <Button
+                variant="quiet"
+                block
                 onClick={() => setShowCount((c) => c + 8)}
-                className="w-full py-3 text-xs font-bold text-primary border border-primary/20 rounded-2xl hover:bg-primary/5 transition-all"
+                className="border border-border"
               >
-                Load {Math.min(8, recs.length - showCount)} more opportunities ↓
-              </button>
+                Load {Math.min(8, recs.length - showCount)} more opportunities
+              </Button>
             )}
           </>
         )}
@@ -667,51 +726,56 @@ function ResumeTab() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-          <FileText className="w-5 h-5 text-primary" /> AI ATS Resume Scanner
-        </h2>
-        <p className="text-xs text-foreground-muted mt-1">
-          Paste your resume text to get formatted formatting advice, ATS scoring, and skill addition templates from Gemini.
+        <span className="eyebrow">Instrument 02</span>
+        <h2 className="mt-2 font-display text-2xl text-foreground">AI ATS Resume Scanner</h2>
+        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
+          Paste your resume text to get formatting advice, ATS scoring, and skill addition
+          templates from Gemini.
         </p>
       </div>
 
-      <div className="space-y-4">
-        <div>
-          <label className="block text-[10px] uppercase font-bold text-foreground-muted mb-2">
-            Upload Resume File
-          </label>
-          <label className="flex items-center justify-center gap-2 py-4 px-4 bg-surface-raised border border-dashed border-border-strong rounded-2xl text-xs font-bold text-foreground-muted hover:bg-surface-raised hover:border-primary transition-all cursor-pointer">
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <span className="eyebrow">Upload resume file</span>
+          <label
+            className={`flex cursor-pointer items-center justify-center gap-3 rounded-lg border border-dashed px-5 py-8 text-sm transition-colors duration-base ${
+              extracting
+                ? "border-border bg-surface-sunken text-foreground-subtle"
+                : "border-border-strong bg-surface-raised text-foreground-muted hover:border-secondary hover:bg-accent-gold-surface/50 hover:text-foreground"
+            }`}
+          >
             {extracting ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" /> Reading {uploadedFileName}...
+                <Loader2 className="h-4 w-4 spin text-secondary" /> Reading {uploadedFileName}…
               </>
             ) : uploadedFileName ? (
               <>
-                <FileText className="w-4 h-4 text-primary" /> {uploadedFileName}
-                <span
-                  role="button"
+                <FileText className="h-4 w-4 text-secondary" /> {uploadedFileName}
+                <button
+                  type="button"
                   onClick={(e) => {
                     e.preventDefault();
                     setUploadedFileName("");
                     setResumeText("");
                     setExtractError("");
                   }}
-                  className="ml-2 p-1 rounded-full hover:bg-surface-raised"
+                  className="ml-1 rounded-sm p-1 transition-colors duration-fast hover:bg-surface hover:text-foreground"
                 >
-                  <X className="w-3 h-3" />
-                </span>
+                  <X className="h-3.5 w-3.5" />
+                  <span className="sr-only">Remove uploaded file</span>
+                </button>
               </>
             ) : (
               <>
-                <UploadCloud className="w-4 h-4" /> Click to upload a .pdf, .docx, or .txt resume
+                <UploadCloud className="h-4 w-4" /> Click to upload a .pdf, .docx, or .txt resume
               </>
             )}
             <input
               type="file"
               accept=".pdf,.docx,.txt"
-              className="hidden"
+              className="sr-only"
               disabled={extracting}
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -720,142 +784,122 @@ function ResumeTab() {
               }}
             />
           </label>
-          {extractError && (
-            <p className="text-[10px] text-danger font-semibold mt-2">{extractError}</p>
-          )}
+          {extractError && <ErrorState description={extractError} className="py-4 text-left" />}
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-px bg-border" />
-          <span className="text-[10px] font-bold text-foreground-muted uppercase">or paste manually</span>
-          <div className="flex-1 h-px bg-border" />
+        <div className="flex items-center gap-4">
+          <div className="h-px flex-1 bg-border" />
+          <span className="eyebrow">or paste manually</span>
+          <div className="h-px flex-1 bg-border" />
         </div>
 
-        <div>
-          <label className="block text-[10px] uppercase font-bold text-foreground-muted mb-2">
-            Paste Resume Plain Text
-          </label>
-          <textarea
-            rows={6}
-            placeholder="Paste raw text of your resume here to analyze structure, skills, and formats..."
-            value={resumeText}
-            onChange={(e) => setResumeText(e.target.value)}
-            className="w-full text-xs p-4 bg-surface-raised border border-border rounded-2xl outline-none focus:bg-surface focus:border-primary resize-none"
-          />
-        </div>
+        <Textarea
+          label="Paste resume plain text"
+          rows={7}
+          placeholder="Paste raw text of your resume here to analyze structure, skills, and formats…"
+          value={resumeText}
+          onChange={(e) => setResumeText(e.target.value)}
+        />
 
-        <button
+        <Button
+          block
           onClick={analyzeResume}
           disabled={loading || !resumeText.trim()}
-          className="w-full py-3 bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+          leadingIcon={loading ? <Loader2 className="h-4 w-4 spin" /> : null}
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Run AI Scan & ATS Grade"}
-        </button>
+          {loading ? "Scanning…" : "Run AI Scan & ATS Grade"}
+        </Button>
       </div>
 
-      {analysisError && (
-        <div
-          role="alert"
-          className="p-4 bg-danger-surface border border-danger/30 rounded-2xl text-xs text-danger"
-        >
-          {analysisError}
-        </div>
-      )}
+      {analysisError && <ErrorState description={analysisError} />}
 
       {result && (
-        <div className="border-t border-border pt-6 space-y-5">
-          <div className="p-5 bg-primary/30 rounded-2xl border border-primary/10 flex justify-between items-center">
+        <Reveal className="space-y-6 border-t border-border pt-8">
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-raised px-5 py-4">
             <div>
-              <h4 className="text-foreground-muted text-[10px] font-bold uppercase tracking-wider">
-                ATS Score Estimation
-              </h4>
-              <span className="text-3xl font-black text-primary">{result.atsScore}/100</span>
+              <span className="eyebrow">ATS Score Estimation</span>
+              <span className="mt-2 block font-display text-4xl leading-none text-foreground">
+                {result.atsScore}
+                <span className="text-lg text-foreground-subtle">/100</span>
+              </span>
             </div>
-            <div>
-              {result.atsScore >= 75 ? (
-                <span className="text-[10px] font-bold text-success bg-success-surface px-2.5 py-1 rounded-full border border-success/30">
-                  Ready to Apply
-                </span>
-              ) : (
-                <span className="text-[10px] font-bold text-warning bg-warning-surface px-2.5 py-1 rounded-full border border-warning/30">
-                  Needs Revision
-                </span>
-              )}
-            </div>
+            {result.atsScore >= 75 ? (
+              <Chip tone="success">Ready to Apply</Chip>
+            ) : (
+              <Chip tone="warning">Needs Revision</Chip>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-surface-raised p-4 rounded-2xl border border-border">
-              <h5 className="text-[10px] uppercase font-bold text-foreground-muted mb-2">Strengths Identified</h5>
-              <ul className="space-y-1">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">Strengths identified</span>
+              <ul className="mt-3 space-y-2">
                 {result.strengths.map((s, i) => (
-                  <li key={i} className="text-xs text-foreground flex items-center gap-2">
-                    <CheckCircle className="w-3.5 h-3.5 text-success" /> {s}
+                  <li key={i} className="flex gap-2.5 text-sm text-foreground">
+                    <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-success" /> {s}
                   </li>
                 ))}
               </ul>
-            </div>
+            </Card>
 
-            <div className="bg-surface-raised p-4 rounded-2xl border border-border">
-              <h5 className="text-[10px] uppercase font-bold text-foreground-muted mb-2">Areas of Weaknesses</h5>
-              <ul className="space-y-1">
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">Areas of weakness</span>
+              <ul className="mt-3 space-y-2">
                 {result.weaknesses.map((w, i) => (
-                  <li key={i} className="text-xs text-foreground flex items-center gap-2">
-                    <AlertCircle className="w-3.5 h-3.5 text-danger" /> {w}
+                  <li key={i} className="flex gap-2.5 text-sm text-foreground">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" /> {w}
                   </li>
                 ))}
               </ul>
-            </div>
+            </Card>
           </div>
 
-          <div className="bg-surface-raised p-4 rounded-2xl border border-border">
-            <h5 className="text-[10px] uppercase font-bold text-foreground-muted mb-2">Missing Skills from Industry</h5>
-            <div className="flex flex-wrap gap-2">
+          <Card tone="raised" className="p-5">
+            <span className="eyebrow">Missing skills from industry</span>
+            <ul className="mt-3 flex flex-wrap gap-2">
               {result.missingSkills.map((sk, i) => (
-                <span key={i} className="text-[10px] font-bold uppercase bg-primary/10 text-primary px-2.5 py-1 rounded-full">
-                  {sk}
-                </span>
+                <li key={i}>
+                  <Chip tone="gold">{sk}</Chip>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </Card>
 
-          <div className="space-y-2">
-            <h5 className="text-[10px] uppercase font-bold text-foreground-muted">Improvement Suggestions</h5>
-            <p className="text-foreground text-xs leading-relaxed">
-              {result.formattingFeedback}
-            </p>
-            <ul className="space-y-1 pt-2">
+          <div className="space-y-3">
+            <span className="eyebrow">Improvement suggestions</span>
+            <p className="text-sm leading-relaxed text-foreground">{result.formattingFeedback}</p>
+            <ul className="space-y-2 pt-1">
               {result.improvementSuggestions.map((s, i) => (
-                <li key={i} className="text-xs text-foreground-muted">
-                  - {s}
+                <li key={i} className="flex gap-2.5 text-sm text-foreground-muted">
+                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-foreground-subtle" />
+                  {s}
                 </li>
               ))}
             </ul>
           </div>
-        </div>
+        </Reveal>
       )}
 
       {history.length > 0 && (
-        <div className="border-t border-border pt-6">
-          <h4 className="text-[10px] font-bold uppercase tracking-wider text-foreground-muted mb-4">
-            Recent Analysis History
-          </h4>
-          <div className="space-y-3">
+        <div className="border-t border-border pt-8">
+          <span className="eyebrow mb-4">Recent analysis history</span>
+          <ul className="space-y-2">
             {history.map((h, i) => (
-              <div key={i} className="flex justify-between items-center p-3 bg-surface-raised rounded-xl text-xs">
-                <div>
-                  <span className="font-bold text-foreground">ATS Score: {h.atsScore}/100</span>
-                  <span className="block text-[10px] text-foreground-muted mt-0.5">
-                    {new Date(h.timestamp).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </span>
-                </div>
-              </div>
+              <li
+                key={i}
+                className="flex items-center justify-between gap-4 rounded-md bg-surface-raised px-4 py-3"
+              >
+                <span className="font-display text-lg text-foreground">{h.atsScore}</span>
+                <span className="text-xs text-foreground-subtle">
+                  {new Date(h.timestamp).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
     </div>
@@ -935,68 +979,66 @@ function ChatTab() {
   };
 
   return (
-    <div className="space-y-6 flex flex-col h-[550px]">
+    <div className="flex h-[36rem] flex-col space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-          <MessageSquare className="w-5 h-5 text-primary" /> AI Career Chatbot
-        </h2>
-        <p className="text-xs text-foreground-muted mt-1">
-          Chat with a context-aware assistant loaded with your profile settings. Unrelated questions are filtered.
+        <span className="eyebrow">Instrument 03</span>
+        <h2 className="mt-2 font-display text-2xl text-foreground">AI Career Chatbot</h2>
+        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
+          Chat with a context-aware assistant loaded with your profile settings. Unrelated
+          questions are filtered.
         </p>
       </div>
 
-      <div className="flex-grow bg-background border border-border rounded-3xl p-4 overflow-y-auto space-y-4 flex flex-col justify-between">
-        <div className="space-y-3 flex-grow overflow-y-auto pr-2">
+      <div className="card-inset flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {messages.map((m, idx) => (
-            <div
+            <motion.div
               key={idx}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
               className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[80%] rounded-2xl p-4 text-xs leading-relaxed ${
+                className={`max-w-[80%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
                   m.role === "user"
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "bg-surface-raised border border-border text-foreground shadow-sm"
+                    ? "bg-surface-ink text-background"
+                    : "border border-border bg-surface text-foreground"
                 }`}
               >
                 {m.text}
               </div>
-            </div>
+            </motion.div>
           ))}
           {loading && (
             <div className="flex justify-start">
-              <div className="bg-surface-raised border border-border text-foreground-muted rounded-2xl px-4 py-3 text-xs flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                <span>NEXORA Advisor is formulating advice...</span>
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-foreground-muted">
+                <Loader2 className="h-3.5 w-3.5 spin text-secondary" />
+                <span>NEXORA Advisor is formulating advice…</span>
               </div>
             </div>
           )}
-          {chatError && (
-            <div
-              role="alert"
-              className="bg-danger-surface border border-danger/30 text-danger rounded-2xl px-4 py-3 text-xs"
-            >
-              {chatError}
-            </div>
-          )}
+          {chatError && <ErrorState description={chatError} className="items-start py-4 text-left" />}
         </div>
 
-        <form onSubmit={sendMessage} className="mt-4 flex gap-2">
+        <form onSubmit={sendMessage} className="flex gap-2 border-t border-border p-4">
           <input
             type="text"
-            placeholder="Ask anything about scholarships, resumes, careers..."
+            aria-label="Ask the career advisor"
+            placeholder="Ask anything about scholarships, resumes, careers…"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={loading}
-            className="flex-grow text-xs px-4 py-3 bg-surface-raised border border-border rounded-2xl outline-none focus:border-primary text-foreground transition-all"
+            className="input flex-1"
           />
-          <button
+          <Button
             type="submit"
+            size="icon"
+            aria-label="Send message"
             disabled={loading || !input.trim()}
-            className="p-3 bg-primary hover:bg-primary-hover text-primary-foreground rounded-2xl shadow-sm transition-all disabled:opacity-60 flex items-center justify-center"
           >
-            <Send className="w-4 h-4" />
-          </button>
+            <Send className="h-4 w-4" />
+          </Button>
         </form>
       </div>
     </div>
@@ -1086,149 +1128,132 @@ function InterviewTab() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-          <Zap className="w-5 h-5 text-primary" /> AI Technical Interview Coach
-        </h2>
-        <p className="text-xs text-foreground-muted mt-1">
-          Simulate structured questions based on chosen roles and receive technical feedback summaries from Gemini.
+        <span className="eyebrow">Instrument 04</span>
+        <h2 className="mt-2 font-display text-2xl text-foreground">AI Technical Interview Coach</h2>
+        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
+          Simulate structured questions based on chosen roles and receive technical feedback
+          summaries from Gemini.
         </p>
       </div>
 
       {stage === "setup" && (
-        <div className="space-y-4 p-6 bg-surface-raised border border-border rounded-3xl">
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-foreground-muted mb-2">
-              Select Position Role
-            </label>
-            <select
-              value={jobTitle}
-              onChange={(e) => setJobTitle(e.target.value)}
-              className="w-full text-xs px-3.5 py-3 bg-surface border border-border rounded-xl outline-none focus:border-primary transition-all"
-            >
-              <option value="Frontend Engineer">Frontend Engineer</option>
-              <option value="Backend Engineer">Backend Engineer</option>
-              <option value="Product Manager">Product Manager</option>
-            </select>
-          </div>
-
-          <button
-            onClick={startInterview}
-            className="w-full py-3 bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-bold rounded-xl transition-all"
-          >
+        <Card tone="raised" className="space-y-6 p-6">
+          <Select
+            label="Select position role"
+            value={jobTitle}
+            onChange={(e) => setJobTitle(e.target.value)}
+            options={INTERVIEW_ROLES}
+          />
+          <Button block onClick={startInterview}>
             Begin Interview Session
-          </button>
-        </div>
+          </Button>
+        </Card>
       )}
 
       {stage === "interviewing" && questions.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex justify-between items-center text-[10px] font-bold text-foreground-muted">
-            <span>QUESTION {currentIdx + 1} OF {questions.length}</span>
-            <span className="text-primary">{jobTitle} Interview</span>
+        <div className="space-y-5">
+          <div className="flex items-center justify-between gap-4">
+            <span className="eyebrow">
+              Question {currentIdx + 1} of {questions.length}
+            </span>
+            <Chip tone="gold">{jobTitle}</Chip>
           </div>
 
-          <div className="p-5 bg-primary/30 border border-primary/10 rounded-2xl">
-            <p className="text-foreground text-xs font-bold leading-relaxed">
+          <Card tone="inset" className="p-6">
+            <p className="font-display text-lg leading-relaxed text-foreground">
               {questions[currentIdx]}
             </p>
-          </div>
+          </Card>
 
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-foreground-muted mb-2">
-              Your Answer Response
-            </label>
-            <textarea
-              rows={4}
-              placeholder="Type your response to the question in detail..."
-              value={answers[currentIdx]}
-              onChange={(e) => {
-                const updated = [...answers];
-                updated[currentIdx] = e.target.value;
-                setAnswers(updated);
-              }}
-              className="w-full text-xs p-4 bg-surface-raised border border-border rounded-2xl outline-none focus:bg-surface focus:border-primary resize-none"
-            />
-          </div>
+          <Textarea
+            label="Your answer"
+            rows={6}
+            placeholder="Type your response to the question in detail…"
+            value={answers[currentIdx]}
+            onChange={(e) => {
+              const updated = [...answers];
+              updated[currentIdx] = e.target.value;
+              setAnswers(updated);
+            }}
+          />
 
-          <button
-            onClick={handleAnswerSubmit}
-            disabled={!answers[currentIdx].trim()}
-            className="w-full py-3 bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-bold rounded-xl transition-all disabled:opacity-60"
-          >
+          <Button block onClick={handleAnswerSubmit} disabled={!answers[currentIdx].trim()}>
             {currentIdx < questions.length - 1 ? "Next Question" : "Complete & Evaluate"}
-          </button>
+          </Button>
         </div>
       )}
 
       {stage === "feedback" && (
         <div className="space-y-6">
           {loading ? (
-            <div className="py-12 flex flex-col items-center gap-2">
-              <Loader2 className="w-8 h-8 text-primary animate-spin" />
-              <span className="text-xs text-foreground-muted">Gemini is evaluating your responses...</span>
+            <div className="flex flex-col items-center gap-3 py-16">
+              <Loader2 className="h-7 w-7 spin text-secondary" />
+              <span className="text-sm text-foreground-muted">
+                Gemini is evaluating your responses…
+              </span>
             </div>
           ) : interviewError ? (
-            <div
-              role="alert"
-              className="p-4 bg-danger-surface border border-danger/30 rounded-2xl text-xs text-danger"
-            >
-              {interviewError}
-            </div>
+            <ErrorState description={interviewError} />
           ) : (
             feedback && (
-              <div className="space-y-5">
-                <div className="p-5 bg-primary/30 border border-primary/10 rounded-2xl flex justify-between items-center">
-                  <div>
-                    <h4 className="text-foreground-muted text-[10px] font-bold uppercase tracking-wider">
-                      Confidence & Tone Rating
-                    </h4>
-                    <span className="text-3xl font-black text-primary">{feedback.confidenceScore}/100</span>
-                  </div>
+              <Reveal className="space-y-5">
+                <div className="rounded-lg border border-border bg-surface-raised px-5 py-4">
+                  <span className="eyebrow">Confidence &amp; tone rating</span>
+                  <span className="mt-2 block font-display text-4xl leading-none text-foreground">
+                    {feedback.confidenceScore}
+                    <span className="text-lg text-foreground-subtle">/100</span>
+                  </span>
                 </div>
 
-                <div className="bg-surface-raised p-4 rounded-2xl border border-border space-y-2">
-                  <h5 className="text-[10px] uppercase font-bold text-foreground-muted">Technical Evaluation</h5>
-                  <p className="text-foreground text-xs leading-relaxed">{feedback.technicalFeedback}</p>
-                </div>
+                <Card tone="raised" className="space-y-3 p-5">
+                  <span className="eyebrow">Technical evaluation</span>
+                  <p className="text-sm leading-relaxed text-foreground">
+                    {feedback.technicalFeedback}
+                  </p>
+                </Card>
 
-                <div className="bg-surface-raised p-4 rounded-2xl border border-border space-y-2">
-                  <h5 className="text-[10px] uppercase font-bold text-foreground-muted">Communication & Structure</h5>
-                  <p className="text-foreground text-xs leading-relaxed">{feedback.communicationFeedback}</p>
-                </div>
+                <Card tone="raised" className="space-y-3 p-5">
+                  <span className="eyebrow">Communication &amp; structure</span>
+                  <p className="text-sm leading-relaxed text-foreground">
+                    {feedback.communicationFeedback}
+                  </p>
+                </Card>
 
-                <div className="bg-surface-raised p-4 rounded-2xl border border-border space-y-2">
-                  <h5 className="text-[10px] uppercase font-bold text-foreground-muted">Improvement Suggestions</h5>
-                  <ul className="space-y-1">
+                <Card tone="raised" className="space-y-3 p-5">
+                  <span className="eyebrow">Improvement suggestions</span>
+                  <ul className="space-y-2">
                     {feedback.improvementSuggestions.map((s, i) => (
-                      <li key={i} className="text-xs text-foreground">
-                        - {s}
+                      <li key={i} className="flex gap-2.5 text-sm text-foreground">
+                        <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-foreground-subtle" />
+                        {s}
                       </li>
                     ))}
                   </ul>
-                </div>
+                </Card>
 
                 {feedback.followUpQuestions && feedback.followUpQuestions.length > 0 && (
-                  <div className="bg-surface-raised p-4 rounded-2xl border border-border space-y-2">
-                    <h5 className="text-[10px] uppercase font-bold text-foreground-muted">Follow-up Questions to Practice</h5>
-                    <ul className="space-y-1">
+                  <Card tone="raised" className="space-y-3 p-5">
+                    <span className="eyebrow">Follow-up questions to practice</span>
+                    <ul className="space-y-2">
                       {feedback.followUpQuestions.map((q, i) => (
-                        <li key={i} className="text-xs text-foreground italic">
-                          &quot;{q}&quot;
+                        <li key={i} className="border-l-2 border-border pl-3 font-display text-sm italic text-foreground">
+                          {q}
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </Card>
                 )}
 
-                <button
+                <Button
+                  variant="secondary"
+                  block
                   onClick={() => setStage("setup")}
-                  className="w-full py-3 border border-border hover:border-primary hover:text-primary text-foreground-muted text-xs font-bold rounded-xl transition-all"
                 >
                   Start New Session
-                </button>
-              </div>
+                </Button>
+              </Reveal>
             )
           )}
         </div>
@@ -1329,68 +1354,67 @@ function AnalyticsTab() {
 
   if (loading) {
     return (
-      <div className="py-12 flex justify-center">
-        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      <div className="flex justify-center py-16">
+        <Loader2 className="h-6 w-6 spin text-secondary" />
+        <span className="sr-only">Compiling your analytics</span>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-          <LineChart className="w-5 h-5 text-primary" /> AI Performance & Analytics Dashboard
+        <span className="eyebrow">Instrument 05</span>
+        <h2 className="mt-2 font-display text-2xl text-foreground">
+          AI Performance &amp; Analytics
         </h2>
-        <p className="text-xs text-foreground-muted mt-1">
-          Overview metrics compiled from database rule actions, with monthly progress digests generated by Gemini.
+        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
+          Overview metrics compiled from database rule actions, with monthly progress digests
+          generated by Gemini.
         </p>
       </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: "Profile Integrity", value: `${stats.profileCompletion}%` },
-            { label: "Latest ATS Score", value: `${stats.resumeScanScore}/100` },
-            { label: "Document Performance", value: `${stats.performanceScore}/100` },
-            { label: "Practice Interviews", value: stats.interviewSessionCount },
-          ].map((stat, idx) => (
-            <div key={idx} className="bg-surface-raised border border-border p-4 rounded-2xl">
-              <span className="block text-[9px] font-bold uppercase text-foreground-muted">{stat.label}</span>
-              <span className="text-lg font-black text-foreground mt-1 block">{stat.value}</span>
-            </div>
-          ))}
-        </div>
+      <Stagger className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StaggerItem>
+          <Stat label="Profile Integrity" value={`${stats.profileCompletion}%`} size="sm" />
+        </StaggerItem>
+        <StaggerItem>
+          <Stat label="Latest ATS Score" value={`${stats.resumeScanScore}/100`} size="sm" />
+        </StaggerItem>
+        <StaggerItem>
+          <Stat label="Document Performance" value={`${stats.performanceScore}/100`} size="sm" />
+        </StaggerItem>
+        <StaggerItem>
+          <Stat label="Practice Interviews" value={stats.interviewSessionCount} size="sm" />
+        </StaggerItem>
+      </Stagger>
 
-        <div className="flex items-center justify-between gap-3 p-4 bg-surface border border-border rounded-2xl flex-wrap">
-          <p className="text-xs text-foreground-muted">
-            Document Performance is calculated from your wallet documents — marksheets, certificates, awards,
-            projects and resume. Add more documents and it moves on its own.
-          </p>
-          <Link
-            href="/dashboard/performance"
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
-          >
-            Open performance profile <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
+      <Card className="flex flex-wrap items-center justify-between gap-4 p-5">
+        <p className="max-w-xl text-sm text-foreground-muted">
+          Document Performance is calculated from your wallet documents — marksheets,
+          certificates, awards, projects and resume. Add more documents and it moves on its own.
+        </p>
+        <Link
+          href="/dashboard/performance"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
+        >
+          Open performance profile
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </Card>
 
-      <div className="p-5 bg-primary/30 border border-primary/10 rounded-2xl flex flex-col md:flex-row items-start gap-4">
-        <div className="p-3 bg-surface rounded-2xl border border-primary/10 text-primary shadow-sm">
-          <TrendingUp className="w-5 h-5" />
+      <Card tone="raised" className="flex flex-col items-start gap-5 p-6 md:flex-row">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-secondary/25 bg-accent-gold-surface text-secondary">
+          <TrendingUp className="h-5 w-5" />
         </div>
-        <div>
-          <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-            Monthly AI Progress Summary (Gemini)
-          </span>
-          <p className="text-foreground text-xs leading-relaxed mt-2 whitespace-pre-line font-medium">
+        <div className="min-w-0">
+          <span className="eyebrow">Monthly AI Progress Summary</span>
+          <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-foreground">
             {summary || "No summary available."}
           </p>
-          {summaryError && (
-            <p role="alert" className="text-danger text-[10px] mt-2">
-              {summaryError}
-            </p>
-          )}
+          {summaryError && <ErrorState description={summaryError} className="mt-4 py-3 text-left" />}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

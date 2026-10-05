@@ -104,7 +104,7 @@ export default function ResourcesPage() {
                   <motion.div
                     whileHover={{ y: -4, boxShadow: "0 12px 40px rgba(0,0,0,0.10)" }}
                     transition={{ type: "spring", stiffness: 300, damping: 22 }}
-                    className={`h-full p-6 bg-surface border rounded-3xl shadow-sm transition-all ${color}`}
+                    className={`h-full p-6 bg-surface border rounded-lg shadow-sm transition-all ${color}`}
                   >
                     <div className={`inline-flex p-3 rounded-2xl mb-4 ${iconBg}`}>
                       <Icon className="w-6 h-6" />
@@ -168,7 +168,7 @@ export default function ResourcesPage() {
                   <Phone className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-muted mb-0.5">
+                  <p className="text-2xs font-bold uppercase tracking-wider text-foreground-muted mb-0.5">
                     Phone / WhatsApp
                   </p>
                   <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">
@@ -190,7 +190,7 @@ export default function ResourcesPage() {
                   <Mail className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-muted mb-0.5">
+                  <p className="text-2xs font-bold uppercase tracking-wider text-foreground-muted mb-0.5">
                     Email Support
                   </p>
                   <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors break-all">

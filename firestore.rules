@@ -123,7 +123,7 @@ service cloud.firestore {
     // cannot be desynchronised from the profile.
 
     match /usernames/{username} {
-      allow read: if true;
+      allow read: if isSignedIn();
 
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
@@ -138,18 +138,15 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
     }
 
-    // ──────────────────────── org_opportunities ────────────────────────
-    //
-    // This was `allow create, update, delete: if true` because the ingestion
-    // sync wrote it with the anonymous *client* SDK. `src/lib/firestoreSync.ts`
-    // now uses the Admin SDK, and view counting moved to
-    // POST /api/opportunities/view, so the collection can be locked down.
+// ──────────────────────── org_opportunities ────────────────────────
     //
     // Organization-submitted listings are untrusted user content: they are
     // created as "pending" and only an admin can approve, edit or remove them.
-
+    // Read access is now restricted to signed-in users (the ingestion sync
+    // uses the Admin SDK and view counting is via POST /api/opportunities/view).
+    //
     match /org_opportunities/{oppId} {
-      allow read: if true;
+      allow read: if isSignedIn();
 
       allow create: if isSignedIn()
         && request.resource.data.postedByUid == request.auth.uid

@@ -98,7 +98,7 @@ export default function ForgotPassword() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 bg-primary hover:bg-primary-hover text-white font-semibold text-sm py-3.5 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                className="w-full mt-2 bg-primary hover:bg-primary/25 text-white font-semibold text-sm py-3.5 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 {loading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />

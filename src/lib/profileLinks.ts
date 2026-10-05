@@ -32,25 +32,37 @@ const KIND_LABELS: Record<ProfileLinkKind, string> = {
   other: "Link",
 };
 
-const KIND_ACCENT: Record<ProfileLinkKind, string> = {
-  linkedin: "text-[#0a66c2]",
-  github: "text-foreground",
-  leetcode: "text-[#FFA116]",
-  codechef: "text-[#5B4638]",
-  codeforces: "text-[#1F8ACB]",
-  hackerrank: "text-[#2EC866]",
-  portfolio: "text-primary",
-  social: "text-success",
-  website: "text-foreground-muted",
-  other: "text-foreground-muted",
+/**
+ * Badge tone per kind.
+ *
+ * This used to hand back the brand hex for each site (`#0a66c2` for LinkedIn,
+ * `#5B4638` for CodeChef, `#1F8ACB` for Codeforces). Two of those are close to
+ * black and close to the surface blue, so on the dark theme the badge text was
+ * effectively invisible, and none of them responded to the theme at all. Tones
+ * are the only colour vocabulary the app has now, so the label distinguishes the
+ * kind and the tone just keeps it legible.
+ */
+const KIND_TONE: Record<ProfileLinkKind, ProfileLinkTone> = {
+  linkedin: "info",
+  github: "neutral",
+  leetcode: "warning",
+  codechef: "gold",
+  codeforces: "info",
+  hackerrank: "success",
+  portfolio: "gold",
+  social: "success",
+  website: "neutral",
+  other: "neutral",
 };
+
+export type ProfileLinkTone = "neutral" | "gold" | "success" | "danger" | "warning" | "info";
 
 export function kindLabel(kind: ProfileLinkKind): string {
   return KIND_LABELS[kind] || KIND_LABELS.other;
 }
 
-export function kindAccent(kind: ProfileLinkKind): string {
-  return KIND_ACCENT[kind] || KIND_ACCENT.other;
+export function kindTone(kind: ProfileLinkKind): ProfileLinkTone {
+  return KIND_TONE[kind] || KIND_TONE.other;
 }
 
 /** Hostname → kind. Ordered longest-first so subdomains are matched sensibly. */

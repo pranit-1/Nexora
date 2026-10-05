@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { collection, query, where, addDoc, deleteDoc, updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { useState, useEffect, useRef, useMemo } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   Wallet,
@@ -14,14 +15,13 @@ import {
   Sparkles,
   Loader2,
   X,
-  CheckCircle2,
   RefreshCw,
-  Gauge,
 } from "lucide-react";
 import { Link2, Copy, Check, ExternalLink } from "lucide-react";
 import type { WalletDocument, WalletCategory, ProfileLink } from "@/lib/types";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { Lock, Unlock, AlertTriangle } from "lucide-react";
+import { Button, Card, Chip, EmptyState, type ChipTone } from "@/components/ui";
 import {
   WALLET_CATEGORIES,
   classifyDocument,
@@ -37,7 +37,7 @@ import { refreshPerformanceProfile } from "@/lib/performanceProfileClient";
 import { authedFetch } from "@/lib/apiClient";
 import {
   displayUrl,
-  kindAccent,
+  kindTone,
   kindLabel,
   LINK_SUGGESTIONS,
   needsProfilePath,
@@ -48,27 +48,27 @@ import { addProfileLink, removeProfileLink, subscribeProfileLinks } from "@/lib/
 /** How much of a document's text we keep — feeds the performance profile. */
 const STORED_TEXT_CHARS = 3000;
 
-/* ── Animation Variants ─────────────────────────────────────── */
-const containerVariants: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.07, delayChildren: 0.06 } },
-};
+/** Tab strip: "All" plus every real category. Derived once, never per render. */
+const CATEGORY_TABS: Array<WalletCategory | "All"> = ["All", ...WALLET_CATEGORIES];
 
-const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 16, scale: 0.98 },
-  show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.36, ease: [0.23, 1, 0.32, 1] } },
-  exit: { opacity: 0, x: -20, scale: 0.96, transition: { duration: 0.22 } },
-};
+/** The category pickers never offer "All" — that is a filter, not a value. */
+const CATEGORY_VALUES = WALLET_CATEGORIES;
 
-const panelVariants: Variants = {
-  hidden: { opacity: 0, x: -18 },
-  show: { opacity: 1, x: 0, transition: { duration: 0.42, ease: "easeOut" } },
-};
+/** One shared spring for every hover lift on this page. */
+const SPRING = { type: "spring", stiffness: 400, damping: 18 } as const;
 
-const listVariants: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.07 } },
-};
+/**
+ * How a queued file's classification source is badged. `reading` and `manual`
+ * are both neutral on purpose: neither is a verdict, they are a state.
+ */
+function sourceTone(item: {
+  reading?: boolean;
+  manual?: boolean;
+  source?: CategorySource;
+}): ChipTone {
+  if (item.reading || item.manual) return "neutral";
+  return item.source === "unknown" ? "warning" : "success";
+}
 
 /* ── Animated Count-up ─────────────────────────────────────── */
 function CountUp({ to, suffix = "" }: { to: number; suffix?: string }) {
@@ -96,6 +96,89 @@ function CountUp({ to, suffix = "" }: { to: number; suffix?: string }) {
 
   return <>{value}{suffix}</>;
 }
+
+/* ── Header stat pill ──────────────────────────────────────── */
+const PILL_FRAME = {
+  default: "border-border bg-surface",
+  success: "border-success/25 bg-success-surface",
+} as const;
+
+const PILL_VALUE = {
+  default: "text-primary",
+  success: "text-success",
+} as const;
+
+interface StatPillProps {
+  label: string;
+  value: ReactNode;
+  suffix?: ReactNode;
+  tone?: keyof typeof PILL_FRAME;
+  title?: string;
+  href?: string;
+}
+
+/**
+ * The header counters. Four of these used to be four separate inline copies of
+ * the same padding/radius/shadow string, and the "Performance" one had drifted
+ * to its own green border and hover colour.
+ */
+function StatPill({ label, value, suffix, tone = "default", title, href }: StatPillProps) {
+  const body = (
+    <>
+      <span className="eyebrow block">{label}</span>
+      <span className={`mt-0.5 block text-lg font-bold ${PILL_VALUE[tone]}`}>
+        {value}
+        {suffix == null ? null : <span className="text-2xs font-bold">{suffix}</span>}
+      </span>
+    </>
+  );
+
+  if (href) {
+    return (
+      <motion.div whileHover={{ scale: 1.04 }} transition={SPRING} title={title}>
+        <Link
+          href={href}
+          className={`block rounded-md border px-4 py-2 text-center transition-colors duration-base hover:border-success/50 ${PILL_FRAME[tone]}`}
+        >
+          {body}
+        </Link>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div
+      whileHover={{ scale: 1.04 }}
+      transition={SPRING}
+      title={title}
+      className={`rounded-md border px-4 py-2 text-center ${PILL_FRAME[tone]}`}
+    >
+      {body}
+    </motion.div>
+  );
+}
+
+/* ── Animation Variants ─────────────────────────────────────── */
+const containerVariants: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.07, delayChildren: 0.06 } },
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 16, scale: 0.98 },
+  show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.36, ease: [0.23, 1, 0.32, 1] } },
+  exit: { opacity: 0, x: -20, scale: 0.96, transition: { duration: 0.22 } },
+};
+
+const panelVariants: Variants = {
+  hidden: { opacity: 0, x: -18 },
+  show: { opacity: 1, x: 0, transition: { duration: 0.42, ease: "easeOut" } },
+};
+
+const listVariants: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.07 } },
+};
 
 export default function WalletPage() {
   const { currentUser } = useAuth();
@@ -592,8 +675,6 @@ export default function WalletPage() {
     }
   };
 
-  const categories: (WalletCategory | "All")[] = ["All", ...WALLET_CATEGORIES];
-
   const filteredDocs =
     activeTab === "All" ? documents : documents.filter((d) => d.category === activeTab);
 
@@ -625,96 +706,76 @@ export default function WalletPage() {
       animate="show"
     >
       {/* Header + Stat pills */}
-      <motion.div variants={itemVariants}>
-        <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-          <Wallet className="w-6 h-6 text-primary" /> Opportunity Wallet
-        </h1>
-        <p className="text-foreground-muted text-sm mt-1">
-          Store your career documents, achievements, and credentials in a secure sandbox. Use AI to scan resumes and auto-verify certificates.
-        </p>
+      <motion.div variants={itemVariants} className="space-y-4">
+        <div className="flex items-start gap-4">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-surface-raised text-secondary">
+            <Wallet className="h-5 w-5" />
+          </span>
+          <div>
+            <span className="eyebrow">Career Documents</span>
+            <h1 className="mt-1 font-display text-display-sm text-foreground">
+              Opportunity Wallet
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-foreground-muted text-pretty">
+              Store your career documents, achievements, and credentials in a secure sandbox. Use AI to scan resumes and auto-verify certificates.
+            </p>
+          </div>
+        </div>
 
         {/* Stat pills + Action buttons */}
-        <div className="flex items-center justify-between gap-3 mt-4 flex-wrap">
-          <div className="flex gap-3 flex-wrap">
-            {[
-              { label: "Total Documents", value: documents.length, suffix: "" },
-              { label: "Storage Used", value: totalSizeKB, suffix: " KB" },
-            ].map(({ label, value, suffix }) => (
-              <motion.div
-                key={label}
-                whileHover={{ scale: 1.04 }}
-                transition={{ type: "spring", stiffness: 400, damping: 18 }}
-                className="px-4 py-2 bg-surface border border-border rounded-2xl text-center shadow-sm"
-              >
-                <p className="text-[10px] uppercase font-bold text-foreground-muted tracking-wider">{label}</p>
-                <p className="text-lg font-extrabold text-primary">
-                  <CountUp to={value} suffix={suffix} />
-                </p>
-              </motion.div>
-            ))}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-3">
+            <StatPill label="Total Documents" value={<CountUp to={documents.length} />} />
+            <StatPill label="Storage Used" value={<CountUp to={totalSizeKB} />} suffix=" KB" />
 
             {profileLinks.length > 0 && (
-              <motion.div
-                whileHover={{ scale: 1.04 }}
-                transition={{ type: "spring", stiffness: 400, damping: 18 }}
+              <StatPill
+                label="Public Links"
                 title="Public profile links saved in your wallet"
-                className="px-4 py-2 bg-surface border border-border rounded-2xl text-center shadow-sm"
-              >
-                <p className="text-[10px] uppercase font-bold text-foreground-muted tracking-wider">
-                  Public Links
-                </p>
-                <p className="text-lg font-extrabold text-primary">
-                  <CountUp to={profileLinks.length} />
-                </p>
-              </motion.div>
+                value={<CountUp to={profileLinks.length} />}
+              />
             )}
 
             {/* Live performance link — the wallet and the score stay in sync */}
             {documents.length > 0 && (
-              <Link
+              <StatPill
+                tone="success"
                 href="/dashboard/performance"
                 title="Your performance profile is calculated from these documents"
-                className="px-4 py-2 bg-success/10 hover:bg-success/20 text-success border border-success/20 rounded-2xl text-center shadow-sm transition-colors"
-              >
-                <p className="text-[10px] uppercase font-bold tracking-wider">Performance</p>
-                <p className="text-lg font-extrabold">
-                  {liveProfile.overall}
-                  <span className="text-[10px] font-bold">/100</span>
-                </p>
-              </Link>
+                label="Performance"
+                value={liveProfile.overall}
+                suffix="/100"
+              />
             )}
           </div>
 
           {/* Re-Scan existing button */}
           {documents.length > 0 && (
-            <motion.button
+            <Button
+              type="button"
+              variant="secondary"
               onClick={handleRescanAll}
               disabled={rescanning}
-              whileHover={!rescanning ? { scale: 1.03 } : {}}
-              whileTap={!rescanning ? { scale: 0.97 } : {}}
+              leadingIcon={
+                <RefreshCw className={`h-3.5 w-3.5 ${rescanning ? "animate-spin" : ""}`} />
+              }
               title="Re-reads every auto-classified file and moves it to the right category. Files you categorized manually are left untouched."
-              className="px-4 py-2.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${rescanning ? "animate-spin" : ""}`} />
-              <span>
-                {rescanning && rescanProgress
-                  ? `Scanning ${rescanProgress.current}/${rescanProgress.total}...`
-                  : "Auto Re-Scan & Organize All"}
-              </span>
-            </motion.button>
+              {rescanning && rescanProgress
+                ? `Scanning ${rescanProgress.current}/${rescanProgress.total}…`
+                : "Auto Re-Scan & Organize All"}
+            </Button>
           )}
         </div>
       </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Upload Panel */}
-        <motion.div
-          variants={panelVariants}
-          className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-4 h-fit"
-        >
-          <h3 className="font-bold text-foreground text-sm flex items-center gap-1.5">
-            <UploadCloud className="w-4 h-4 text-primary" /> Upload Documents
-          </h3>
+{/* Upload Panel */}
+        <motion.div variants={panelVariants}>
+          <Card className="h-fit space-y-4 p-6">
+            <h2 className="flex items-center gap-1.5 font-display text-lg text-foreground">
+              <UploadCloud className="h-4 w-4 text-secondary" /> Upload Documents
+            </h2>
 
           <form onSubmit={handleUploadAll} className="space-y-4">
             {/* Drag & Drop Box */}
@@ -725,7 +786,6 @@ export default function WalletPage() {
                   : fileQueue.length > 0
                   ? "var(--success)"
                   : "var(--border)",
-                backgroundColor: isDragging ? "rgba(var(--primary-rgb, 178,58,92), 0.05)" : undefined,
               }}
               transition={{ duration: 0.2 }}
               onDragOver={(e) => {
@@ -740,7 +800,9 @@ export default function WalletPage() {
                   addFilesToQueue(e.dataTransfer.files);
                 }
               }}
-              className="border border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-surface-raised transition-colors"
+              className={`cursor-pointer rounded-md border border-dashed p-4 text-center transition-colors duration-base ${
+                isDragging ? "bg-primary/10" : "hover:bg-surface-raised"
+              }`}
             >
               <input
                 type="file"
@@ -754,12 +816,12 @@ export default function WalletPage() {
                   }
                 }}
               />
-              <label htmlFor="file-upload-multi" className="cursor-pointer space-y-1 block">
-                <UploadCloud className="w-8 h-8 text-foreground-muted mx-auto" />
-                <p className="text-[11px] font-semibold text-foreground">
+              <label htmlFor="file-upload-multi" className="block cursor-pointer space-y-1">
+                <UploadCloud className="mx-auto h-8 w-8 text-foreground-muted" />
+                <p className="text-sm font-semibold text-foreground">
                   {isDragging ? "Drop files to add" : "Click to select or drag & drop files"}
                 </p>
-                <p className="text-[9px] text-foreground-muted">
+                <p className="text-2xs text-foreground-muted">
                   Supports multiple PDFs, images, resumes at once
                 </p>
               </label>
@@ -768,28 +830,26 @@ export default function WalletPage() {
             {/* Queue Preview List */}
             {fileQueue.length > 0 && (              <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">
-                    Upload Queue ({fileQueue.length})
-                  </span>
+                  <span className="eyebrow">Upload Queue ({fileQueue.length})</span>
                   <button
                     type="button"
                     onClick={() => setFileQueue([])}
                     disabled={uploading}
-                    className="text-[10px] text-danger hover:underline font-semibold"
+                    className="text-2xs font-semibold text-danger hover:underline"
                   >
                     Clear All
                   </button>
                 </div>
 
-                <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
                   <AnimatePresence>
-                    {fileQueue.map((item, idx) => (
+                    {fileQueue.map((item) => (
                       <motion.div
                         key={item.id}
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95 }}
-                        className="p-2.5 bg-background border border-border rounded-xl space-y-1.5"
+                        className="card-inset space-y-1.5 p-2.5"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <input
@@ -798,62 +858,84 @@ export default function WalletPage() {
                             disabled={uploading}
                             onChange={(e) => updateQueueItemName(item.id, e.target.value)}
                             placeholder="Document name"
-                            className="text-xs font-semibold bg-transparent text-foreground outline-none border-b border-transparent focus:border-primary flex-1"
+                            aria-label={`Name for ${item.file.name}`}
+                            className="flex-1 border-b border-transparent bg-transparent text-sm font-semibold text-foreground outline-none transition-colors duration-fast focus:border-secondary"
                           />
                           <button
                             type="button"
                             disabled={uploading}
                             onClick={() => removeQueueItem(item.id)}
-                            className="p-1 text-foreground-muted hover:text-danger rounded-lg transition-colors"
+                            aria-label={`Remove ${item.file.name} from the queue`}
+                            className="grid h-6 w-6 shrink-0 place-items-center rounded-sm text-foreground-muted transition-colors duration-fast hover:bg-danger-surface hover:text-danger"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
 
-                        <div className="flex items-center justify-between text-[10px] text-foreground-muted">
+                        <div className="flex items-center justify-between text-2xs text-foreground-muted">
                           <div className="flex items-center gap-1.5">
                             <select
                               value={item.category}
                               disabled={uploading}
+                              aria-label={`Category for ${item.file.name}`}
                               onChange={(e) =>
                                 updateQueueItemCategory(item.id, e.target.value as WalletCategory)
                               }
-                              className="text-[10px] bg-surface border border-border rounded px-1.5 py-0.5 text-foreground outline-none"
+                              className="rounded-sm border border-border bg-surface px-1.5 py-0.5 text-2xs text-foreground outline-none transition-colors duration-fast focus:border-secondary"
                             >
-                              {categories
-                                .filter((c) => c !== "All")
-                                .map((cat) => (
-                                  <option key={cat} value={cat}>
-                                    {cat}
-                                  </option>
-                                ))}
+                              {CATEGORY_VALUES.map((cat) => (
+                                <option key={cat} value={cat}>
+                                  {cat}
+                                </option>
+                              ))}
                             </select>
                             {item.reading ? (
-                              <span className="flex items-center gap-1 text-[9px] text-primary">
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              <Chip
+                                tone={sourceTone(item)}
+                                icon={<Loader2 className="h-2.5 w-2.5 animate-spin" />}
+                                className="text-2xs"
+                              >
                                 Reading file…
-                              </span>
+                              </Chip>
                             ) : item.manual ? (
-                              <span className="flex items-center gap-0.5 text-[9px] text-foreground-muted font-semibold" title="You set this category, it will be kept as-is">
-                                <Lock className="w-2.5 h-2.5" /> Manual
-                              </span>
+                              <Chip
+                                tone={sourceTone(item)}
+                                icon={<Lock className="h-2.5 w-2.5" />}
+                                className="text-2xs"
+                                title="You set this category, it will be kept as-is"
+                              >
+                                Manual
+                              </Chip>
                             ) : item.source === "ai" ? (
-                              <span className="flex items-center gap-0.5 text-[9px] text-success font-semibold" title={item.reason || "Classified by AI from the file content"}>
-                                <Sparkles className="w-2.5 h-2.5" /> AI read
-                              </span>
+                              <Chip
+                                tone={sourceTone(item)}
+                                icon={<Sparkles className="h-2.5 w-2.5" />}
+                                className="text-2xs"
+                                title={item.reason || "Classified by AI from the file content"}
+                              >
+                                AI read
+                              </Chip>
                             ) : item.source === "content" ? (
-                              <span className="flex items-center gap-0.5 text-[9px] text-success font-semibold" title={item.reason || "Classified from the file content"}>
-                                <Sparkles className="w-2.5 h-2.5" /> Read
-                              </span>
+                              <Chip
+                                tone={sourceTone(item)}
+                                icon={<Sparkles className="h-2.5 w-2.5" />}
+                                className="text-2xs"
+                                title={item.reason || "Classified from the file content"}
+                              >
+                                Read
+                              </Chip>
                             ) : (
-                              <span className="flex items-center gap-0.5 text-[9px] text-warning font-semibold" title="No readable content found. Please pick a category.">
-                                <AlertTriangle className="w-2.5 h-2.5" /> Check
-                              </span>
+                              <Chip
+                                tone={sourceTone(item)}
+                                icon={<AlertTriangle className="h-2.5 w-2.5" />}
+                                className="text-2xs"
+                                title="No readable content found. Please pick a category."
+                              >
+                                Check
+                              </Chip>
                             )}
                             {item.confidence !== undefined && !item.manual && !item.reading && (
-                              <span className="text-[9px] text-foreground-muted">
-                                {Math.round(item.confidence * 100)}%
-                              </span>
+                              <span>{Math.round(item.confidence * 100)}%</span>
                             )}
                           </div>
                           <span>{(item.file.size / 1024).toFixed(0)} KB</span>
@@ -867,8 +949,8 @@ export default function WalletPage() {
 
             {/* Upload Progress details */}
             {uploadProgress && (
-              <div className="p-2.5 bg-primary/10 border border-primary/20 rounded-xl space-y-1">
-                <div className="flex justify-between text-[11px] font-bold text-primary">
+              <div className="space-y-1 rounded-md border border-primary/25 bg-primary/10 p-2.5">
+                <div className="flex justify-between text-xs font-bold text-primary">
                   <span>
                     Uploading {uploadProgress.current} of {uploadProgress.total}
                   </span>
@@ -876,7 +958,7 @@ export default function WalletPage() {
                     {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
                   </span>
                 </div>
-                <p className="text-[10px] text-foreground-muted truncate">
+                <p className="truncate text-2xs text-foreground-muted">
                   {uploadProgress.currentName}
                 </p>
               </div>
@@ -884,22 +966,19 @@ export default function WalletPage() {
 
             {/* Upload failures, kept visible so they can be retried */}
             {actionError && (
-              <div
-                role="alert"
-                className="p-2.5 bg-danger-surface border border-danger/30 rounded-xl text-[11px] text-danger"
-              >
+              <p role="alert" className="rounded-md border border-danger/30 bg-danger-surface p-2.5 text-xs text-danger">
                 {actionError}
-              </div>
+              </p>
             )}
             {uploadError && (
               <div
                 role="alert"
-                className="p-2.5 bg-danger-surface border border-danger/30 rounded-xl"
+                className="rounded-md border border-danger/30 bg-danger-surface p-2.5"
               >
-                <p className="text-[11px] font-bold text-danger">Some files failed to upload</p>
+                <p className="text-xs font-bold text-danger">Some files failed to upload</p>
                 <ul className="mt-1 space-y-0.5">
                   {uploadError.split("\n").map((line, i) => (
-                    <li key={i} className="text-[10px] text-danger/90 break-words">
+                    <li key={i} className="break-words text-2xs text-danger/90">
                       {line}
                     </li>
                   ))}
@@ -907,13 +986,10 @@ export default function WalletPage() {
               </div>
             )}
 
-            <motion.button
+            <Button
               type="submit"
+              block
               disabled={uploading || fileQueue.length === 0 || fileQueue.some((i) => i.reading)}
-              whileHover={!uploading && fileQueue.length > 0 ? { scale: 1.02 } : {}}
-              whileTap={!uploading && fileQueue.length > 0 ? { scale: 0.98 } : {}}
-              transition={{ type: "spring", stiffness: 380, damping: 18 }}
-              className="w-full py-3 bg-primary hover:bg-primary-hover text-primary-foreground font-semibold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
               <AnimatePresence mode="wait" initial={false}>
                 {uploading ? (
@@ -924,7 +1000,7 @@ export default function WalletPage() {
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                   >
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading to cloud…
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading to cloud…
                   </motion.span>
                 ) : (
                   <motion.span
@@ -939,30 +1015,29 @@ export default function WalletPage() {
                   </motion.span>
                 )}
               </AnimatePresence>
-            </motion.button>
+            </Button>
           </form>
+          </Card>
         </motion.div>
 
         {/* Public Profile Links Panel */}
-        <motion.div
-          variants={panelVariants}
-          className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-4 h-fit"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="font-bold text-foreground text-sm flex items-center gap-1.5">
-              <Link2 className="w-4 h-4 text-primary" /> Public Profile Links
-            </h3>
-            {profileLinks.length > 0 && (
-              <span className="text-[10px] font-bold text-foreground-muted bg-surface-raised border border-border rounded-full px-2 py-0.5">
-                {profileLinks.length} saved
-              </span>
-            )}
-          </div>
+        <motion.div variants={panelVariants}>
+          <Card className="h-fit space-y-4 p-6">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="flex items-center gap-1.5 font-display text-lg text-foreground">
+                <Link2 className="h-4 w-4 text-secondary" /> Public Profile Links
+              </h2>
+              {profileLinks.length > 0 && (
+                <Chip tone="gold" className="text-2xs">
+                  {profileLinks.length} saved
+                </Chip>
+              )}
+            </div>
 
-          <p className="text-[10px] text-foreground-muted leading-snug">
+          <p className="text-xs leading-snug text-foreground-muted">
             Save the public pages recruiters should see — LinkedIn, GitHub, your portfolio, or
             anything else. These count as verified evidence in your{" "}
-            <Link href="/dashboard/performance" className="text-primary font-semibold hover:underline">
+            <Link href="/dashboard/performance" className="link-ink">
               performance profile
             </Link>
             .
@@ -980,34 +1055,35 @@ export default function WalletPage() {
                 }}
                 placeholder="linkedin.com/in/yourname"
                 aria-label="Public profile URL"
-                className="flex-1 min-w-0 text-xs bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary placeholder:text-foreground-muted/60"
+                className="input min-w-0 flex-1 rounded-md text-xs"
               />
-              <button
+              <Button
                 type="submit"
+                size="sm"
                 disabled={savingLink || !linkInput.trim()}
-                className="px-3 py-2 bg-primary hover:bg-primary-hover text-primary-foreground text-[10px] font-bold rounded-xl shadow-sm transition-all flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
+                leadingIcon={
+                  savingLink ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Link2 className="h-3.5 w-3.5" />
+                  )
+                }
               >
-                {savingLink ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <>
-                    <Link2 className="w-3 h-3" /> Save
-                  </>
-                )}
-              </button>
+                {savingLink ? "Saving…" : "Save"}
+              </Button>
             </div>
 
             {/* Live validation feedback so the user knows what will be saved */}
             {linkInput.trim() && (
               <p
-                className={`text-[9px] leading-snug ${
+                className={`text-2xs leading-snug ${
                   linkPreview.ok ? "text-success" : "text-danger"
                 }`}
               >
                 {linkPreview.ok ? (
                   <>
-                    Will save as <span className="font-bold">{kindLabel(linkPreview.kind)}</span> —{" "}
-                    {displayUrl(linkPreview.url)}
+                    Will save as <span className="font-bold">{kindLabel(linkPreview.kind)}</span>{" "}
+                    — {displayUrl(linkPreview.url)}
                     {needsProfilePath(linkPreview.kind, linkPreview.url) && (
                       <span className="text-warning">
                         {" "}
@@ -1020,12 +1096,12 @@ export default function WalletPage() {
                 )}
               </p>
             )}
-            {linkError && <p className="text-[9px] text-danger leading-snug">{linkError}</p>}
+            {linkError && <p className="text-2xs leading-snug text-danger">{linkError}</p>}
           </form>
 
           {profileLinks.length === 0 ? (
             <div className="space-y-2">
-              <p className="text-[9px] text-foreground-muted text-center py-1">
+              <p className="py-1 text-center text-2xs text-foreground-muted">
                 Nothing saved yet. Quick-fill a common one:
               </p>
               <div className="flex flex-wrap gap-1.5">
@@ -1037,7 +1113,7 @@ export default function WalletPage() {
                       setLinkInput(s.placeholder);
                       setLinkError(null);
                     }}
-                    className="text-[9px] font-bold px-2 py-1 bg-surface-raised border border-border rounded-lg text-foreground-muted hover:text-primary hover:border-primary/40 transition-colors"
+                    className="rounded-sm border border-border bg-surface-raised px-2 py-1 text-2xs font-bold text-foreground-muted transition-colors duration-fast hover:border-secondary/50 hover:text-secondary"
                   >
                     {s.label}
                   </button>
@@ -1045,83 +1121,84 @@ export default function WalletPage() {
               </div>
             </div>
           ) : (
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+            <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
               <AnimatePresence initial={false}>
                 {profileLinks.map((link) => (
-                  <motion.div
+                  <motion.li
                     key={link.id}
                     layout
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="p-2.5 bg-background border border-border rounded-xl flex items-center gap-2"
+                    className="card-inset flex items-center gap-2 p-2.5"
                   >
-                    <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-surface-raised border border-border whitespace-nowrap ${kindAccent(
-                        link.kind
-                      )}`}
-                    >
+                    <Chip tone={kindTone(link.kind)} className="shrink-0 text-2xs">
                       {link.label || kindLabel(link.kind)}
-                    </span>
+                    </Chip>
                     <a
                       href={link.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Open in a new tab"
-                      className="flex-1 min-w-0 text-[10px] text-foreground hover:text-primary transition-colors truncate flex items-center gap-1"
+                      className="link-ink flex min-w-0 flex-1 items-center gap-1 text-2xs"
                     >
                       <span className="truncate">{displayUrl(link.url)}</span>
-                      <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 opacity-50" />
+                      <ExternalLink className="h-2.5 w-2.5 flex-shrink-0 opacity-50" />
                     </a>
                     <button
                       type="button"
                       onClick={() => handleCopyLink(link)}
-                      title="Copy link"
-                      className="p-1 text-foreground-muted hover:text-primary rounded-lg transition-colors"
+                      aria-label={`Copy the ${link.label || kindLabel(link.kind)} URL`}
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-sm text-foreground-muted transition-colors duration-fast hover:bg-surface-raised hover:text-secondary"
                     >
                       {copiedLinkId === link.id ? (
-                        <Check className="w-3 h-3 text-success" />
+                        <Check className="h-3 w-3 text-success" />
                       ) : (
-                        <Copy className="w-3 h-3" />
+                        <Copy className="h-3 w-3" />
                       )}
                     </button>
                     <button
                       type="button"
                       onClick={() => handleRemoveLink(link.id)}
                       disabled={deletingLinkId === link.id}
-                      title="Remove this link"
-                      className="p-1 text-foreground-muted hover:text-danger rounded-lg transition-colors disabled:opacity-50"
+                      aria-label={`Remove the ${link.label || kindLabel(link.kind)} link`}
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-sm text-foreground-muted transition-colors duration-fast hover:bg-danger-surface hover:text-danger disabled:opacity-50"
                     >
                       {deletingLinkId === link.id ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="h-3 w-3" />
                       )}
                     </button>
-                  </motion.div>
+                  </motion.li>
                 ))}
               </AnimatePresence>
-            </div>
+            </ul>
           )}
+          </Card>
         </motion.div>
 
         {/* Documents Grid */}
         <motion.div className="lg:col-span-2 space-y-6" variants={itemVariants}>
           {/* Tab Navigation */}
-          <div className="flex gap-2 overflow-x-auto pb-1 border-b border-border relative">
-            {categories.map((cat) => (
+          <div className="relative flex gap-2 overflow-x-auto border-b border-border pb-1">
+            {CATEGORY_TABS.map((cat) => (
               <button
                 key={cat}
+                type="button"
                 onClick={() => setActiveTab(cat)}
-                className={`pb-3 px-1 text-xs font-semibold whitespace-nowrap transition-all relative ${
-                  activeTab === cat ? "text-primary" : "text-foreground-muted hover:text-foreground"
+                aria-pressed={activeTab === cat}
+                className={`relative whitespace-nowrap px-1 pb-3 text-sm font-semibold transition-colors duration-base ${
+                  activeTab === cat
+                    ? "text-primary"
+                    : "text-foreground-muted hover:text-foreground"
                 }`}
               >
                 {cat}
                 {activeTab === cat && (
                   <motion.span
                     layoutId="wallet-tab-indicator"
-                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full"
+                    className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary"
                     transition={{ type: "spring", stiffness: 400, damping: 28 }}
                   />
                 )}
@@ -1133,51 +1210,42 @@ export default function WalletPage() {
           <motion.div className="space-y-4" variants={listVariants} initial="hidden" animate="show">
             <AnimatePresence mode="popLayout">
               {filteredDocs.map((document) => (
-                <motion.div
+                <motion.article
                   key={document.id}
                   layout
                   variants={itemVariants}
                   initial="hidden"
                   animate="show"
                   exit="exit"
-                  whileHover={{
-                    boxShadow:
-                      "0 0 0 1px rgba(255,92,134,0.2), 0 8px 24px rgba(255,60,110,0.12)",
-                  }}
-                  className="p-5 bg-surface border border-border rounded-3xl shadow-sm flex flex-col gap-4 transition-shadow"
+                  className="card flex flex-col gap-4 p-5"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
-                      <motion.div
-                        whileHover={{ scale: 1.1, rotate: -4 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 14 }}
-                        className="p-3 bg-primary/10 text-primary rounded-2xl"
-                      >
-                        <FileText className="w-5 h-5" />
-                      </motion.div>
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+                        <FileText className="h-5 w-5" />
+                      </span>
                       <div>
-                        <h4 className="font-bold text-foreground text-sm leading-snug">
+                        <h3 className="text-sm font-bold leading-snug text-foreground">
                           {document.name}
-                        </h4>
-                        <div className="flex items-center gap-2 mt-1">
+                        </h3>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
                           <select
                             value={document.category}
                             disabled={updatingCatId === document.id}
+                            aria-label={`Category for ${document.name}`}
                             onChange={(e) =>
                               handleUpdateDocCategory(document.id, e.target.value as WalletCategory)
                             }
-                            className="text-[10px] font-semibold bg-surface-raised border border-border rounded-lg px-2 py-0.5 text-primary outline-none focus:border-primary cursor-pointer transition-colors"
                             title="Change document category"
+                            className="rounded-sm border border-border bg-surface-raised px-2 py-0.5 text-2xs font-semibold text-primary outline-none transition-colors duration-fast focus:border-secondary"
                           >
-                            {categories
-                              .filter((c) => c !== "All")
-                              .map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
-                              ))}
+                            {CATEGORY_VALUES.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
                           </select>
-                          <span className="text-[10px] text-foreground-muted font-medium">
+                          <span className="text-2xs font-medium text-foreground-muted">
                             {(document.sizeBytes / 1024).toFixed(0)} KB
                           </span>
                           {document.categorySource === "manual" ? (
@@ -1186,75 +1254,76 @@ export default function WalletPage() {
                               onClick={() => handleUnlockDocCategory(document.id)}
                               disabled={updatingCatId === document.id}
                               title="Category set by you. Click to unlock so Auto Re-Scan can re-detect it."
-                              className="flex items-center gap-0.5 text-[9px] font-bold text-foreground-muted hover:text-primary transition-colors disabled:opacity-50"
+                              className="flex items-center gap-0.5 text-2xs font-bold text-foreground-muted transition-colors duration-fast hover:text-secondary disabled:opacity-50"
                             >
-                              <Lock className="w-2.5 h-2.5" /> Manual <Unlock className="w-2.5 h-2.5" />
+                              <Lock className="h-2.5 w-2.5" /> Manual <Unlock className="h-2.5 w-2.5" />
                             </button>
                           ) : document.categoryNeedsReview ? (
-                            <span
-                              className="flex items-center gap-0.5 text-[9px] font-bold text-warning"
-                              title={document.categoryReason || "Low confidence — please verify this category."}
+                            <Chip
+                              tone="warning"
+                              icon={<AlertTriangle className="h-2.5 w-2.5" />}
+                              className="text-2xs"
+                              title={
+                                document.categoryReason ||
+                                "Low confidence — please verify this category."
+                              }
                             >
-                              <AlertTriangle className="w-2.5 h-2.5" /> Verify
-                            </span>
+                              Verify
+                            </Chip>
                           ) : document.categoryReason ? (
                             <span
-                              className="text-[9px] text-foreground-muted font-medium truncate max-w-[180px]"
+                              className="max-w-[180px] truncate text-2xs font-medium text-foreground-muted"
                               title={document.categoryReason}
                             >
                               {document.categoryReason}
                             </span>
                           ) : null}
                           {updatingCatId === document.id && (
-                            <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                            <Loader2 className="h-3 w-3 animate-spin text-primary" />
                           )}
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <motion.button
+                      <button
+                        type="button"
                         onClick={() => handleAIVerify(document.id, document.name, document.category)}
                         disabled={analyzingId === document.id}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 18 }}
-                        className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all disabled:opacity-50"
+                        aria-label={`Re-check ${document.name} with AI`}
                         title="Re-check this document's category with AI"
+                        className="grid h-8 w-8 place-items-center rounded-md text-primary transition-colors duration-fast hover:bg-primary/10 disabled:opacity-50"
                       >
                         {analyzingId === document.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Sparkles className="w-4 h-4" />
+                          <Sparkles className="h-4 w-4" />
                         )}
-                      </motion.button>
-                      <motion.a
+                      </button>
+                      <a
                         href={document.downloadURL}
                         target="_blank"
                         rel="noopener noreferrer"
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 18 }}
-                        className="p-2 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded-xl transition-all"
+                        aria-label={`Download ${document.name}`}
                         title="Download document"
+                        className="grid h-8 w-8 place-items-center rounded-md text-foreground-muted transition-colors duration-fast hover:bg-surface-raised hover:text-foreground"
                       >
-                        <Download className="w-4 h-4" />
-                      </motion.a>
-                      <motion.button
+                        <Download className="h-4 w-4" />
+                      </a>
+                      <button
+                        type="button"
                         onClick={() => handleDelete(document.id)}
                         disabled={deletingId === document.id}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 18 }}
-                        className="p-2 text-foreground-muted hover:text-danger hover:bg-surface-raised rounded-xl transition-all disabled:opacity-50"
+                        aria-label={`Delete ${document.name}`}
                         title="Delete"
+                        className="grid h-8 w-8 place-items-center rounded-md text-foreground-muted transition-colors duration-fast hover:bg-danger-surface hover:text-danger disabled:opacity-50"
                       >
                         {deletingId === document.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="h-4 w-4" />
                         )}
-                      </motion.button>
+                      </button>
                     </div>
                   </div>
 
@@ -1266,41 +1335,31 @@ export default function WalletPage() {
                         animate={{ opacity: 1, height: "auto", y: 0 }}
                         exit={{ opacity: 0, height: 0, y: -8 }}
                         transition={{ duration: 0.32, ease: [0.23, 1, 0.32, 1] }}
-                        className="bg-surface-raised border border-border p-4 rounded-2xl text-xs space-y-2 relative overflow-hidden"
+                        className="card-inset relative space-y-2 overflow-hidden p-4"
                       >
-                        <div className="absolute top-2 right-2 flex items-center gap-1 bg-primary/10 text-primary px-2 py-0.5 rounded text-[8px] font-bold">
-                          <Sparkles className="w-2.5 h-2.5" /> AI Evaluated
-                        </div>
-                        <div className="text-foreground whitespace-pre-line font-medium leading-relaxed">
+                        <Chip
+                          tone="gold"
+                          icon={<Sparkles className="h-2.5 w-2.5" />}
+                          className="absolute right-2 top-2 text-2xs"
+                        >
+                          AI Evaluated
+                        </Chip>
+                        <div className="whitespace-pre-line text-sm font-medium leading-relaxed text-foreground">
                           {aiReport[document.id]}
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </motion.div>
+                </motion.article>
               ))}
 
               {filteredDocs.length === 0 && (
-                <motion.div
+                <EmptyState
                   key="empty-state"
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.3 }}
-                  className="text-center py-16 bg-surface border border-border rounded-3xl"
-                >
-                  <motion.div
-                    initial={{ y: -6 }}
-                    animate={{ y: 0 }}
-                    transition={{ type: "spring", stiffness: 300 }}
-                  >
-                    <FileText className="w-12 h-12 text-foreground-muted mx-auto mb-2" />
-                  </motion.div>
-                  <h4 className="font-bold text-foreground text-sm">No documents found</h4>
-                  <p className="text-foreground-muted text-xs mt-1">
-                    Click the upload box on the left to add items to your Opportunity Wallet.
-                  </p>
-                </motion.div>
+                  icon={<FileText className="h-5 w-5" />}
+                  title="No documents found"
+                  description="Click the upload box on the left to add items to your Opportunity Wallet."
+                />
               )}
             </AnimatePresence>
           </motion.div>

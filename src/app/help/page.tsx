@@ -173,7 +173,7 @@ export default function HelpCenterPage() {
                 whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.97 }}
                 transition={{ type: "spring", stiffness: 380, damping: 18 }}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-semibold text-sm rounded-2xl shadow-md hover:bg-primary-hover transition-all"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-semibold text-sm rounded-2xl shadow-md hover:bg-primary/25 transition-all"
               >
                 <Mail className="w-4 h-4" />
                 Email Support

@@ -4,7 +4,9 @@ import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { collection, query, getDocs, updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { authedFetch } from "@/lib/apiClient";
 import {
   ShieldCheck,
@@ -21,12 +23,160 @@ import {
   Layers,
   Zap,
   Flame,
-  Clock,
   Activity,
   Check,
   Copy,
 } from "lucide-react";
 import type { OrgOpportunity, AdminStats, OrgRequest } from "@/lib/types";
+import { Button, Card, Chip, EmptyState, Select, Stat } from "@/components/ui";
+import type { ChipTone } from "@/components/ui";
+import { Stagger, StaggerItem } from "@/components/motion/Reveal";
+
+const EASE = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * Moderation status to chip tone.
+ *
+ * Organization requests and organization opportunities are triaged with the
+ * identical approved/rejected/pending triple, and both panels previously
+ * re-declared their own green/amber/red triple inline. One mapping means the
+ * two queues can never disagree about what "rejected" looks like.
+ */
+function reviewTone(status: string): ChipTone {
+  if (status === "approved") return "success";
+  if (status === "rejected") return "danger";
+  return "warning";
+}
+
+function roleTone(role?: string): ChipTone {
+  if (role === "admin") return "gold";
+  if (role === "organization") return "info";
+  return "neutral";
+}
+
+/** Per-key state inside a telemetry bucket. */
+function keyTone(status: string): ChipTone {
+  if (status === "in_use") return "success";
+  if (status === "cooling_down") return "warning";
+  return "neutral";
+}
+
+interface TelemetryKey {
+  keyId: string;
+  maskedKey: string;
+  estimatedTokens?: number;
+  status?: string;
+}
+
+interface BucketPanelProps {
+  title: string;
+  status: string;
+  statusTone: ChipTone;
+  /** The serving bucket gets a pulsing dot; standby stays static. */
+  active?: boolean;
+  blurb: ReactNode;
+  keys: TelemetryKey[];
+  copiedKeyId: string | null;
+  onCopy: (keyId: string) => void;
+  emptyMessage: string;
+  /** Standby keys all render one fixed label instead of their raw status. */
+  keyStatusLabel?: string;
+  highlightNewKey?: boolean;
+}
+
+/**
+ * One bucket of the double-queue system. Both buckets rendered the same
+ * ~45-line key list independently, which meant a change to the copy button or
+ * the token readout had to be made twice and could silently drift.
+ */
+function BucketPanel({
+  title,
+  status,
+  statusTone,
+  active = false,
+  blurb,
+  keys,
+  copiedKeyId,
+  onCopy,
+  emptyMessage,
+  keyStatusLabel,
+  highlightNewKey = false,
+}: BucketPanelProps) {
+  return (
+    <Card tone="raised" className="space-y-4 p-5">
+      <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {active ? (
+            <motion.span
+              aria-hidden="true"
+              className="h-2.5 w-2.5 shrink-0 rounded-full bg-success"
+              animate={{ opacity: [1, 0.35, 1] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            />
+          ) : (
+            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full bg-info" />
+          )}
+          <h3 className="truncate text-sm font-semibold text-foreground">{title}</h3>
+        </div>
+        <Chip tone={statusTone}>{status}</Chip>
+      </div>
+
+      <p className="text-xs leading-relaxed text-foreground-muted text-pretty">{blurb}</p>
+
+      <div className="space-y-2.5">
+        {keys.map((k) => (
+          <Card
+            key={k.keyId}
+            tone="inset"
+            className="flex items-center justify-between gap-3 p-3 text-xs"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onCopy(k.keyId)}
+                aria-label={`Copy the identifier for ${k.keyId}`}
+                title="Copy Key Identifier"
+                className="grid h-6 w-6 shrink-0 place-items-center rounded text-foreground-subtle transition-colors duration-fast hover:bg-surface hover:text-foreground"
+              >
+                {copiedKeyId === k.keyId ? (
+                  <Check className="h-3.5 w-3.5 text-success" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
+              <div className="min-w-0">
+                <span className="flex items-center gap-1.5 font-semibold text-foreground">
+                  <span className="truncate">{k.keyId}</span>
+                  {highlightNewKey && k.keyId === "OPENROUTER_API_KEY_8" ? (
+                    <Chip tone="gold">NEW</Chip>
+                  ) : null}
+                </span>
+                <span className="block font-mono text-2xs text-foreground-subtle">{k.maskedKey}</span>
+              </div>
+            </div>
+
+            <div className="shrink-0 text-right">
+              <span className="block text-xs font-semibold text-foreground">
+                {(k.estimatedTokens || 0).toLocaleString()} tokens
+              </span>
+              <Chip tone={keyTone(k.status ?? "")} className="mt-1 text-2xs uppercase">
+                {keyStatusLabel ?? k.status}
+              </Chip>
+            </div>
+          </Card>
+        ))}
+
+        {keys.length === 0 ? (
+          <EmptyState
+            icon={<Layers className="h-5 w-5" />}
+            title={emptyMessage}
+            className="border-0 bg-transparent px-0 py-10"
+          />
+        ) : null}
+      </div>
+    </Card>
+  );
+}
 
 export default function AdminPage() {
   const { currentUser, loading: authLoading, isAdmin } = useAuth();
@@ -206,10 +356,25 @@ export default function AdminPage() {
     }
   };
 
+  // The member dialog could only be dismissed by clicking the backdrop, which
+  // keyboard and screen-reader users never reach. Escape now closes it too.
+  useEffect(() => {
+    if (!selectedUser) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedUser(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedUser]);
+
   if (loading || authLoading || !currentUser || !isAdmin) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      <div
+        role="status"
+        aria-label="Loading the admin panel"
+        className="flex min-h-[50vh] items-center justify-center"
+      >
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -218,517 +383,440 @@ export default function AdminPage() {
   const pendingOrgRequestsCount = orgRequests.filter((r) => r.status === "pending").length;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="space-y-10">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-          <ShieldCheck className="w-6 h-6 text-primary" /> Admin Panel
+        <span className="eyebrow">Operations</span>
+        <h1 className="mt-1 flex items-center gap-2 font-display text-display-sm text-foreground text-balance">
+          <ShieldCheck className="h-6 w-6 text-primary" /> Admin Panel
         </h1>
-        <p className="text-foreground-muted text-sm mt-1">
+        <p className="mt-1 max-w-2xl text-sm text-foreground-muted text-pretty">
           Moderate organization postings, change user access permissions, and evaluate platform statistics.
         </p>
       </div>
 
       {/* Stats Counters */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm text-center hover:shadow-[0_0_0_1px_rgba(255,92,134,0.15),0_4px_16px_rgba(255,60,110,0.1)] transition-shadow">
-          <Users className="w-6 h-6 text-primary mx-auto mb-2" />
-          <span className="block text-[9px] font-bold text-foreground-muted uppercase tracking-wider">Total Members</span>
-          <span className="text-lg font-extrabold text-foreground">{stats.totalUsers} users</span>
-        </div>
-        <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm text-center hover:shadow-[0_0_0_1px_rgba(255,92,134,0.15),0_4px_16px_rgba(255,60,110,0.1)] transition-shadow">
-          <FileText className="w-6 h-6 text-blue-500 mx-auto mb-2" />
-          <span className="block text-[9px] font-bold text-foreground-muted uppercase tracking-wider">Opportunities</span>
-          <span className="text-lg font-extrabold text-foreground">{stats.totalOpportunities} total</span>
-          <span className="block text-[9px] text-foreground-muted mt-0.5">
-            {stats.orgPostedCount} org-posted · {stats.seededCount} seeded
-          </span>
-        </div>
-        <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm text-center hover:shadow-[0_0_0_1px_rgba(255,92,134,0.15),0_4px_16px_rgba(255,60,110,0.1)] transition-shadow">
-          <FileSpreadsheet className="w-6 h-6 text-emerald-500 mx-auto mb-2" />
-          <span className="block text-[9px] font-bold text-foreground-muted uppercase tracking-wider">Applications</span>
-          <span className="text-lg font-extrabold text-foreground">{stats.totalApplications} tracks</span>
-        </div>
-        <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm text-center hover:shadow-[0_0_0_1px_rgba(255,92,134,0.15),0_4px_16px_rgba(255,60,110,0.1)] transition-shadow">
-          <MessageSquare className="w-6 h-6 text-amber-500 mx-auto mb-2" />
-          <span className="block text-[9px] font-bold text-foreground-muted uppercase tracking-wider">Forum Posts</span>
-          <span className="text-lg font-extrabold text-foreground">{stats.totalCommunityPosts} posts</span>
-        </div>
-      </div>
+      <Stagger className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <StaggerItem>
+          <Stat label="Total Members" value={stats.totalUsers} icon={<Users className="h-5 w-5" />} />
+        </StaggerItem>
+        <StaggerItem>
+          <Stat
+            label="Opportunities"
+            value={stats.totalOpportunities}
+            hint={`${stats.orgPostedCount} org-posted · ${stats.seededCount} seeded`}
+            icon={<FileText className="h-5 w-5" />}
+          />
+        </StaggerItem>
+        <StaggerItem>
+          <Stat
+            label="Applications"
+            value={stats.totalApplications}
+            icon={<FileSpreadsheet className="h-5 w-5" />}
+          />
+        </StaggerItem>
+        <StaggerItem>
+          <Stat
+            label="Forum Posts"
+            value={stats.totalCommunityPosts}
+            icon={<MessageSquare className="h-5 w-5" />}
+          />
+        </StaggerItem>
+      </Stagger>
 
       {/* ── AI Provider Keys & Double Queue Bucket Telemetry ── */}
-      <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
-                <Cpu className="w-5 h-5" />
-              </span>
-              <div>
-                <h3 className="font-extrabold text-foreground text-base flex items-center gap-2">
-                  AI Key Engine — Double-Queue Bucket System
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                    Dual Failover Active
-                  </span>
-                </h3>
-                <p className="text-xs text-foreground-muted">
-                  Primary Queue processes all AI traffic. Secondary Queue remains on hot standby and activates upon 429/exhaustion.
-                </p>
-              </div>
+      <Card className="space-y-6 p-6">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-surface-raised text-secondary">
+              <Cpu className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="flex flex-wrap items-center gap-2 font-display text-lg text-foreground text-balance">
+                AI Key Engine — Double-Queue Bucket System
+                <Chip tone="success">Dual Failover Active</Chip>
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm text-foreground-muted text-pretty">
+                Primary Queue processes all AI traffic. Secondary Queue remains on hot standby and activates upon 429/exhaustion.
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={fetchTelemetry}
-              disabled={telemetryLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-border text-foreground rounded-xl text-xs font-bold transition-all border border-border disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${telemetryLoading ? "animate-spin text-primary" : ""}`} />
-              Refresh Telemetry
-            </button>
-          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={fetchTelemetry}
+            disabled={telemetryLoading}
+            leadingIcon={
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${telemetryLoading ? "animate-spin text-primary" : ""}`}
+              />
+            }
+          >
+            Refresh Telemetry
+          </Button>
         </div>
 
         {/* Global Key Bucket Metrics Summary */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
-          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Total Pool Keys</span>
-              <Layers className="w-4 h-4 text-primary" />
-            </div>
-            <div className="text-xl font-extrabold text-foreground mt-1">
-              {telemetry?.totalKeys ?? 8} Keys
-            </div>
-            <span className="text-[10px] text-foreground-muted font-medium">
-              4 Primary · 4 Standby Fallback
-            </span>
-          </div>
-
-          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Active Serving Bucket</span>
-              <Activity className="w-4 h-4 text-emerald-500" />
-            </div>
-            <div className="text-xl font-extrabold text-emerald-500 mt-1">
-              Bucket {telemetry?.activeQueue || "A"}
-            </div>
-            <span className="text-[10px] text-foreground-muted font-medium">
-              Primary traffic routing
-            </span>
-          </div>
-
-          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Total Tokens Processed</span>
-              <Zap className="w-4 h-4 text-amber-500" />
-            </div>
-            <div className="text-xl font-extrabold text-amber-500 mt-1">
-              {(telemetry?.summary?.totalEstimatedTokens ?? 0).toLocaleString()} tokens
-            </div>
-            <span className="text-[10px] text-foreground-muted font-medium">
-              Across all requests
-            </span>
-          </div>
-
-          <div className="p-4 bg-surface-raised border border-border rounded-2xl">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-foreground-muted uppercase tracking-wider">Total AI Requests</span>
-              <Flame className="w-4 h-4 text-blue-500" />
-            </div>
-            <div className="text-xl font-extrabold text-foreground mt-1">
-              {telemetry?.summary?.totalRequests ?? 0}
-            </div>
-            <span className="text-[10px] text-emerald-500 font-semibold">
-              {telemetry?.summary?.totalSuccessful ?? 0} ok · {telemetry?.summary?.totalFailed ?? 0} retried
-            </span>
-          </div>
-        </div>
+        <Stagger className="grid grid-cols-2 gap-3 text-left sm:grid-cols-4">
+          <StaggerItem>
+            <Stat
+              size="sm"
+              label="Total Pool Keys"
+              value={`${telemetry?.totalKeys ?? 8} keys`}
+              hint="4 Primary · 4 Standby Fallback"
+              icon={<Layers className="h-4 w-4" />}
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <Stat
+              size="sm"
+              label="Active Serving Bucket"
+              value={`Bucket ${telemetry?.activeQueue || "A"}`}
+              hint="Primary traffic routing"
+              tone="success"
+              icon={<Activity className="h-4 w-4" />}
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <Stat
+              size="sm"
+              label="Total Tokens Processed"
+              value={(telemetry?.summary?.totalEstimatedTokens ?? 0).toLocaleString()}
+              hint="Across all requests"
+              tone="gold"
+              icon={<Zap className="h-4 w-4" />}
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <Stat
+              size="sm"
+              label="Total AI Requests"
+              value={telemetry?.summary?.totalRequests ?? 0}
+              hint={`${telemetry?.summary?.totalSuccessful ?? 0} ok · ${telemetry?.summary?.totalFailed ?? 0} retried`}
+              icon={<Flame className="h-4 w-4" />}
+            />
+          </StaggerItem>
+        </Stagger>
 
         {/* 2 Bucket Queues Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
-          {/* Active Serving Bucket */}
-          <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                <h4 className="font-extrabold text-foreground text-sm">
-                  {telemetry?.primaryBucket?.name || "Bucket A (Active Serving)"}
-                </h4>
-              </div>
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
-                {telemetry?.primaryBucket?.status || "Serving Traffic"}
-              </span>
-            </div>
+        <div className="grid grid-cols-1 gap-6 pt-2 lg:grid-cols-2">
+          <BucketPanel
+            active
+            title={telemetry?.primaryBucket?.name || "Bucket A (Active Serving)"}
+            status={telemetry?.primaryBucket?.status || "Serving Traffic"}
+            statusTone="success"
+            blurb={
+              <>
+                Active Pool:{" "}
+                <strong className="text-foreground">
+                  {telemetry?.primaryBucket?.keysRemaining ?? 8} keys
+                </strong>{" "}
+                ready. Har rate-limit/error par key eject hokar Standby Bucket me chali
+                jati hai.
+              </>
+            }
+            keys={telemetry?.primaryBucket?.keys || []}
+            copiedKeyId={copiedKeyId}
+            onCopy={(keyId) => copyToClipboard(keyId, keyId)}
+            emptyMessage="All keys ejected from active bucket. Automatic swap triggered!"
+            highlightNewKey
+          />
 
-            <p className="text-[11px] text-foreground-muted">
-              Active Pool: <strong className="text-foreground">{telemetry?.primaryBucket?.keysRemaining ?? 8} keys</strong> ready. Har rate-limit/error par key eject hokar Standby Bucket me chali jati hai.
-            </p>
-
-            <div className="space-y-2.5">
-              {(telemetry?.primaryBucket?.keys || []).map((k: any) => (
-                <div
-                  key={k.keyId}
-                  className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      onClick={() => copyToClipboard(k.keyId, k.keyId)}
-                      className="p-1 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded transition-colors"
-                      title="Copy Key Identifier"
-                    >
-                      {copiedKeyId === k.keyId ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                    <div>
-                      <span className="font-bold text-foreground block truncate flex items-center gap-1.5">
-                        {k.keyId}
-                        {k.keyId === "OPENROUTER_API_KEY_8" && (
-                          <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-semibold border border-primary/20">
-                            NEW
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-[10px] text-foreground-muted font-mono">{k.maskedKey}</span>
-                    </div>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-extrabold text-foreground block">
-                      {(k.estimatedTokens || 0).toLocaleString()} tokens
-                    </span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border ${
-                      k.status === "in_use"
-                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                        : k.status === "cooling_down"
-                        ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                        : "bg-surface-raised text-foreground-muted border-border"
-                    }`}>
-                      {k.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-
-              {(!telemetry?.primaryBucket?.keys || telemetry?.primaryBucket?.keys?.length === 0) && (
-                <div className="text-center py-8 text-foreground-muted text-xs">
-                  All keys ejected from active bucket. Automatic swap triggered!
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Standby / Replenishing Bucket */}
-          <div className="p-5 bg-surface-raised border border-border rounded-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                <h4 className="font-extrabold text-foreground text-sm">
-                  {telemetry?.fallbackBucket?.name || "Standby / Replenishing Bucket"}
-                </h4>
-              </div>
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-blue-500/10 text-blue-500 border-blue-500/20">
-                {telemetry?.fallbackBucket?.status || "Filling on Fallback"}
-              </span>
-            </div>
-
-            <p className="text-[11px] text-foreground-muted">
-              Keys in holding/cooldown: <strong className="text-foreground">{telemetry?.fallbackBucket?.keysCount ?? 0} keys</strong>. Jab tak active bucket 0 nahi hoti, yahan se koi key consume nahi hogi.
-            </p>
-
-            <div className="space-y-2.5">
-              {(telemetry?.fallbackBucket?.keys || []).map((k: any) => (
-                <div
-                  key={k.keyId}
-                  className="p-3 bg-surface border border-border rounded-xl flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      onClick={() => copyToClipboard(k.keyId, k.keyId)}
-                      className="p-1 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded transition-colors"
-                      title="Copy Key Identifier"
-                    >
-                      {copiedKeyId === k.keyId ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                    <div>
-                      <span className="font-bold text-foreground block truncate flex items-center gap-1.5">
-                        {k.keyId}
-                      </span>
-                      <span className="text-[10px] text-foreground-muted font-mono">{k.maskedKey}</span>
-                    </div>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-extrabold text-foreground block">
-                      {(k.estimatedTokens || 0).toLocaleString()} tokens
-                    </span>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase border bg-amber-500/10 text-amber-500 border-amber-500/20">
-                      Cooldown / Standby
-                    </span>
-                  </div>
-                </div>
-              ))}
-
-              {(!telemetry?.fallbackBucket?.keys || telemetry?.fallbackBucket?.keys?.length === 0) && (
-                <div className="text-center py-8 text-foreground-muted text-xs border border-dashed border-border rounded-xl">
-                  Bucket is currently empty. Keys will move here as fallback occurs.
-                </div>
-              )}
-            </div>
-          </div>
+          <BucketPanel
+            title={telemetry?.fallbackBucket?.name || "Standby / Replenishing Bucket"}
+            status={telemetry?.fallbackBucket?.status || "Filling on Fallback"}
+            statusTone="info"
+            blurb={
+              <>
+                Keys in holding/cooldown:{" "}
+                <strong className="text-foreground">
+                  {telemetry?.fallbackBucket?.keysCount ?? 0} keys
+                </strong>
+                . Jab tak active bucket 0 nahi hoti, yahan se koi key consume nahi hogi.
+              </>
+            }
+            keys={telemetry?.fallbackBucket?.keys || []}
+            copiedKeyId={copiedKeyId}
+            onCopy={(keyId) => copyToClipboard(keyId, keyId)}
+            emptyMessage="Bucket is currently empty. Keys will move here as fallback occurs."
+            keyStatusLabel="Cooldown / Standby"
+          />
         </div>
-      </div>
+      </Card>
 
       {/* Moderate Opportunities */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Organization access requests */}
-        <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-6">
-          <h3 className="font-extrabold text-foreground text-sm flex items-center justify-between">
+        <Card className="space-y-6 p-6">
+          <h2 className="flex items-center justify-between gap-3 font-display text-lg text-foreground">
             <span>Organization requests</span>
             {pendingOrgRequestsCount > 0 && (
-              <span className="text-[9px] font-bold bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/20">
-                {pendingOrgRequestsCount} Pending
-              </span>
+              <Chip tone="warning">{pendingOrgRequestsCount} Pending</Chip>
             )}
-          </h3>
+          </h2>
 
-          <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
+          <ul className="max-h-[400px] space-y-4 overflow-y-auto pr-1">
             {orgRequests.map((req) => (
-              <div key={req.uid} className="p-4 bg-surface-raised border border-border rounded-2xl space-y-3">
-                <div className="flex justify-between items-start gap-4">
-                  <div>
-                    <span className="text-[8px] font-extrabold uppercase tracking-wider text-foreground-muted">
-                      {req.requesterName} · {req.requesterEmail}
-                    </span>
-                    <h5 className="font-bold text-foreground text-xs mt-1 leading-snug">{req.orgName}</h5>
-                    {req.website && (
-                      <a href={req.website} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline">
-                        {req.website}
-                      </a>
-                    )}
+              <li key={req.uid}>
+                <Card tone="raised" className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <span className="eyebrow">
+                        {req.requesterName} · {req.requesterEmail}
+                      </span>
+                      <h3 className="mt-1 text-sm font-semibold leading-snug text-foreground text-balance">
+                        {req.orgName}
+                      </h3>
+                      {req.website ? (
+                        <a
+                          href={req.website}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="link-ink mt-1 block truncate text-xs text-secondary"
+                        >
+                          {req.website}
+                        </a>
+                      ) : null}
+                    </div>
+                    <Chip tone={reviewTone(req.status)} className="shrink-0 uppercase">
+                      {req.status}
+                    </Chip>
                   </div>
-                  <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border ${
-                    req.status === "approved"
-                      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                      : req.status === "rejected"
-                      ? "bg-red-500/10 text-red-500 border-red-500/20"
-                      : "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                  }`}>
-                    {req.status}
-                  </span>
-                </div>
 
-                <p className="text-[11px] text-foreground-muted line-clamp-3 leading-relaxed">{req.description}</p>
+                  <p className="text-sm leading-relaxed text-foreground-muted text-pretty line-clamp-3">
+                    {req.description}
+                  </p>
 
-                {req.status === "pending" && (
-                  <div className="flex gap-2 justify-end pt-2 border-t border-border">
-                    <button
-                      onClick={() => reviewOrgRequest(req.uid, "approved")}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-xl text-[10px] font-bold transition-all border border-emerald-500/20"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5" /> Approve
-                    </button>
-                    <button
-                      onClick={() => reviewOrgRequest(req.uid, "rejected")}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-[10px] font-bold transition-all border border-red-500/20"
-                    >
-                      <XCircle className="w-3.5 h-3.5" /> Reject
-                    </button>
-                  </div>
-                )}
-              </div>
+                  {req.status === "pending" ? (
+                    <div className="flex justify-end gap-2 border-t border-border pt-3">
+                      <Button
+                        type="button"
+                        size="sm"
+                        leadingIcon={<CheckCircle className="h-3.5 w-3.5" />}
+                        onClick={() => reviewOrgRequest(req.uid, "approved")}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="danger"
+                        leadingIcon={<XCircle className="h-3.5 w-3.5" />}
+                        onClick={() => reviewOrgRequest(req.uid, "rejected")}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  ) : null}
+                </Card>
+              </li>
             ))}
+          </ul>
 
-            {orgRequests.length === 0 && (
-              <div className="text-center py-12">
-                <Building className="w-8 h-8 text-foreground-muted mx-auto mb-2" />
-                <h5 className="font-bold text-foreground text-xs">No requests yet</h5>
-                <p className="text-foreground-muted text-[10px] mt-1">
-                  When users request organization access, they&apos;ll show up here.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+          {orgRequests.length === 0 ? (
+            <EmptyState
+              icon={<Building className="h-5 w-5" />}
+              title="No requests yet"
+              description="When users request organization access, they’ll show up here."
+              className="border-0 bg-transparent px-0"
+            />
+          ) : null}
+        </Card>
 
-        <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-6">
-          <h3 className="font-extrabold text-foreground text-sm flex items-center justify-between">
+        <Card className="space-y-6 p-6">
+          <h2 className="flex items-center justify-between gap-3 font-display text-lg text-foreground">
             <span>Moderate org opportunities</span>
-            {pendingCount > 0 && (
-              <span className="text-[9px] font-bold bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/20">
-                {pendingCount} Pending Approval
-              </span>
-            )}
-          </h3>
+            {pendingCount > 0 ? (
+              <Chip tone="warning">{pendingCount} Pending Approval</Chip>
+            ) : null}
+          </h2>
 
-          <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
+          <ul className="max-h-[400px] space-y-4 overflow-y-auto pr-1">
             {orgOpps.map((opp) => (
-              <div key={opp.id} className="p-4 bg-surface-raised border border-border rounded-2xl space-y-3">
-                <div className="flex justify-between items-start gap-4">
-                  <div>
-                    <span className="text-[8px] font-extrabold uppercase tracking-wider text-foreground-muted">
-                      Posted by {opp.orgName}
-                      {opp.source === "automated" && (
-                        <span className="ml-1.5 text-[7px] font-bold bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded border border-blue-500/20 normal-case tracking-normal">
-                          Auto-ingested{opp.sourceType === "scraped" ? " · scraped" : " · trusted feed"}
-                        </span>
-                      )}
-                    </span>
-                    <h5 className="font-bold text-foreground text-xs mt-1 leading-snug">{opp.title}</h5>
+              <li key={opp.id}>
+                <Card tone="raised" className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <span className="eyebrow">Posted by {opp.orgName}</span>
+                      {opp.source === "automated" ? (
+                        <Chip tone="info" className="mt-1.5">
+                          Auto-ingested
+                          {opp.sourceType === "scraped" ? " · scraped" : " · trusted feed"}
+                        </Chip>
+                      ) : null}
+                      <h3 className="mt-1 text-sm font-semibold leading-snug text-foreground text-balance">
+                        {opp.title}
+                      </h3>
+                    </div>
+                    <Chip tone={reviewTone(opp.status)} className="shrink-0 uppercase">
+                      {opp.status}
+                    </Chip>
                   </div>
-                  <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border ${
-                    opp.status === "approved"
-                      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                      : opp.status === "rejected"
-                      ? "bg-red-500/10 text-red-500 border-red-500/20"
-                      : "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                  }`}>
-                    {opp.status}
-                  </span>
-                </div>
 
-                <p className="text-[11px] text-foreground-muted line-clamp-2 leading-relaxed">{opp.description}</p>
+                  <p className="text-sm leading-relaxed text-foreground-muted text-pretty line-clamp-2">
+                    {opp.description}
+                  </p>
 
-                {opp.status === "pending" && (
-                  <div className="flex gap-2 justify-end pt-2 border-t border-border">
-                    <button
-                      onClick={() => updateOppStatus(opp.id, "approved")}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-xl text-[10px] font-bold transition-all border border-emerald-500/20"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5" /> Approve
-                    </button>
-                    <button
-                      onClick={() => updateOppStatus(opp.id, "rejected")}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-[10px] font-bold transition-all border border-red-500/20"
-                    >
-                      <XCircle className="w-3.5 h-3.5" /> Reject
-                    </button>
-                  </div>
-                )}
-              </div>
+                  {opp.status === "pending" ? (
+                    <div className="flex justify-end gap-2 border-t border-border pt-3">
+                      <Button
+                        type="button"
+                        size="sm"
+                        leadingIcon={<CheckCircle className="h-3.5 w-3.5" />}
+                        onClick={() => updateOppStatus(opp.id, "approved")}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="danger"
+                        leadingIcon={<XCircle className="h-3.5 w-3.5" />}
+                        onClick={() => updateOppStatus(opp.id, "rejected")}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  ) : null}
+                </Card>
+              </li>
             ))}
+          </ul>
 
-            {orgOpps.length === 0 && (
-              <div className="text-center py-12">
-                <Building className="w-8 h-8 text-foreground-muted mx-auto mb-2" />
-                <h5 className="font-bold text-foreground text-xs">No programs to review</h5>
-                <p className="text-foreground-muted text-[10px] mt-1">
-                  Once organizations publish opportunities, they will list here for approval.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+          {orgOpps.length === 0 ? (
+            <EmptyState
+              icon={<Building className="h-5 w-5" />}
+              title="No programs to review"
+              description="Once organizations publish opportunities, they will list here for approval."
+              className="border-0 bg-transparent px-0"
+            />
+          ) : null}
+        </Card>
 
         {/* User permissions moderator */}
-        <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-6">
-          <h3 className="font-extrabold text-foreground text-sm">Manage Member Roles</h3>
+        <Card className="space-y-6 p-6">
+          <h2 className="font-display text-lg text-foreground">Manage Member Roles</h2>
 
-          <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
+          <ul className="max-h-[400px] space-y-4 overflow-y-auto pr-1">
             {usersList.map((usr) => (
-              <button
-                key={usr.id}
-                onClick={() => setSelectedUser(usr)}
-                className="w-full p-4 bg-surface-raised border border-border rounded-2xl flex items-center justify-between gap-4 text-left hover:border-primary/40 hover:shadow-sm transition-all"
-              >
-                <h5 className="font-bold text-foreground text-xs truncate">{usr.name || "Unnamed User"}</h5>
-                <span className={`shrink-0 text-[8px] font-bold uppercase px-2 py-1 rounded-full border ${
-                  usr.role === "admin"
-                    ? "bg-primary/10 text-primary border-primary/20"
-                    : usr.role === "organization"
-                    ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
-                    : "bg-slate-500/10 text-slate-500 border-slate-500/20"
-                }`}>
-                  {usr.role || "user"}
-                </span>
-              </button>
+              <li key={usr.id}>
+                <Card
+                  as="button"
+                  type="button"
+                  interactive
+                  tone="raised"
+                  onClick={() => setSelectedUser(usr)}
+                  aria-label={`Review access for ${usr.name || "Unnamed User"}`}
+                  className="flex w-full items-center justify-between gap-4 p-4 text-left"
+                >
+                  <span className="truncate text-sm font-semibold text-foreground">
+                    {usr.name || "Unnamed User"}
+                  </span>
+                  <Chip tone={roleTone(usr.role)} className="shrink-0 uppercase">
+                    {usr.role || "user"}
+                  </Chip>
+                </Card>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </Card>
       </div>
 
       {/* User details modal */}
-      {selectedUser && (
+      {selectedUser ? (
         <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
           onClick={() => setSelectedUser(null)}
         >
-          <div
-            className="bg-surface border border-border rounded-3xl shadow-xl max-w-md w-full p-6 space-y-5"
+          <Card
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Access details for ${selectedUser.name || "Unnamed User"}`}
+            tone="raised"
+            className="max-w-md space-y-5 p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-extrabold text-foreground text-lg">{selectedUser.name || "Unnamed User"}</h3>
-                <p className="text-xs text-foreground-muted mt-0.5">{selectedUser.email || "No email on file"}</p>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="font-display text-lg text-foreground text-balance">
+                  {selectedUser.name || "Unnamed User"}
+                </h2>
+                <p className="mt-0.5 text-sm text-foreground-muted">
+                  {selectedUser.email || "No email on file"}
+                </p>
               </div>
-              <button
+              <Button
+                type="button"
+                variant="quiet"
+                size="icon"
                 onClick={() => setSelectedUser(null)}
-                className="p-1.5 text-foreground-muted hover:text-foreground hover:bg-surface-raised rounded-lg transition-colors"
+                aria-label="Close member details"
               >
-                <XCircle className="w-5 h-5" />
-              </button>
+                <XCircle className="h-5 w-5" />
+              </Button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="bg-surface-raised p-3 rounded-2xl">
-                <span className="block text-[9px] font-bold text-foreground-muted uppercase mb-1">Joined</span>
-                <span className="font-semibold text-foreground">
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <div className="card-inset p-3">
+                <dt className="eyebrow">Joined</dt>
+                <dd className="mt-1 font-semibold text-foreground">
                   {selectedUser.createdAt
                     ? new Date(selectedUser.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
                     : "Unknown"}
-                </span>
+                </dd>
               </div>
-              <div className="bg-surface-raised p-3 rounded-2xl">
-                <span className="block text-[9px] font-bold text-foreground-muted uppercase mb-1">Location</span>
-                <span className="font-semibold text-foreground">{selectedUser.location || "—"}</span>
+              <div className="card-inset p-3">
+                <dt className="eyebrow">Location</dt>
+                <dd className="mt-1 font-semibold text-foreground">
+                  {selectedUser.location || "—"}
+                </dd>
               </div>
-              <div className="bg-surface-raised p-3 rounded-2xl">
-                <span className="block text-[9px] font-bold text-foreground-muted uppercase mb-1">Education</span>
-                <span className="font-semibold text-foreground">{selectedUser.education || "—"}</span>
+              <div className="card-inset p-3">
+                <dt className="eyebrow">Education</dt>
+                <dd className="mt-1 font-semibold text-foreground">
+                  {selectedUser.education || "—"}
+                </dd>
               </div>
-              <div className="bg-surface-raised p-3 rounded-2xl">
-                <span className="block text-[9px] font-bold text-foreground-muted uppercase mb-1">Category</span>
-                <span className="font-semibold text-foreground">{selectedUser.category || "—"}</span>
+              <div className="card-inset p-3">
+                <dt className="eyebrow">Category</dt>
+                <dd className="mt-1 font-semibold text-foreground">
+                  {selectedUser.category || "—"}
+                </dd>
               </div>
-            </div>
+            </dl>
 
-            {selectedUser.bio && (
+            {selectedUser.bio ? (
               <div>
-                <span className="block text-[9px] font-bold text-foreground-muted uppercase mb-1">Bio</span>
-                <p className="text-xs text-foreground leading-relaxed">{selectedUser.bio}</p>
+                <span className="eyebrow">Bio</span>
+                <p className="mt-1 text-sm leading-relaxed text-foreground text-pretty">
+                  {selectedUser.bio}
+                </p>
               </div>
-            )}
+            ) : null}
 
-            <div className="pt-3 border-t border-border">
-              <span className="block text-[9px] font-bold text-foreground-muted uppercase mb-2">Access Level</span>
-              <select
+            <div className="border-t border-border pt-3">
+              <Select
+                label="Access Level"
                 value={selectedUser.role || "user"}
                 onChange={(e) => handleRoleChange(selectedUser.id, e.target.value as any)}
                 disabled={selectedUser.role === "admin"}
-                className="w-full text-xs font-bold p-2.5 bg-surface-raised border border-border rounded-xl outline-none text-foreground focus:border-primary disabled:opacity-50"
-              >
-                <option value="user">User</option>
-                <option value="organization">Organization</option>
-                {selectedUser.role === "admin" && <option value="admin">Admin</option>}
-              </select>
-              {selectedUser.role === "admin" && (
-                <p className="text-[10px] text-foreground-muted mt-1.5">
-                  Admin access is granted server-side from the deployment allow-list and can&apos;t be
-                  changed here.
-                </p>
-              )}
+                options={[
+                  { value: "user", label: "User" },
+                  { value: "organization", label: "Organization" },
+                  ...(selectedUser.role === "admin" ? [{ value: "admin", label: "Admin" }] : []),
+                ]}
+                hint={
+                  selectedUser.role === "admin"
+                    ? "Admin access is granted server-side from the deployment allow-list and can’t be changed here."
+                    : undefined
+                }
+              />
             </div>
-          </div>
+          </Card>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -278,7 +278,7 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
           {/* Main card */}
           <motion.div
             variants={cardVariants}
-            className="bg-surface border border-border shadow-xl dark:shadow-[0_8px_40px_rgba(255,60,110,0.08)] rounded-3xl overflow-hidden p-8 md:p-10 transition-colors duration-300"
+            className="bg-surface border border-border shadow-xl dark:shadow-[0_8px_40px_rgba(255,60,110,0.08)] rounded-lg dark:shadow-[0_8px_40px_rgba(255,60,110,0.08)] overflow-hidden p-8 md:p-10 transition-colors duration-300"
           >
             {/* Top Bar actions */}
             <motion.div
@@ -404,7 +404,7 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 + i * 0.08, duration: 0.3 }}
                 >
-                  <span className="block text-[10px] uppercase font-bold text-foreground-muted tracking-wider mb-1">
+                  <span className="block text-2xs uppercase font-bold text-foreground-muted tracking-wider mb-1">
                     {label}
                   </span>
                   <span className="flex items-center gap-1 text-xs font-bold text-foreground">
@@ -463,7 +463,6 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
                     {opp.requiredDocuments.map((docName, i) => (
                       <motion.li
                         key={docName}
-                        custom={i}
                         variants={checklistItemVariants}
                         initial="hidden"
                         animate="show"

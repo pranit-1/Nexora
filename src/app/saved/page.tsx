@@ -9,6 +9,7 @@ import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useOpportunities, formatDeadline } from "@/hooks/useOpportunities";
+import { Chip } from "@/components/ui/Chip";
 import {
   Bookmark,
   BookmarkCheck,
@@ -79,37 +80,37 @@ const urgencyConfig: Record<
 > = {
   expired: {
     label: "Expired",
-    bar: "bg-gray-400",
-    badge: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
-    text: "text-gray-400",
+    bar: "bg-foreground-subtle",
+    badge: "chip",
+    text: "text-foreground-subtle",
     icon: <CheckCircle2 className="w-3.5 h-3.5" />,
   },
   critical: {
     label: "Last Day!",
-    bar: "bg-red-500",
-    badge: "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400",
-    text: "text-red-500",
+    bar: "bg-danger",
+    badge: "chip-danger",
+    text: "text-danger",
     icon: <AlertTriangle className="w-3.5 h-3.5" />,
   },
   urgent: {
     label: "Urgent",
-    bar: "bg-orange-500",
-    badge: "bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400",
-    text: "text-orange-500",
+    bar: "bg-warning",
+    badge: "chip-warning",
+    text: "text-warning",
     icon: <AlertTriangle className="w-3.5 h-3.5" />,
   },
   approaching: {
     label: "Approaching",
-    bar: "bg-amber-400",
-    badge: "bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400",
-    text: "text-amber-500",
+    bar: "bg-info",
+    badge: "chip-info",
+    text: "text-info",
     icon: <Clock className="w-3.5 h-3.5" />,
   },
   safe: {
     label: "On Track",
-    bar: "bg-emerald-500",
-    badge: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400",
-    text: "text-emerald-500",
+    bar: "bg-success",
+    badge: "chip-success",
+    text: "text-success",
     icon: <TrendingUp className="w-3.5 h-3.5" />,
   },
 };
@@ -134,21 +135,19 @@ function DeadlineTimeline({ deadline }: { deadline?: string }) {
       {/* Bar */}
       <div className="relative h-1.5 w-full bg-surface-raised rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${cfg.bar}`}
+          className={`h-full rounded-full ${cfg.bar}`}
           style={{ width: `${progress}%` }}
         />
       </div>
 
       {/* Labels row */}
-      <div className="flex items-center justify-between text-[10px]">
+      <div className="flex items-center justify-between text-xs">
         <span className={`flex items-center gap-1 font-bold ${cfg.text}`}>
           {cfg.icon} {dayLabel}
         </span>
-        <span
-          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[9px] uppercase tracking-wide ${cfg.badge}`}
-        >
+        <Chip tone={urgency === "expired" ? "neutral" : urgency === "critical" ? "danger" : urgency === "urgent" ? "warning" : urgency === "approaching" ? "info" : "success"} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">
           {cfg.label}
-        </span>
+        </Chip>
       </div>
     </div>
   );
@@ -279,17 +278,20 @@ export default function SavedOpportunities() {
             <div className="grid grid-cols-3 gap-4 mb-8">
               <div className="bg-surface border border-border rounded-2xl p-4 text-center">
                 <p className="text-2xl font-extrabold text-foreground">{activeCount}</p>
-                <p className="text-[11px] text-foreground-muted font-semibold mt-0.5 uppercase tracking-wide">Active</p>
+                <p className="text-2xs font-semibold text-foreground-muted uppercase tracking-wide">Active</p>
+                <Chip tone={activeCount > 0 ? "success" : "neutral"} className="mt-1"/>
               </div>
-              <div className={`bg-surface border rounded-2xl p-4 text-center ${criticalCount > 0 ? "border-red-300 dark:border-red-800" : "border-border"}`}>
-                <p className={`text-2xl font-extrabold ${criticalCount > 0 ? "text-red-500" : "text-foreground"}`}>
+              <div className={`${criticalCount > 0 ? "border-red-300 dark:border-red-800" : "border-border"} rounded-2xl p-4 text-center ${criticalCount > 0 ? "bg-red-100/20" : ""}`}>
+                <p className={`${criticalCount > 0 ? "text-red-500" : "text-foreground"} text-2xl font-extrabold`}>
                   {criticalCount}
                 </p>
-                <p className="text-[11px] text-foreground-muted font-semibold mt-0.5 uppercase tracking-wide">Critical (≤3d)</p>
+                <p className="text-2xs font-semibold text-foreground-muted uppercase tracking-wide">Critical (≤3d)</p>
+                <Chip tone="danger" className="mt-1"/>
               </div>
               <div className="bg-surface border border-border rounded-2xl p-4 text-center">
                 <p className="text-2xl font-extrabold text-foreground-muted">{expiredCount}</p>
-                <p className="text-[11px] text-foreground-muted font-semibold mt-0.5 uppercase tracking-wide">Expired</p>
+                <p className="text-2xs font-semibold text-foreground-muted uppercase tracking-wide">Expired</p>
+                <Chip tone="neutral" className="mt-1"/>
               </div>
             </div>
           )}
@@ -318,19 +320,19 @@ export default function SavedOpportunities() {
                     <div>
                       {/* Header */}
                       <div className="flex items-start justify-between gap-3 mb-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full">
+<div className="flex items-center gap-2 flex-wrap">
+                          <Chip tone="gold" className="text-xs uppercase">
                             {opp.category || "Opportunity"}
-                          </span>
-                          {liveOpp && (<span className="text-[10px] text-foreground-muted font-medium">{opp._source}</span>)}
+                          </Chip>
+                          {liveOpp && (
+                            <span className="text-[10px] text-foreground-muted font-medium">
+                              {opp._source}
+                            </span>
+                          )}
                         </div>
-                        <button
-                          onClick={() => removeBookmark(opp.id)}
-                          className="p-1.5 rounded-full text-foreground-muted hover:text-red-500 hover:bg-red-500/10 transition-all flex-shrink-0"
-                          title="Remove Bookmark"
-                        >
+                        <Chip tone="danger" className="p-1.5 rounded-full flex-shrink-0" aria-label="Remove bookmark for {opp.title}">
                           <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        </Chip>
                       </div>
 
                       {/* Title */}
@@ -349,7 +351,7 @@ export default function SavedOpportunities() {
                     </div>
 
                     {/* Footer Metadata */}
-                    <div className="border-t border-border mt-5 pt-4 flex items-center justify-between text-[11px] text-foreground-muted">
+                    <div className="border-t border-border mt-5 pt-4 flex items-center justify-between text-2xs text-foreground-muted">
                       <div className="flex items-center gap-3">
                         <span className="flex items-center gap-1">
                           <MapPin className="w-3.5 h-3.5" />
@@ -393,13 +395,13 @@ export default function SavedOpportunities() {
                 <BookmarkCheck className="w-10 h-10 text-primary" />
               </div>
               <h3 className="text-xl font-bold text-foreground mb-2">No saved opportunities</h3>
-              <p className="text-foreground-muted text-sm max-w-sm mx-auto mb-8">
+              <p className="text-foreground-muted text-2xs max-w-sm mx-auto mb-8">
                 Bookmark opportunities from the Explore page to track them here and receive deadline
                 reminders.
               </p>
               <Link
                 href="/explore"
-                className="inline-flex items-center gap-2 px-6 py-3.5 bg-primary hover:bg-primary-hover text-white font-semibold text-sm rounded-full shadow-md transition-all dark:shadow-[0_4px_12px_rgba(255,60,110,0.3)]"
+                className="inline-flex items-center gap-2 px-6 py-3.5 bg-primary hover:bg-primary/25 text-white font-semibold text-sm rounded-full shadow-md transition-all dark:shadow-[0_4px_12px_rgba(255,60,110,0.3)]"
               >
                 <Sparkles className="w-4 h-4" />
                 Explore Opportunities

@@ -143,7 +143,7 @@ export default function Profile() {
           </motion.div>
 
           <motion.div
-            className="bg-surface border border-border shadow-xl dark:shadow-[0_8px_40px_rgba(255,60,110,0.08)] rounded-3xl p-8 transition-colors duration-300"
+            className="bg-surface border border-border shadow-xl dark:shadow-[0_8px_40px_rgba(255,60,110,0.08)] rounded-lg dark:shadow-[0_8px_40px_rgba(255,60,110,0.08)] p-8 transition-colors duration-300"
             variants={itemVariants}
           >
             {/* Success Banner */}
@@ -155,7 +155,7 @@ export default function Profile() {
                   initial="hidden"
                   animate="show"
                   exit="exit"
-                  className="mb-6 flex items-center gap-2 text-sm bg-success-surface text-success p-4 rounded-2xl border border-success/20"
+                  className="mb-6 flex items-center gap-2 text-sm bg-success-surface text-success p-4 rounded-lg border border-success/20"
                 >
                   <motion.span
                     initial={{ scale: 0 }}
@@ -354,7 +354,7 @@ export default function Profile() {
                   whileHover={!saving ? { scale: 1.02 } : {}}
                   whileTap={!saving ? { scale: 0.97 } : {}}
                   transition={{ type: "spring", stiffness: 380, damping: 18 }}
-                  className="w-full bg-primary hover:bg-primary-hover text-primary-foreground font-semibold text-sm py-3.5 rounded-2xl shadow-md dark:shadow-[0_4px_16px_rgba(255,60,110,0.22)] transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                  className="w-full bg-primary hover:bg-primary/25 text-primary-foreground font-semibold text-sm py-3.5 rounded-2xl shadow-md dark:shadow-[0_4px_16px_rgba(255,60,110,0.22)] transition-all flex items-center justify-center gap-2 disabled:opacity-60"
                 >
                   <AnimatePresence mode="wait" initial={false}>
                     {saving ? (

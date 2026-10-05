@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, type ReactNode } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -29,11 +29,76 @@ import {
   Banknote,
   Users,
   GraduationCap,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Chip } from "@/components/ui/Chip";
+import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
+import { Select } from "@/components/ui/Field";
 import { seedOpportunityNotification } from "@/lib/automationEngine";
 import { authedFetch } from "@/lib/apiClient";
+
+const CATEGORY_TABS = [
+  { key: "Hackathons", label: "Hackathons" },
+  { key: "Internships", label: "Internships" },
+  { key: "Scholarships", label: "Scholarships" },
+  { key: "Conferences", label: "Conferences" },
+  { key: "Fellowships", label: "Fellowships" },
+];
+
+/* The filter rail rebuilds itself per category, but the underlying option sets are
+   fixed. Hoisting them keeps each <Select> to a single line and stops the same
+   four "Any / Online / In person / Hybrid" options being retyped per category. */
+const MODE_OPTIONS = [
+  { value: "", label: "Any mode" },
+  { value: "online", label: "Online" },
+  { value: "offline", label: "In person" },
+  { value: "hybrid", label: "Hybrid" },
+];
+const COST_OPTIONS = [
+  { value: "", label: "Any" },
+  { value: "free", label: "Free" },
+  { value: "paid", label: "Paid" },
+];
+const WORK_MODE_OPTIONS = [
+  { value: "", label: "Any" },
+  { value: "remote", label: "Work from home" },
+  { value: "onsite", label: "In office" },
+  { value: "hybrid", label: "Hybrid" },
+];
+const STIPEND_OPTIONS = [
+  { value: "", label: "Any" },
+  { value: "paid", label: "Paid" },
+  { value: "unpaid", label: "Unpaid" },
+];
+const WHOM_OPTIONS = [
+  { value: "", label: "Anyone" },
+  { value: "girls", label: "Girls / Women" },
+  { value: "boys", label: "Boys" },
+  { value: "all", label: "Open to all" },
+];
+const FUNDING_OPTIONS = [
+  { value: "", label: "Any" },
+  { value: "gov", label: "Government" },
+  { value: "private", label: "Company" },
+  { value: "ngo", label: "NGO / Trust" },
+  { value: "university", label: "University" },
+];
+
+/** The rail's field labels are all `Mode` / `Stipend` / `For Whom`-style words, so
+    without the leading icon four adjacent <Select>s read as an undifferentiated
+    stack. `.eyebrow` is display:block, hence the explicit inline alignment. */
+function FilterLabel({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+  return (
+    <>
+      <Icon className="mr-1 inline-block h-3 w-3 align-[-1px]" />
+      {children}
+    </>
+  );
+}
 
 const filterPanelVariants: Variants = {
   hidden: { opacity: 0, x: -16 },
@@ -62,7 +127,7 @@ const cardVariants: Variants = {
 
 function SkeletonCard() {
   return (
-    <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+    <Card className="flex flex-col gap-4 p-6">
       <div className="flex items-center justify-between">
         <div className="skeleton h-5 w-20 rounded-full" />
         <div className="skeleton h-7 w-7 rounded-full" />
@@ -78,7 +143,7 @@ function SkeletonCard() {
         <div className="skeleton h-3 w-24" />
         <div className="skeleton h-3 w-16" />
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -444,8 +509,6 @@ function ExploreContent() {
     return true;
   });
 
-  const selectClass = "w-full text-xs px-3.5 py-2.5 bg-surface-raised border border-border rounded-xl outline-none focus:bg-surface focus:border-primary text-foreground transition-all";
-
   // Dynamic placeholder for search bar based on category
   const searchPlaceholder =
     selectedCategory === "Hackathons" ? "Search hackathons — e.g. Smart India Hackathon, prize, online..." :
@@ -461,98 +524,113 @@ function ExploreContent() {
       <div className="mb-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-primary">
-              <Sparkles className="w-3.5 h-3.5" /> Explore
+            <span className="eyebrow text-primary">
+              <Sparkles className="mr-1 inline-block h-3.5 w-3.5 align-[-1px]" /> Explore
             </span>
-            <h1 className="text-3xl font-extrabold text-foreground mt-1">Find Opportunities</h1>
-              <p className="text-sm text-foreground-muted mt-1">
-                Hackathons, internships, scholarships and more — all in one place.
-              </p>
+            <h1 className="mt-1 font-display text-display-sm text-foreground">Find Opportunities</h1>
+            <p className="mt-1 text-sm text-foreground-muted text-pretty">
+              Hackathons, internships, scholarships and more — all in one place.
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <Button
+              type="button"
+              variant="secondary"
               onClick={() => fetchLive()}
               disabled={liveLoading}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-xl border border-border bg-surface hover:border-primary hover:text-primary transition-all disabled:opacity-50"
+              leadingIcon={
+                liveLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )
+              }
             >
-              {liveLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              {liveLoading ? "Refreshing..." : "Refresh"}
-            </button>
+              {liveLoading ? "Refreshing…" : "Refresh"}
+            </Button>
             {liveOpps.length > 0 && (
-              <button
+              <Button
+                type="button"
+                variant={liveEnabled ? "primary" : "secondary"}
+                aria-pressed={liveEnabled}
                 onClick={() => setLiveEnabled((v) => !v)}
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-xl border transition-all ${liveEnabled ? "bg-primary text-primary-foreground border-primary" : "bg-surface border-border text-foreground-muted hover:border-primary"}`}
+                leadingIcon={<Zap className="h-3.5 w-3.5" />}
               >
-                <Zap className="w-3.5 h-3.5" />
                 Live: {liveEnabled ? "ON" : "OFF"} ({liveOpps.length})
-              </button>
+              </Button>
             )}
           </div>
         </div>
-        {liveError && <p className="text-xs text-red-500 mt-2">{liveError}</p>}
+        {liveError && (
+          <p role="alert" className="mt-2 text-xs text-danger">
+            {liveError}
+          </p>
+        )}
       </div>
 
       {/* ── Prominent global search bar ── */}
-      <motion.div
-        animate={{
-          scale: searchFocused ? 1.01 : 1,
-          boxShadow: searchFocused
-            ? "0 0 0 3px var(--accent-glow), 0 8px 20px -8px rgba(178, 58, 92, 0.25)"
-            : "0 1px 2px rgba(0,0,0,0.04)",
-          borderColor: searchFocused ? "var(--primary)" : "var(--border)",
+      {/* The focus ring moved from an animated box-shadow to `ring-primary`. The
+          old shadow interpolated from `var(--accent-glow)`, a token that does not
+          exist in globals.css, so the whole declaration was dropped as invalid
+          and the bar never actually glowed. Search itself is already live via
+          onChange, so the button just commits/blurs instead of doing nothing. */}
+      <motion.form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSearchFocused(false);
         }}
+        animate={{ scale: searchFocused ? 1.01 : 1, borderColor: searchFocused ? "var(--primary)" : "var(--border)" }}
         transition={{ duration: 0.2, ease: "easeOut" }}
-        className="flex bg-surface rounded-2xl border p-2 mb-6 shadow-sm"
+        className={`card mb-6 flex p-2 ${searchFocused ? "ring-2 ring-primary/35" : ""}`}
       >
-        <div className="flex items-center flex-grow pl-3 gap-2">
+        <div className="flex grow items-center gap-2 pl-3">
           <motion.span
             animate={{
               scale: searchFocused ? 1.15 : 1,
               color: searchFocused ? "var(--primary)" : "var(--foreground-muted)",
             }}
             transition={{ duration: 0.2 }}
-            className="flex-shrink-0 flex"
+            className="flex shrink-0"
           >
-            <Search className="w-5 h-5" />
+            <Search className="h-5 w-5" />
           </motion.span>
           <input
-            type="text"
+            type="search"
+            aria-label="Search opportunities"
             placeholder={searchPlaceholder}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            className="w-full text-sm outline-none text-foreground bg-transparent placeholder-foreground-muted"
+            className="w-full bg-transparent text-sm text-foreground outline-none placeholder-foreground-muted"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="p-1.5 rounded-full hover:bg-surface-raised text-foreground-muted hover:text-foreground mr-1">
-              <X className="w-4 h-4" />
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear search"
+              className="mr-1 grid h-7 w-7 place-items-center rounded-md text-foreground-muted hover:bg-surface-raised hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
             </button>
           )}
         </div>
-        <button
-          onClick={() => {}}
-          className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold bg-primary text-primary-foreground px-6 py-2.5 rounded-xl hover:bg-primary/90 transition-colors ml-2"
-        >
-          <Search className="w-3.5 h-3.5" /> Search
-        </button>
-      </motion.div>
+        <Button type="submit" size="sm" className="ml-2 hidden sm:inline-flex" leadingIcon={<Search className="h-3.5 w-3.5" />}>
+          Search
+        </Button>
+      </motion.form>
 
       {/* ── Category buttons (horizontal, below search bar) ── */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        {[
-          { key: "Hackathons", label: "Hackathons" },
-          { key: "Internships", label: "Internships" },
-          { key: "Scholarships", label: "Scholarships" },
-          { key: "Conferences", label: "Conferences" },
-          { key: "Fellowships", label: "Fellowships" },
-        ].map((c) => {
+      <div className="mb-6 flex flex-wrap gap-2">
+        {CATEGORY_TABS.map((c) => {
           const isActive = selectedCategory === c.key;
           return (
             <button
               key={c.key}
+              type="button"
+              aria-pressed={isActive}
               onClick={() => setSelectedCategory(c.key)}
-              className={`text-[11px] font-[700] tracking-[0.04em] uppercase px-4 py-2 rounded-full border transition-all ${isActive ? "bg-primary text-primary-foreground border-primary shadow-sm" : "bg-surface border-border text-foreground-muted hover:border-primary hover:text-primary"}`}
+              className={`btn btn-sm rounded-full ${isActive ? "btn-primary" : "btn-secondary"}`}
             >
               {c.label}
             </button>
@@ -566,39 +644,34 @@ function ExploreContent() {
           initial="hidden"
           animate="show"
           variants={filterPanelVariants}
-          className="lg:col-span-1 bg-surface border border-border rounded-3xl p-6 shadow-sm h-full max-h-[calc(100vh-7rem)] overflow-y-auto transition-colors duration-300 lg:sticky lg:top-20"
+          className="lg:col-span-1 lg:sticky lg:top-20 h-full max-h-[calc(100vh-7rem)]"
         >
-          <motion.div variants={filterFieldVariants} className="flex items-center justify-between mb-6 pb-4 border-b border-border">
-            <span className="flex items-center gap-2 font-bold text-foreground">
-              <Filter className="w-4 h-4 text-primary" /> Filters
-            </span>
-            {activeFilterCount > 0 && <span className="text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-full">{activeFilterCount}</span>}
+        <Card className="h-full max-h-[inherit] space-y-5 overflow-y-auto p-6">
+          <motion.div variants={filterFieldVariants} className="mb-6 flex items-center justify-between border-b border-border pb-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Filter className="h-4 w-4 text-primary" /> Filters
+            </h2>
+            {activeFilterCount > 0 && <Chip tone="gold">{activeFilterCount}</Chip>}
           </motion.div>
 
-          <div className="space-y-5">
-            {/* ── Hackathon filters ── */}
-            {selectedCategory === "Hackathons" && (
+          {/* ── Hackathon filters ── */}
+          {selectedCategory === "Hackathons" && (
               <>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <Monitor className="w-3 h-3" /> Mode
-                  </label>
-                  <select value={hackMode} onChange={(e) => setHackMode(e.target.value)} className={selectClass}>
-                    <option value="">Any mode</option>
-                    <option value="online">Online</option>
-                    <option value="offline">In person</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={Monitor}>Mode</FilterLabel>}
+                    value={hackMode}
+                    onChange={(e) => setHackMode(e.target.value)}
+                    options={MODE_OPTIONS}
+                  />
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <Banknote className="w-3 h-3" /> Entry Fee
-                  </label>
-                  <select value={hackCost} onChange={(e) => setHackCost(e.target.value)} className={selectClass}>
-                    <option value="">Any</option>
-                    <option value="free">Free</option>
-                    <option value="paid">Paid</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={Banknote}>Entry Fee</FilterLabel>}
+                    value={hackCost}
+                    onChange={(e) => setHackCost(e.target.value)}
+                    options={COST_OPTIONS}
+                  />
                 </motion.div>
               </>
             )}
@@ -607,25 +680,20 @@ function ExploreContent() {
             {selectedCategory === "Internships" && (
               <>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <Building2 className="w-3 h-3" /> Work Mode
-                  </label>
-                  <select value={internWorkMode} onChange={(e) => setInternWorkMode(e.target.value)} className={selectClass}>
-                    <option value="">Any</option>
-                    <option value="remote">Work from home</option>
-                    <option value="onsite">In office</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={Building2}>Work Mode</FilterLabel>}
+                    value={internWorkMode}
+                    onChange={(e) => setInternWorkMode(e.target.value)}
+                    options={WORK_MODE_OPTIONS}
+                  />
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <Banknote className="w-3 h-3" /> Stipend
-                  </label>
-                  <select value={internStipend} onChange={(e) => setInternStipend(e.target.value)} className={selectClass}>
-                    <option value="">Any</option>
-                    <option value="paid">Paid</option>
-                    <option value="unpaid">Unpaid</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={Banknote}>Stipend</FilterLabel>}
+                    value={internStipend}
+                    onChange={(e) => setInternStipend(e.target.value)}
+                    options={STIPEND_OPTIONS}
+                  />
                 </motion.div>
               </>
             )}
@@ -634,27 +702,20 @@ function ExploreContent() {
             {selectedCategory === "Scholarships" && (
               <>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <Users className="w-3 h-3" /> For Whom
-                  </label>
-                  <select value={scholarGender} onChange={(e) => setScholarGender(e.target.value)} className={selectClass}>
-                    <option value="">Anyone</option>
-                    <option value="girls">Girls / Women</option>
-                    <option value="boys">Boys</option>
-                    <option value="all">Open to all</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={Users}>For Whom</FilterLabel>}
+                    value={scholarGender}
+                    onChange={(e) => setScholarGender(e.target.value)}
+                    options={WHOM_OPTIONS}
+                  />
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <GraduationCap className="w-3 h-3" /> Funding By
-                  </label>
-                  <select value={scholarFunding} onChange={(e) => setScholarFunding(e.target.value)} className={selectClass}>
-                    <option value="">Any</option>
-                    <option value="gov">Government</option>
-                    <option value="private">Company</option>
-                    <option value="ngo">NGO / Trust</option>
-                    <option value="university">University</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={GraduationCap}>Funding By</FilterLabel>}
+                    value={scholarFunding}
+                    onChange={(e) => setScholarFunding(e.target.value)}
+                    options={FUNDING_OPTIONS}
+                  />
                 </motion.div>
               </>
             )}
@@ -663,27 +724,20 @@ function ExploreContent() {
             {selectedCategory === "Fellowships" && (
               <>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <Users className="w-3 h-3" /> For Whom
-                  </label>
-                  <select value={fellowGender} onChange={(e) => setFellowGender(e.target.value)} className={selectClass}>
-                    <option value="">Anyone</option>
-                    <option value="girls">Girls / Women</option>
-                    <option value="boys">Boys</option>
-                    <option value="all">Open to all</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={Users}>For Whom</FilterLabel>}
+                    value={fellowGender}
+                    onChange={(e) => setFellowGender(e.target.value)}
+                    options={WHOM_OPTIONS}
+                  />
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
-                  <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                    <GraduationCap className="w-3 h-3" /> Funding By
-                  </label>
-                  <select value={fellowFunding} onChange={(e) => setFellowFunding(e.target.value)} className={selectClass}>
-                    <option value="">Any</option>
-                    <option value="gov">Government</option>
-                    <option value="private">Company</option>
-                    <option value="ngo">NGO / Trust</option>
-                    <option value="university">University</option>
-                  </select>
+                  <Select
+                    label={<FilterLabel icon={GraduationCap}>Funding By</FilterLabel>}
+                    value={fellowFunding}
+                    onChange={(e) => setFellowFunding(e.target.value)}
+                    options={FUNDING_OPTIONS}
+                  />
                 </motion.div>
               </>
             )}
@@ -691,35 +745,43 @@ function ExploreContent() {
             {/* ── Conference filters ── */}
             {selectedCategory === "Conferences" && (
               <motion.div variants={filterFieldVariants}>
-                <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
-                  <Globe className="w-3 h-3" /> Mode
-                </label>
-                <select value={confMode} onChange={(e) => setConfMode(e.target.value)} className={selectClass}>
-                  <option value="">Any mode</option>
-                  <option value="online">Online</option>
-                  <option value="offline">In person</option>
-                  <option value="hybrid">Hybrid</option>
-                </select>
+                <Select
+                  label={<FilterLabel icon={Globe}>Mode</FilterLabel>}
+                  value={confMode}
+                  onChange={(e) => setConfMode(e.target.value)}
+                  options={MODE_OPTIONS}
+                />
               </motion.div>
             )}
 
-            <motion.button variants={filterFieldVariants} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={resetAll} className="w-full text-xs text-center border border-border hover:border-primary hover:text-primary py-2.5 rounded-xl transition-all font-semibold text-foreground-muted hover:bg-primary/5">
-              Clear filters
-            </motion.button>
-          </div>
+            <motion.div variants={filterFieldVariants}>
+              <Button type="button" variant="secondary" block onClick={resetAll}>
+                Clear filters
+              </Button>
+            </motion.div>
+          </Card>
         </motion.div>
 
         {/* Right Grid */}
         <div className="lg:col-span-3 space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 text-foreground-muted text-xs font-medium">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-foreground-muted">
             <span>
-              {oppsLoading ? "Loading opportunities..." : `Showing ${filteredOpportunities.length} opportunities${liveEnabled && liveOpps.length > 0 ? ` (incl. ${liveOpps.length} live)` : ""}`}
+              {oppsLoading ? "Loading opportunities…" : `Showing ${filteredOpportunities.length} opportunities${liveEnabled && liveOpps.length > 0 ? ` (incl. ${liveOpps.length} live)` : ""}`}
               {!oppsLoading && filteredOpportunities.length > 0 && activeFilterCount > 0 && ` · ${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""} active`}
             </span>
             {!oppsLoading && liveEnabled && liveOpps.length > 0 && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-600 px-2.5 py-1 rounded-full">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" /> Live: Devpost • Unstop • Internshala • Conf • Fellow
-              </span>
+              <Chip
+                tone="success"
+                icon={
+                  <motion.span
+                    animate={{ opacity: [1, 0.35, 1] }}
+                    transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                    className="block h-1.5 w-1.5 rounded-full bg-success"
+                  />
+                }
+              >
+                Live: Devpost • Unstop • Internshala • Conf • Fellow
+              </Chip>
             )}
           </div>
 
@@ -735,41 +797,90 @@ function ExploreContent() {
                   const isLive = !!opp._live;
                   const applyLink: string = opp.applyLink || "";
                   const hrefId = isLive ? undefined : `/opportunity/${opp.id}`;
-                    return (
-                    <motion.div key={opp.id} layout variants={cardVariants} initial="hidden" animate="show" exit="exit" className={`bg-surface border rounded-3xl p-6 shadow-sm hover:shadow-md dark:hover:shadow-[0_4px_20px_rgba(255,60,110,0.12)] hover:border-primary/25 transition-all flex flex-col justify-between card-hover cursor-pointer ${isLive ? "border-emerald-200 dark:border-emerald-900/40" : "border-border"}`} onClick={() => openSummarize(opp)}>
+return (
+                    <motion.div
+                      key={opp.id}
+                      layout
+                      variants={cardVariants}
+                      initial="hidden"
+                      animate="show"
+                      exit="exit"
+                      className="flex"
+                    >
+                    {/* The whole card opens the AI summary, so `interactive` is honest
+                        here. Its old `card-hover` class does not exist in globals.css
+                        and its `dark:hover:shadow-[…rgba(255,60,110,…)]` was a hardcoded
+                        crimson glow that ignored the theme and only appeared in dark. */}
+                    <Card
+                      interactive
+                      onClick={() => openSummarize(opp)}
+                      className={`flex w-full flex-col justify-between p-6 ${isLive ? "border-success/40" : ""}`}
+                    >
                       <div>
-                        <div className="flex items-center justify-between gap-2 mb-4">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full">{opp.category}</span>
-                            {isLive && (<span className="text-[9px] font-bold uppercase tracking-wider bg-emerald-500 text-white px-2 py-0.5 rounded-full flex items-center gap-1"><Zap className="w-2.5 h-2.5" /> Live</span>)}
-                            {opp._source && isLive && (<span className="text-[10px] text-foreground-muted font-medium">{opp._source}</span>)}
+                        <div className="mb-4 flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Chip tone="gold">{opp.category}</Chip>
+                            {isLive && (
+                              <Chip tone="success" icon={<Zap className="h-2.5 w-2.5" />}>
+                                Live
+                              </Chip>
+                            )}
+                            {opp._source && isLive && (
+                              <span className="text-2xs font-medium text-foreground-muted">{opp._source}</span>
+                            )}
                           </div>
-                          <button onClick={(e) => { e.stopPropagation(); toggleBookmark(opp.id, opp); }} title={isSaved ? "Saved" : "Save"} className={`p-1.5 rounded-full transition-colors flex-shrink-0 ${isSaved ? "bg-primary/10 text-primary" : "bg-surface-raised text-foreground-muted hover:text-primary hover:bg-primary/8"}`}>
-                            {isSaved ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); toggleBookmark(opp.id, opp); }}
+                            title={isSaved ? "Saved" : "Save"}
+                            aria-label={isSaved ? `Remove ${opp.title} from saved` : `Save ${opp.title}`}
+                            aria-pressed={isSaved}
+                            className={`grid h-7 w-7 shrink-0 place-items-center rounded-md transition-colors ${isSaved ? "bg-accent-gold-surface text-primary" : "bg-surface-raised text-foreground-muted hover:bg-accent-gold-surface hover:text-primary"}`}
+                          >
+                            {isSaved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
                           </button>
                         </div>
-                        <h3 className="font-bold text-foreground text-base leading-snug hover:text-primary transition-colors">
-                          <span>{opp.title}</span>
-                        </h3>
-                        <p className="text-foreground-muted text-xs mt-1 font-medium">{opp.organization || opp.orgName}</p>
-                        <p className="text-foreground-muted text-xs mt-4 leading-relaxed line-clamp-3">{opp.description}</p>
-                        <p className="text-[10px] font-semibold text-primary mt-3 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Tap for an AI summary</p>
+                        <h3 className="text-base font-semibold leading-snug text-foreground">{opp.title}</h3>
+                        <p className="mt-1 text-xs font-medium text-foreground-muted">{opp.organization || opp.orgName}</p>
+                        <p className="mt-4 line-clamp-3 text-xs leading-relaxed text-foreground-muted">{opp.description}</p>
+                        <p className="mt-3 flex items-center gap-1 text-2xs font-semibold text-secondary">
+                          <Sparkles className="h-3 w-3" /> Tap for an AI summary
+                        </p>
                       </div>
-                      <div className="border-t border-border mt-4 pt-4 space-y-3">
-                        <div className="flex items-center gap-4 text-[11px] text-foreground-muted flex-wrap">
-                          <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-foreground-muted" />{opp.country}</span>
-                          <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-foreground-muted" />{formatDeadline(opp.deadline)}</span>
-                          {opp.field && <span className="inline-flex items-center gap-1 bg-surface-raised px-2 py-0.5 rounded-full text-[10px] font-semibold">{opp.field}</span>}
+                      <div className="mt-4 space-y-3 border-t border-border pt-4">
+                        <div className="flex flex-wrap items-center gap-4 text-2xs text-foreground-muted">
+                          <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{opp.country}</span>
+                          <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{formatDeadline(opp.deadline)}</span>
+                          {opp.field && <Chip>{opp.field}</Chip>}
                         </div>
                         <div className="flex items-center gap-2">
-                          <button onClick={(e) => { e.stopPropagation(); openSummarize(opp); }} className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-primary text-primary-foreground px-4 py-2.5 rounded-xl hover:bg-primary/90 transition-colors"><Sparkles className="w-3.5 h-3.5" /> AI Summary</button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="grow"
+                            onClick={(e) => { e.stopPropagation(); openSummarize(opp); }}
+                            leadingIcon={<Sparkles className="h-3.5 w-3.5" />}
+                          >
+                            AI Summary
+                          </Button>
                           {applyLink ? (
-                            <a href={applyLink} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center justify-center gap-1.5 text-xs font-bold border border-border bg-surface px-4 py-2.5 rounded-xl hover:border-primary hover:text-primary transition-colors">Apply <ExternalLink className="w-3.5 h-3.5" /></a>
+                            <a
+                              href={applyLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="btn btn-sm btn-secondary"
+                            >
+                              Apply <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
                           ) : hrefId ? (
-                            <Link href={hrefId} onClick={(e) => e.stopPropagation()} className="inline-flex items-center justify-center gap-1 text-xs font-bold border border-border bg-surface px-4 py-2.5 rounded-xl hover:border-primary hover:text-primary transition-colors">Details <ChevronRight className="w-3.5 h-3.5" /></Link>
+                            <Link href={hrefId} onClick={(e) => e.stopPropagation()} className="btn btn-sm btn-secondary">
+                              Details <ChevronRight className="h-3.5 w-3.5" />
+                            </Link>
                           ) : null}
                         </div>
                       </div>
+                    </Card>
                     </motion.div>
                   );
                 })}
@@ -778,14 +889,19 @@ function ExploreContent() {
           )}
 
           {!oppsLoading && filteredOpportunities.length === 0 && (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, ease: "easeOut" }} className="text-center py-20 bg-surface border border-border rounded-3xl transition-colors">
-              <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }} className="inline-flex">
-                <Compass className="w-12 h-12 text-foreground-muted mx-auto mb-4 opacity-50" />
-              </motion.div>
-              <h4 className="text-foreground font-bold mb-1">No opportunities found</h4>
-              <p className="text-foreground-muted text-xs">Try clearing filters or searching with fewer keywords.</p>
-              {activeFilterCount > 0 && (<button onClick={resetAll} className="mt-4 text-xs font-bold bg-primary text-primary-foreground px-5 py-2.5 rounded-xl hover:bg-primary/90">Reset all filters</button>)}
-            </motion.div>
+            <EmptyState
+              icon={<Compass className="h-5 w-5" />}
+              title="No opportunities found"
+              description="Try clearing filters or searching with fewer keywords."
+              action={
+                activeFilterCount > 0 ? (
+                  <Button type="button" variant="secondary" onClick={resetAll}>
+                    Reset all filters
+                  </Button>
+                ) : undefined
+              }
+              className="border-0 bg-transparent py-16"
+            />
           )}
         </div>
       </div>
@@ -802,43 +918,56 @@ function ExploreContent() {
               transition={{ duration: 0.25, ease: "easeOut" }}
               className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
             >
-              <div className="bg-surface border border-border rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col pointer-events-auto overflow-hidden">
-                <div className="flex items-start justify-between gap-4 p-6 border-b border-border flex-shrink-0">
-                  <div className="flex-1 min-w-0">
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full mb-2">{selectedOpp.category}</span>
-                    <h3 className="font-bold text-foreground text-lg leading-snug line-clamp-2">{selectedOpp.title}</h3>
-                    <p className="text-xs text-foreground-muted mt-1">{selectedOpp.organization || selectedOpp.orgName} • {selectedOpp.country}</p>
-                    <a href={selectedOpp.sourceUrl || selectedOpp.applyLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2 break-all">{(selectedOpp.sourceUrl || selectedOpp.applyLink || "").slice(0, 80)} <ExternalLink className="w-3 h-3 flex-shrink-0" /></a>
+              <Card tone="raised" role="dialog" aria-modal="true" aria-label={`AI summary of ${selectedOpp.title}`} className="pointer-events-auto flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden p-0">
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-6">
+                  <div className="min-w-0 flex-1">
+                    <Chip tone="gold" className="mb-2">{selectedOpp.category}</Chip>
+                    <h2 className="line-clamp-2 font-display text-lg leading-snug text-foreground">{selectedOpp.title}</h2>
+                    <p className="mt-1 text-xs text-foreground-muted">{selectedOpp.organization || selectedOpp.orgName} • {selectedOpp.country}</p>
+                    <a href={selectedOpp.sourceUrl || selectedOpp.applyLink} target="_blank" rel="noopener noreferrer" className="link-ink mt-2 inline-flex items-center gap-1 break-all text-xs">{(selectedOpp.sourceUrl || selectedOpp.applyLink || "").slice(0, 80)} <ExternalLink className="h-3 w-3 shrink-0" /></a>
                   </div>
-                  <button onClick={closeModal} className="p-2 rounded-full hover:bg-surface-raised text-foreground-muted hover:text-foreground flex-shrink-0"><X className="w-5 h-5" /></button>
+                  <Button type="button" variant="quiet" size="icon" onClick={closeModal} aria-label="Close summary" className="shrink-0">
+                    <X className="h-5 w-5" />
+                  </Button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-6">
                   {summarizing ? (
-                    <div className="flex flex-col items-center justify-center py-16 gap-3">
-                      <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                      <p className="text-sm font-semibold text-foreground">Full scraping page...</p>
-                      <p className="text-xs text-foreground-muted text-center">Fetching full content and summarizing via OpenRouter key 1 into easy format.<br />Main facts will appear at the end.</p>
+                    <div className="flex flex-col items-center justify-center gap-3 py-16">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      <p className="text-sm font-semibold text-foreground">Full scraping page…</p>
+                      <p className="text-center text-xs text-foreground-muted">Fetching full content and summarizing via OpenRouter key 1 into easy format.<br />Main facts will appear at the end.</p>
                     </div>
                   ) : summaryError ? (
-                    <div className="bg-red-500/10 border border-red-200 rounded-xl p-4">
-                      <p className="text-sm font-semibold text-red-600">Failed to summarize</p>
-                      <p className="text-xs text-red-500 mt-1">{summaryError}</p>
-                      <button onClick={() => openSummarize(selectedOpp)} className="mt-3 text-xs font-bold bg-red-500 text-white px-4 py-2 rounded-xl hover:bg-red-600">Retry</button>
-                    </div>
+                    <ErrorState
+                      title="Failed to summarize"
+                      description={summaryError}
+                      action={
+                        <Button type="button" size="sm" onClick={() => openSummarize(selectedOpp)}>
+                          Retry
+                        </Button>
+                      }
+                    />
                   ) : (
-                    <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground-muted prose-strong:text-foreground prose-li:text-foreground-muted prose-a:text-primary">
-                      <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground break-words">{summaryText}</pre>
-                    </div>
+                    /* The summary renders inside a <pre>, so the `prose`/`prose-*`
+                       classes this wrapper used were dead — @tailwindcss/typography
+                       is not installed, so every one of them resolved to nothing. */
+                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground">{summaryText}</pre>
                   )}
                 </div>
-                <div className="flex items-center justify-between gap-3 p-4 border-t border-border bg-surface-raised/50 flex-shrink-0">
-                  <span className="text-[10px] text-foreground-muted">AI via OpenRouter key 1 (easy format • main facts at end)</span>
+<div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface-raised/50 p-4">
+                  <span className="text-2xs text-foreground-muted">AI via OpenRouter key 1 (easy format • main facts at end)</span>
                   <div className="flex items-center gap-2">
-                    <button onClick={closeModal} className="text-xs font-semibold px-4 py-2 rounded-xl border border-border hover:border-foreground text-foreground-muted hover:text-foreground">Close</button>
-                    {selectedOpp.applyLink && <a href={selectedOpp.applyLink} target="_blank" rel="noopener noreferrer" className="text-xs font-bold bg-primary text-primary-foreground px-5 py-2.5 rounded-xl hover:bg-primary/90 inline-flex items-center gap-1.5">Apply Now <ExternalLink className="w-3.5 h-3.5" /></a>}
+                    <Button type="button" variant="secondary" size="sm" onClick={closeModal}>
+                      Close
+                    </Button>
+                    {selectedOpp.applyLink && (
+                      <a href={selectedOpp.applyLink} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-primary">
+                        Apply Now <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
                   </div>
                 </div>
-              </div>
+              </Card>
             </motion.div>
           </>
         )}
@@ -851,8 +980,8 @@ export default function Explore() {
   return (
     <>
       <Navbar />
-      <main className="flex-grow bg-background min-h-screen transition-colors duration-300">
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
+      <main className="min-h-screen grow bg-background transition-colors duration-slow">
+        <Suspense fallback={<div className="grid min-h-screen place-items-center bg-background"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}>
           <ExploreContent />
         </Suspense>
       </main>

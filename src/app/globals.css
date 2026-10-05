@@ -1,69 +1,104 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* === NEXORA Premium — Editorial Luxe × Technical Precision === */
+/* ===========================================================================
+   NEXORA DESIGN SYSTEM
+   Direction: quiet editorial. A warm ink-and-parchment base, brass as the
+   single accent, and restraint everywhere else — fewer borders, fewer colours,
+   more air. Every value below is a scale step, not a one-off, so pages stop
+   inventing their own numbers (that arbitrariness is what made the UI read
+   as generic). Motifs elsewhere in this file reference these steps only.
+   =========================================================================== */
+
 :root {
-  --background: #FDF8F3;
+  /* --- Surfaces: four planes, warm off-white through to ink --- */
+  --background: #FAF8F5;
   --surface: #FFFFFF;
-  --surface-raised: #F5EFE8;
-  --surface-ink: #1A1625;
-  --surface-footer: #1A1625;
-  --foreground: #1A1625;
-  --foreground-muted: #6B6575;
-  --border: #E8DFD3;
-  --border-strong: #D4C5B2;
-  --primary: #1A1625;
-  --primary-hover: #2D2640;
-  --primary-foreground: #FDF8F3;
-  --secondary: #8B6F3A;
-  --secondary-hover: #6B5430;
+  --surface-raised: #F4F1EC;
+  --surface-sunken: #F1EDE7;
+  --surface-ink: #1B1815;
+  --surface-footer: #15120F;
+
+  /* --- Ink: three tones. Foreground is warm near-black, never pure #000 --- */
+  --foreground: #1B1815;
+  --foreground-muted: #6E6961;
+  --foreground-subtle: #9A948A;
+
+  /* --- Hairlines: deliberately quiet. Structure comes from spacing, not borders --- */
+  --border: #E8E4DD;
+  --border-strong: #D6D0C7;
+
+  /* --- Brass: the one accent. Used for emphasis, never for large fills --- */
+  --primary: #1B1815;
+  --primary-hover: #332D27;
+  --primary-foreground: #FAF8F5;
+  --secondary: #8A7340;
+  --secondary-hover: #6E5B31;
   --secondary-foreground: #FFFFFF;
-  --accent-gold: #8B6F3A;
-  --accent-gold-surface: #F5ECD8;
-  --accent-glow: rgba(139,111,58,0.14);
-  --danger: #9B2C2C;
-  --danger-surface: #FBE9E9;
-  --success: #2A6B4E;
-  --success-surface: #E6F4EB;
-  --warning: #8B6F3A;
-  --warning-surface: #F5ECD8;
-  --paper-grain: rgba(26,22,37,0.035);
+  --accent-gold: #8A7340;
+  --accent-gold-surface: #F6F0E2;
+
+  /* --- Status: desaturated to sit inside a warm palette, not shout --- */
+  --danger: #A13A34;
+  --danger-surface: #FBEDEC;
+  --success: #3C7355;
+  --success-surface: #EAF3EE;
+  --warning: #8A7340;
+  --warning-surface: #F6F0E2;
+  --info: #3F6480;
+  --info-surface: #ECF1F5;
+
+  --focus-ring: color-mix(in srgb, var(--secondary) 62%, transparent);
+  --grain-opacity: 0.3;
 }
 
 .dark {
-  --background: #0F0D14;
-  --surface: #1A1625;
-  --surface-raised: #252032;
-  --surface-ink: #FDF8F3;
-  --surface-footer: #08060D;
-  --foreground: #F5EFE8;
-  --foreground-muted: #9A95A8;
-  --border: rgba(232,223,211,0.11);
-  --border-strong: rgba(232,223,211,0.20);
-  --primary: #F5ECD8;
+  --background: #100E0C;
+  --surface: #191614;
+  --surface-raised: #211E1B;
+  --surface-sunken: #151210;
+  --surface-ink: #F4F1EC;
+  --surface-footer: #0A0908;
+
+  --foreground: #F4F1EC;
+  --foreground-muted: #A29B91;
+  --foreground-subtle: #7A736A;
+
+  --border: rgba(244, 241, 236, 0.09);
+  --border-strong: rgba(244, 241, 236, 0.17);
+
+  --primary: #F4F1EC;
   --primary-hover: #FFFFFF;
-  --primary-foreground: #1A1625;
-  --secondary: #C9A86A;
-  --secondary-hover: #DDBF8A;
-  --secondary-foreground: #1A1625;
-  --accent-gold: #C9A86A;
-  --accent-gold-surface: rgba(201,168,106,0.13);
-  --accent-glow: rgba(201,168,106,0.16);
-  --danger: #F08080;
-  --danger-surface: rgba(155,44,44,0.14);
-  --success: #5FCB8D;
-  --success-surface: rgba(42,107,78,0.16);
-  --warning: #C9A86A;
-  --warning-surface: rgba(201,168,106,0.13);
+  --primary-foreground: #14110E;
+  --secondary: #C4A868;
+  --secondary-hover: #D8BF86;
+  --secondary-foreground: #14110E;
+  --accent-gold: #C4A868;
+  --accent-gold-surface: rgba(196, 168, 104, 0.12);
+
+  --danger: #E88C84;
+  --danger-surface: rgba(161, 58, 52, 0.15);
+  --success: #6FBF94;
+  --success-surface: rgba(60, 115, 85, 0.16);
+  --warning: #C4A868;
+  --warning-surface: rgba(196, 168, 104, 0.13);
+  --info: #7FAAC9;
+  --info-surface: rgba(63, 100, 128, 0.16);
+
+  --focus-ring: color-mix(in srgb, var(--secondary) 72%, transparent);
+  --grain-opacity: 0.16;
 }
 
+/* ---------------------------------------------------------------- tokens -- */
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
   --color-surface-footer: var(--surface-footer);
   --color-foreground: var(--foreground);
   --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-subtle: var(--foreground-subtle);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-primary: var(--primary);
@@ -80,73 +115,494 @@
   --color-success-surface: var(--success-surface);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
-  --font-sans: var(--font-workhorse);
-  --font-display: var(--font-display);
-  --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
+  --color-info: var(--info);
+  --color-info-surface: var(--info-surface);
+
+  /* Type scale — 11 steps, tight tracking, 1.55 body leading. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1.35;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.6;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 1.15;
+  --text-4xl: 2.375rem;
+  --text-4xl--line-height: 1.08;
+  --text-5xl: 3rem;
+  --text-5xl--line-height: 1.02;
+  --text-6xl: 3.75rem;
+  --text-6xl--line-height: 0.98;
+
+  /* Two fluid display sizes above the fixed scale. They exist so hero and
+     section openers size themselves continuously instead of snapping at three
+     breakpoints — the snapping was the tell that type was picked per screen
+     rather than per role. */
+  --text-display: clamp(2.5rem, 1.32rem + 4.3vw, 4.125rem);
+  --text-display--line-height: 0.92;
+  --text-display-sm: clamp(1.75rem, 1.24rem + 1.9vw, 2.125rem);
+  --text-display-sm--line-height: 1.02;
+
+  /* Radius — 6 steps. Cards sit at --radius-lg, never at a magic 24px. */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-2xl: 28px;
+
+  /* Elevation — 4 steps of layered ink shadow, plus a focus ring. */
+  --shadow-e1: 0 1px 2px rgba(27, 24, 21, 0.04);
+  --shadow-e2: 0 1px 2px rgba(27, 24, 21, 0.04), 0 8px 24px -8px rgba(27, 24, 21, 0.1);
+  --shadow-e3: 0 2px 4px rgba(27, 24, 21, 0.04), 0 16px 40px -12px rgba(27, 24, 21, 0.14);
+  --shadow-e4: 0 4px 8px rgba(27, 24, 21, 0.05), 0 32px 64px -20px rgba(27, 24, 21, 0.2);
+
+  /* Motion — 5 durations, 3 easings. Every transition in the app draws
+     from these so timing feels like one hand made it. */
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-instant: 90ms;
+  --duration-fast: 150ms;
+  --duration-base: 220ms;
+  --duration-slow: 320ms;
+  --duration-slower: 480ms;
+
+  /* Fonts. `--font-display` is remapped in the font-face setup below so the
+     token and the next/font variable cannot collide into a cycle. */
+  --font-sans: var(--font-workhorse), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --spacing-section: 5.5rem;
+  --spacing-gutter: 1.5rem;
 }
 
-/* Base — editorial scale: display tight, body airy */
-html { scroll-behavior: smooth; }
+/* ------------------------------------------------------------------ base -- */
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-workhorse), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  transition: background-color 320ms var(--ease-premium), color 320ms var(--ease-premium);
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  transition: background-color var(--duration-slow) var(--ease-out-expo),
+    color var(--duration-slow) var(--ease-out-expo);
 }
-/* Display headings: Fraunces — tight tracking, ink feel */
-h1,h2,h3 { font-family: var(--font-display), Georgia, serif; letter-spacing: -0.03em; line-height: 0.96; }
-h1 { font-weight: 800; }
-h2 { font-weight: 750; letter-spacing: -0.025em; line-height: 1.05; }
-h3 { font-weight: 700; letter-spacing: -0.02em; }
-p { line-height: 1.65; letter-spacing: -0.011em; }
-.label { font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 650; color: var(--foreground-muted); }
 
-/* Parchment grain — subtle paper texture, not glassmorphism */
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.028em;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+h1 { font-weight: 700; letter-spacing: -0.035em; }
+p { line-height: 1.6; letter-spacing: -0.011em; text-wrap: pretty; }
+
+/* The one weight ladder. Four steps, nothing else — `font-black` on a card
+   title next to `font-medium` on a caption is what makes a UI feel unstyled. */
+@utility w-regular { font-weight: 400; }
+@utility w-medium { font-weight: 500; }
+@utility w-semibold { font-weight: 600; }
+@utility w-bold { font-weight: 700; }
+
+/* The duration ladder needs explicit utilities: `--duration-*` in `@theme` is
+   not a namespace Tailwind v4 generates from, so `duration-base` and friends
+   were silently resolving to nothing and every transition fell back to the
+   150ms default. Declaring them keeps `--duration-*` as the single source. */
+@utility duration-instant { transition-duration: var(--duration-instant); }
+@utility duration-fast { transition-duration: var(--duration-fast); }
+@utility duration-base { transition-duration: var(--duration-base); }
+@utility duration-slow { transition-duration: var(--duration-slow); }
+@utility duration-slower { transition-duration: var(--duration-slower); }
+
+::selection {
+  background: color-mix(in srgb, var(--secondary) 24%, transparent);
+  color: var(--foreground);
+}
+.dark ::selection { background: color-mix(in srgb, var(--secondary) 30%, transparent); }
+
+/* Fine paper grain. Modern restraint: barely there, but it stops the flat
+   off-white from reading as an unstyled canvas. */
 body::before {
-  content:""; position: fixed; inset:0; pointer-events:none; opacity:0.45;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.06'/%3E%3C/svg%3E");
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
   mix-blend-mode: multiply;
 }
-.dark body::before { opacity: 0.22; mix-blend-mode: soft-light; }
+.dark body::before { mix-blend-mode: soft-light; }
 
-/* Hairline + layered ink shadows — not generic shadow-md */
-.card-premium { border: 1px solid var(--border); background: var(--surface); border-radius: 16px; box-shadow: 0 1px 2px rgba(26,22,37,0.04), 0 8px 24px rgba(26,22,37,0.06); transition: all 320ms var(--ease-premium); }
-.card-premium:hover { border-color: var(--border-strong); box-shadow: 0 4px 16px rgba(26,22,37,0.08), 0 16px 40px rgba(26,22,37,0.10); transform: translateY(-2px); }
-.dark .card-premium { box-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 12px 32px rgba(0,0,0,0.32); }
-.dark .card-premium:hover { box-shadow: 0 0 0 1px rgba(201,168,106,0.18), 0 16px 48px rgba(0,0,0,0.42); }
+/* --------------------------------------------------------------- surfaces -- */
+/* Everything from here to the end of the skeleton block is a *class primitive*,
+   not an element style. That distinction is load-bearing, so it is enforced with
+   an explicit `@layer components`.
 
-/* Buttons: ink primary — pill for CTA, 10px for ghost — custom easing */
-.btn-ink { background: var(--primary); color: var(--primary-foreground); border-radius: 999px; font-weight: 650; letter-spacing: -0.01em; padding: 0.85rem 1.55rem; transition: all 180ms var(--ease-snappy); box-shadow: 0 1px 2px rgba(26,22,37,0.08); }
-.btn-ink:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: 0 8px 20px rgba(26,22,37,0.14); }
-.btn-ink:active { transform: scale(0.98) translateY(0); }
-.btn-ghost { background: transparent; border: 1px solid var(--border); border-radius: 10px; font-weight: 600; padding: 0.7rem 1.15rem; color: var(--foreground); transition: all 180ms var(--ease-snappy); }
-.btn-ghost:hover { border-color: var(--foreground); background: var(--surface); }
+   Unlayered CSS outranks every layered rule regardless of source order, and
+   Tailwind emits its utilities into `@layer utilities`. A bare `.card { … }`
+   therefore beat `border-danger/40`, `bg-transparent`, `border-0` or
+   `rounded-full` on the same element — every `<Card className="…">` override in
+   the app silently did nothing. Inside `@layer components` the primitives sit
+   below utilities, so a `className` passed by a component actually wins, which
+   is the documented contract the primitives are written against.
 
-/* Brass accent link underline — editorial */
-.link-ink { text-decoration: underline; text-decoration-color: rgba(139,111,58,0.28); text-underline-offset: 3px; text-decoration-thickness: 1.2px; transition: text-decoration-color 180ms; }
+   Element-level rules further down (`:focus-visible`, the scrollbar `*` rule,
+   `@keyframes`, the reduced-motion block) stay unlayered on purpose: they are
+   not overridable by utilities by design. */
+@layer components {
+
+/* `.card` is the single card primitive. Interactive variants opt in via
+   `data-interactive`, which keeps the resting state calm and the hover state
+   obvious without every call site re-declaring a transition. */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-e1);
+  transition: border-color var(--duration-base) var(--ease-out-expo),
+    box-shadow var(--duration-base) var(--ease-out-expo),
+    transform var(--duration-base) var(--ease-out-expo),
+    background-color var(--duration-base) var(--ease-out-expo);
+}
+.card[data-interactive="true"] { cursor: pointer; }
+.card[data-interactive="true"]:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-e3);
+  transform: translateY(-2px);
+}
+.card[data-interactive="true"]:active { transform: translateY(0); }
+.card-flat { box-shadow: none; }
+.card-raised { background: var(--surface-raised); }
+.card-inset { background: var(--surface-sunken); box-shadow: none; }
+.dark .card { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03); }
+.dark .card[data-interactive="true"]:hover {
+  box-shadow: var(--shadow-e3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Back-compat aliases. These are written out in full rather than using
+   `composes:`, which is a CSS-Modules feature and is meaningless in a global
+   stylesheet — it emitted the declaration literally and inherited nothing.
+   Delete once no call site references the old name. */
+.card-premium {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-e1);
+  transition: border-color var(--duration-base) var(--ease-out-expo),
+    box-shadow var(--duration-base) var(--ease-out-expo),
+    transform var(--duration-base) var(--ease-out-expo);
+}
+.card-premium:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-e3);
+  transform: translateY(-2px);
+}
+.dark .card-premium { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03); }
+
+/* --------------------------------------------------------------- controls -- */
+/* Buttons animate only transform / background / border / color. Never `all`:
+   `transition-all` makes layout properties animatable and reads as unpolished. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+  transition: background-color var(--duration-fast) var(--ease-out-expo),
+    border-color var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-fast) var(--ease-out-expo),
+    transform var(--duration-fast) var(--ease-out-expo);
+}
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+
+.btn-md { padding: 0.625rem 1.125rem; font-size: var(--text-sm); }
+.btn-lg { padding: 0.85rem 1.6rem; font-size: var(--text-base); border-radius: var(--radius-lg); }
+.btn-sm { padding: 0.375rem 0.75rem; font-size: var(--text-xs); border-radius: var(--radius-sm); }
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-e1);
+}
+.btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-e2); }
+.btn-primary:active { transform: scale(0.985); }
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--foreground);
+  border-color: var(--border-strong);
+}
+.btn-secondary:hover { background: var(--surface-raised); border-color: var(--foreground); }
+.btn-secondary:active { transform: scale(0.985); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--foreground);
+}
+.btn-ghost:hover { background: var(--surface-raised); }
+
+.btn-danger {
+  background: var(--danger-surface);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 26%, transparent);
+}
+.btn-danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+/* Historic aliases, written out in full (see note on .card-premium). */
+.btn-ink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.125rem;
+  font-size: var(--text-sm);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid transparent;
+  box-shadow: var(--shadow-e1);
+  transition: background-color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-fast) var(--ease-out-expo),
+    transform var(--duration-fast) var(--ease-out-expo);
+}
+.btn-ink:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-e2); }
+.btn-ink:active { transform: scale(0.985); }
+.btn-ink:disabled { opacity: 0.5; pointer-events: none; }
+
+.btn-quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.125rem;
+  font-size: var(--text-sm);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid transparent;
+  transition: background-color var(--duration-fast) var(--ease-out-expo);
+}
+.btn-quiet:hover { background: var(--surface-raised); }
+
+.btn-pill { border-radius: 999px; }
+
+/* ------------------------------------------------------------------ chips -- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--foreground-muted);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  transition: background-color var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) var(--ease-out-expo),
+    border-color var(--duration-fast) var(--ease-out-expo);
+}
+.chip-gold { background: var(--accent-gold-surface); border-color: transparent; color: var(--secondary); }
+.chip-success { background: var(--success-surface); border-color: transparent; color: var(--success); }
+.chip-danger { background: var(--danger-surface); border-color: transparent; color: var(--danger); }
+.chip-warning { background: var(--warning-surface); border-color: transparent; color: var(--warning); }
+.chip-info { background: var(--info-surface); border-color: transparent; color: var(--info); }
+button.chip:hover { color: var(--foreground); border-color: var(--border-strong); }
+
+/* ------------------------------------------------------------------ input -- */
+.input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.85rem;
+  font-size: var(--text-sm);
+  color: var(--foreground);
+  transition: border-color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-fast) var(--ease-out-expo),
+    background-color var(--duration-fast) var(--ease-out-expo);
+}
+.input::placeholder { color: var(--foreground-subtle); }
+.input:hover { border-color: var(--border-strong); }
+.input:focus {
+  outline: none;
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* --------------------------------------------------------------- eyebrows -- */
+/* `.eyebrow` is the small-caps label used above sections and beside icons.
+   `.label` is the historical name, kept so nothing breaks mid-migration. */
+.eyebrow {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--foreground-subtle);
+  line-height: 1.3;
+}
+.label {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--foreground-subtle);
+  line-height: 1.3;
+}
+
+/* --------------------------------------------------------------- ornament -- */
+.hr-brass {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--border) 10%,
+    var(--border-strong) 50%,
+    var(--border) 90%,
+    transparent
+  );
+}
+/* Brass rule with an actual gradient in the accent, for section breaks that
+   need to read as a deliberate flourish rather than a default border. */
+.rule-accent {
+  height: 2px;
+  width: 2.25rem;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--secondary), color-mix(in srgb, var(--secondary) 25%, transparent));
+}
+
+.link-ink {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--secondary) 32%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--duration-fast) var(--ease-out-expo),
+  color var(--duration-fast) var(--ease-out-expo);
+}
 .link-ink:hover { text-decoration-color: var(--secondary); }
 
-/* Scrollbar — hairline brass */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+/* --------------------------------------------------------------- skeleton -- */
+@keyframes shimmer { 0% { background-position: -480px 0; } 100% { background-position: 480px 0; } }
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-raised) 25%,
+    color-mix(in srgb, var(--surface-raised) 55%, var(--border)) 50%,
+    var(--surface-raised) 75%
+  );
+  background-size: 960px 100%;
+  animation: shimmer 1.6s var(--ease-in-out-quart) infinite;
+  border-radius: var(--radius-sm);
+}
+
+} /* end @layer components */
+
+/* ------------------------------------------------------------------ focus -- */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ------------------------------------------------------------ scrollbars -- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--secondary); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--foreground-subtle); background-clip: content-box; }
 
-/* Focus — brass ring, not default blue */
-:focus-visible { outline: 2px solid var(--secondary); outline-offset: 2px; border-radius: 4px; }
-.dark :focus-visible { outline-color: #C9A86A; }
+/* --------------------------------------------------------------- movement -- */
+/* Shared keyframes for the CSS-driven half of the motion layer. JS-driven
+   reveals live in components/motion/Reveal.tsx. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes draw-in {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 var(--focus-ring); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
-/* Skeleton — parchment shimmer */
-@keyframes shimmer { 0%{background-position:-420px 0} 100%{background-position:420px 0} }
-.skeleton { background: linear-gradient(90deg, var(--surface-raised) 25%, color-mix(in srgb, var(--surface-raised) 62%, var(--border)) 50%, var(--surface-raised) 75%); background-size: 840px 100%; animation: shimmer 1.7s var(--ease-premium) infinite; border-radius: 12px; }
+.anim-rise { animation: rise var(--duration-slower) var(--ease-out-expo) both; }
+.anim-fade { animation: fade-in var(--duration-slow) var(--ease-out-expo) both; }
+.spin { animation: spin 0.7s linear infinite; }
+.pulse-ring { animation: pulse-ring 1.8s var(--ease-out-expo) infinite; }
 
-/* Editorial rule — thin brass hairline */
-.hr-brass { height: 1px; background: linear-gradient(90deg, transparent, var(--border) 12%, var(--border-strong) 50%, var(--border) 88%, transparent); border:0; }
+/* Shared layout rhythm, so page sections line up without each one guessing. */
+.section-y { padding-block: var(--spacing-section); }
+.shell {
+  width: 100%;
+  max-width: 1280px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+@media (min-width: 640px) { .shell { padding-inline: 1.5rem; } }
+@media (min-width: 1024px) { .shell { padding-inline: 2rem; } }
 
-/* Selection — brass */
-::selection { background: rgba(139,111,58,0.22); }
-.dark ::selection { background: rgba(201,168,106,0.28); }
+/* Respect the OS setting. Everything above collapses to a plain fade. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card[data-interactive="true"]:hover,
+  .btn-primary:hover { transform: none; }
+}

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
-  Gauge,
   Loader2,
   RefreshCw,
   Wallet,
@@ -23,39 +22,67 @@ import { bandLabel } from "@/lib/wallet/performanceProfile";
 import { WALLET_CATEGORIES } from "@/lib/wallet/categories";
 import { kindLabel } from "@/lib/profileLinks";
 import type { PerformanceBand, PerformanceSnapshot } from "@/lib/types";
+import { Button, Card, Chip } from "@/components/ui";
+import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 
-const BAND_STYLES: Record<PerformanceBand, { ring: string; text: string; chip: string }> = {
-  strong: { ring: "stroke-success", text: "text-success", chip: "bg-success/10 text-success border-success/20" },
-  solid: { ring: "stroke-primary", text: "text-primary", chip: "bg-primary/10 text-primary border-primary/20" },
-  developing: { ring: "stroke-warning", text: "text-warning", chip: "bg-warning-surface text-warning border-warning/20" },
-  early: { ring: "stroke-foreground-muted", text: "text-foreground-muted", chip: "bg-surface-raised text-foreground-muted border-border" },
-  empty: { ring: "stroke-border", text: "text-foreground-muted", chip: "bg-surface-raised text-foreground-muted border-border" },
+const EASE_OUT_EXPO = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * The band used to carry three separate hand-written colour strings, one of
+ * which (`solid`) was a `bg-primary/10 text-primary` pair no other surface
+ * used. `tone` now resolves through the shared `Chip` vocabulary so "strong"
+ * reads identically here and on the overview card.
+ */
+const BAND_STYLES: Record<
+  PerformanceBand,
+  { ring: string; text: string; tone: "success" | "gold" | "warning" | "neutral" }
+> = {
+  strong: { ring: "stroke-success", text: "text-success", tone: "success" },
+  solid: { ring: "stroke-secondary", text: "text-secondary", tone: "gold" },
+  developing: { ring: "stroke-warning", text: "text-warning", tone: "warning" },
+  early: { ring: "stroke-border-strong", text: "text-foreground-muted", tone: "neutral" },
+  empty: { ring: "stroke-border", text: "text-foreground-muted", tone: "neutral" },
 };
+
+/** Score → bar colour, resolved once so the number and the bar never disagree. */
+function scoreTone(score: number, missing: boolean) {
+  if (missing) return { bar: "bg-border", text: "text-foreground-subtle" };
+  if (score >= 70) return { bar: "bg-success", text: "text-success" };
+  if (score >= 45) return { bar: "bg-warning", text: "text-warning" };
+  return { bar: "bg-danger", text: "text-danger" };
+}
 
 function ScoreRing({ score, band }: { score: number; band: PerformanceBand }) {
   const radius = 68;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (Math.min(100, Math.max(0, score)) / 100) * circumference;
   const style = BAND_STYLES[band];
+  const rounded = Math.round(score);
 
   return (
-    <div className="relative w-[168px] h-[168px] shrink-0">
-      <svg viewBox="0 0 160 160" className="w-full h-full -rotate-90">
+    <div
+      className="relative h-[168px] w-[168px] shrink-0"
+      role="img"
+      aria-label={`Overall score ${rounded} out of 100`}
+    >
+      <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90">
         <circle cx="80" cy="80" r={radius} className="fill-none stroke-border" strokeWidth="12" />
-        <circle
+        <motion.circle
           cx="80"
           cy="80"
           r={radius}
-          className={`fill-none ${style.ring} transition-all duration-700`}
+          className={`fill-none ${style.ring}`}
           strokeWidth="12"
           strokeLinecap="round"
           strokeDasharray={circumference}
-          strokeDashoffset={offset}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 0.9, ease: EASE_OUT_EXPO }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={`text-4xl font-black ${style.text}`}>{Math.round(score)}</span>
-        <span className="text-[9px] font-bold uppercase tracking-wider text-foreground-muted mt-1">out of 100</span>
+        <span className={`font-display text-5xl leading-none ${style.text}`}>{rounded}</span>
+        <span className="eyebrow mt-2">out of 100</span>
       </div>
     </div>
   );
@@ -78,42 +105,42 @@ function DimensionBar({
   evidence: string[];
   notes: string[];
 }) {
+  const tone = scoreTone(score, missing);
+
   return (
-    <div className="p-4 bg-surface border border-border rounded-2xl">
+    <Card className="h-full p-5">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-bold text-foreground">{label}</span>
-        <span className="flex items-center gap-2">
-          <span className="text-[9px] font-bold uppercase text-foreground-muted">
-            {Math.round(weight * 100)}% weight
-          </span>
-          <span
-            className={`text-sm font-black ${missing ? "text-foreground-muted" : score >= 70 ? "text-success" : score >= 45 ? "text-warning" : "text-danger"}`}
-          >
-            {missing ? "—" : score}
-          </span>
+        <span className="font-display text-base text-foreground">{label}</span>
+        <span className="flex items-center gap-3">
+          <span className="eyebrow">{Math.round(weight * 100)}% weight</span>
+          <span className={`font-display text-lg ${tone.text}`}>{missing ? "—" : score}</span>
         </span>
       </div>
 
-      <div className="h-2 bg-surface-raised rounded-full mt-2 overflow-hidden">
+      <div
+        className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised"
+        role="img"
+        aria-label={missing ? `${label}: no evidence yet` : `${label}: ${score} out of 100`}
+      >
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${missing ? 0 : Math.min(100, score)}%` }}
-          transition={{ duration: 0.7, ease: [0.23, 1, 0.32, 1] }}
-          className={`h-full rounded-full ${missing ? "bg-border" : score >= 70 ? "bg-success" : score >= 45 ? "bg-warning" : "bg-danger"}`}
+          transition={{ duration: 0.7, ease: EASE_OUT_EXPO }}
+          className={`h-full rounded-full ${tone.bar}`}
         />
       </div>
 
-      <p className="text-[10px] text-foreground-muted mt-2">
+      <p className="mt-3 text-xs text-foreground-muted">
         {missing
           ? "No documents back this dimension yet — it is left out of your average."
           : `Based on ${docCount} document${docCount === 1 ? "" : "s"}.`}
       </p>
 
       {evidence.length > 0 && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-4 space-y-2">
           {evidence.slice(0, 4).map((e) => (
-            <li key={e} className="text-[11px] text-foreground flex items-start gap-1.5">
-              <CheckCircle2 className="w-3 h-3 text-success mt-0.5 shrink-0" />
+            <li key={e} className="flex items-start gap-2 text-sm text-foreground">
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
               <span>{e}</span>
             </li>
           ))}
@@ -121,16 +148,16 @@ function DimensionBar({
       )}
 
       {notes.length > 0 && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-3 space-y-2">
           {notes.slice(0, 2).map((n) => (
-            <li key={n} className="text-[11px] text-foreground-muted flex items-start gap-1.5">
-              <AlertTriangle className="w-3 h-3 text-warning mt-0.5 shrink-0" />
+            <li key={n} className="flex items-start gap-2 text-sm text-foreground-muted">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
               <span>{n}</span>
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -165,8 +192,8 @@ export default function PerformancePage() {
 
   if (loading) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-secondary" />
       </div>
     );
   }
@@ -174,107 +201,110 @@ export default function PerformancePage() {
   const band = profile?.band || "empty";
   const style = BAND_STYLES[band];
 
+  const summaryStats = [
+    { label: "Documents", value: profile?.docCount ?? 0 },
+    { label: "Evidence coverage", value: `${profile?.coverage ?? 0}%` },
+    { label: "Needs review", value: profile?.needsReviewCount ?? 0 },
+    {
+      label: "Last computed",
+      value: profile?.computedAt ? new Date(profile.computedAt).toLocaleDateString() : "—",
+    },
+  ];
+
   return (
-    <motion.div
-      className="max-w-5xl mx-auto space-y-6"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
-    >
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-extrabold text-foreground flex items-center gap-2">
-            <Gauge className="w-6 h-6 text-primary" /> Performance Profile
-          </h1>
-          <p className="text-foreground-muted text-sm mt-1 max-w-2xl">
-            Every score here is calculated from the documents in your wallet — the marksheet, certificates,
-            awards and projects you uploaded. Upload more, and the numbers move on their own.
-          </p>
+    <div className="mx-auto max-w-5xl space-y-10">
+      <Reveal>
+        <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-end">
+          <div>
+            <span className="eyebrow text-secondary">Readiness</span>
+            <h1 className="mt-3 text-display-sm text-foreground">Performance Profile</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-foreground-muted text-pretty">
+              Every score here is calculated from the documents in your wallet — the marksheet, certificates,
+              awards and projects you uploaded. Upload more, and the numbers move on their own.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link href="/dashboard/wallet" className="btn btn-sm btn-secondary">
+              <Wallet className="h-3.5 w-3.5" /> Wallet
+            </Link>
+            <Button size="sm" onClick={handleRefresh} disabled={refreshing}>
+              {refreshing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              Recalculate
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/dashboard/wallet"
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-surface border border-border rounded-xl text-foreground hover:bg-surface-raised transition-colors"
-          >
-            <Wallet className="w-4 h-4" /> Wallet
-          </Link>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-primary text-white rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60"
-          >
-            {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Recalculate
-          </button>
-        </div>
-      </div>
+      </Reveal>
 
       {/* Score card */}
-      <div className="p-6 bg-surface border border-border rounded-3xl flex flex-col md:flex-row items-center gap-6">
-        <ScoreRing score={profile?.overall || 0} band={band} />
+      <Reveal delay={0.05}>
+        <Card className="flex flex-col items-center gap-8 p-8 md:flex-row">
+          <ScoreRing score={profile?.overall || 0} band={band} />
 
-        <div className="flex-1 w-full space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider border rounded-full ${style.chip}`}>
-              {bandLabel(band)}
-            </span>
-            {profile && profile.potential > profile.overall && (
-              <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider border rounded-full bg-primary/10 text-primary border-primary/20 inline-flex items-center gap-1">
-                <TrendingUp className="w-3 h-3" /> Potential {Math.round(profile.potential)}/100
-              </span>
-            )}
+          <div className="w-full flex-1 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone={style.tone}>{bandLabel(band)}</Chip>
+              {profile && profile.potential > profile.overall && (
+                <Chip tone="gold" icon={<TrendingUp className="h-3 w-3" />}>
+                  Potential {Math.round(profile.potential)}/100
+                </Chip>
+              )}
+            </div>
+
+            <p className="text-base leading-relaxed text-foreground text-pretty">{profile?.narrative}</p>
+
+            <Stagger gap={0.05} className="grid grid-cols-2 gap-3 pt-1 md:grid-cols-4">
+              {summaryStats.map((s) => (
+                <StaggerItem key={s.label}>
+                  <div className="rounded-md border border-border bg-surface-raised px-3 py-2.5">
+                    <span className="eyebrow block">{s.label}</span>
+                    <span className="mt-1 block font-display text-sm text-foreground">{s.value}</span>
+                  </div>
+                </StaggerItem>
+              ))}
+            </Stagger>
           </div>
-
-          <p className="text-sm text-foreground leading-relaxed">{profile?.narrative}</p>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
-            {[
-              { label: "Documents", value: profile?.docCount ?? 0 },
-              { label: "Evidence coverage", value: `${profile?.coverage ?? 0}%` },
-              { label: "Needs review", value: profile?.needsReviewCount ?? 0 },
-              { label: "Last computed", value: profile?.computedAt ? new Date(profile.computedAt).toLocaleDateString() : "—" },
-            ].map((s) => (
-              <div key={s.label} className="px-3 py-2 bg-surface-raised border border-border rounded-xl">
-                <span className="block text-[9px] font-bold uppercase text-foreground-muted">{s.label}</span>
-                <span className="text-sm font-black text-foreground">{s.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+        </Card>
+      </Reveal>
 
       {(!profile || profile.docCount === 0) && (
-        <div className="p-6 bg-surface border border-dashed border-border rounded-3xl text-center space-y-3">
-          <Sparkles className="w-8 h-8 text-primary mx-auto" />
-          <h2 className="text-lg font-bold text-foreground">Nothing to score yet</h2>
-          <p className="text-sm text-foreground-muted max-w-md mx-auto">
-            Upload your resume, marksheets, certificates, awards and project reports to the wallet. Each file is
-            read by the AI, filed into the right category, and turned into evidence for your score.
-          </p>
-          <Link
-            href="/dashboard/wallet"
-            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold bg-primary text-white rounded-xl hover:opacity-90 transition-opacity"
-          >
-            <Wallet className="w-4 h-4" /> Open wallet <ArrowRight className="w-4 h-4" />
-          </Link>
-        </div>
+        <Reveal>
+          <Card tone="inset" className="border-dashed p-10 text-center">
+            <span className="mx-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-surface text-secondary">
+              <Sparkles className="h-5 w-5" />
+            </span>
+            <h2 className="mt-5 font-display text-xl text-foreground">Nothing to score yet</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-foreground-muted text-pretty">
+              Upload your resume, marksheets, certificates, awards and project reports to the wallet. Each file
+              is read by the AI, filed into the right category, and turned into evidence for your score.
+            </p>
+            <Button href="/dashboard/wallet" className="mt-6">
+              <Wallet className="h-4 w-4" /> Open wallet
+            </Button>
+          </Card>
+        </Reveal>
       )}
 
       {profile && profile.docCount > 0 && (
         <>
-          {/* Dimensions */}
-          <div>
-            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-              <Target className="w-5 h-5 text-primary" /> Score breakdown
-            </h2>
-            <p className="text-xs text-foreground-muted mt-1">
-              Dimensions with no documents are excluded from the average instead of counting as zero.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-              {profile.dimensions.map((d) => (
+          <Reveal>
+            <div>
+              <h2 className="flex items-center gap-2 font-display text-lg text-foreground">
+                <Target className="h-5 w-5 text-secondary" /> Score breakdown
+              </h2>
+              <p className="mt-2 text-xs text-foreground-muted">
+                Dimensions with no documents are excluded from the average instead of counting as zero.
+              </p>
+            </div>
+          </Reveal>
+
+          <Stagger className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {profile.dimensions.map((d) => (
+              <StaggerItem key={d.key}>
                 <DimensionBar
-                  key={d.key}
                   label={d.label}
                   score={d.score}
                   weight={d.weight}
@@ -283,189 +313,207 @@ export default function PerformancePage() {
                   evidence={d.evidence}
                   notes={d.notes}
                 />
-              ))}
-            </div>
-          </div>
+              </StaggerItem>
+            ))}
+          </Stagger>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Strengths */}
-            <div className="p-5 bg-surface border border-border rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-success flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" /> Proven strengths
-              </h3>
-              <ul className="mt-3 space-y-2">
-                {profile.strengths.length ? (
-                  profile.strengths.map((s) => (
-                    <li key={s} className="text-xs text-foreground leading-relaxed">{s}</li>
-                  ))
-                ) : (
-                  <li className="text-xs text-foreground-muted">No dimension has crossed 60 yet.</li>
-                )}
-              </ul>
-            </div>
+          <Stagger className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StaggerItem>
+              <Card className="h-full p-5">
+                <h3 className="eyebrow flex items-center gap-1.5 text-success">
+                  <CheckCircle2 className="h-4 w-4" /> Proven strengths
+                </h3>
+                <ul className="mt-4 space-y-2.5">
+                  {profile.strengths.length ? (
+                    profile.strengths.map((s) => (
+                      <li key={s} className="text-sm leading-relaxed text-foreground">{s}</li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-foreground-muted">No dimension has crossed 60 yet.</li>
+                  )}
+                </ul>
+              </Card>
+            </StaggerItem>
 
-            {/* Gaps */}
-            <div className="p-5 bg-surface border border-border rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-warning flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4" /> What is holding you back
-              </h3>
-              <ul className="mt-3 space-y-2">
-                {profile.gaps.length ? (
-                  profile.gaps.map((g) => (
-                    <li key={g} className="text-xs text-foreground leading-relaxed">{g}</li>
-                  ))
-                ) : (
-                  <li className="text-xs text-foreground-muted">Nothing outstanding.</li>
-                )}
-              </ul>
-            </div>
+            <StaggerItem>
+              <Card className="h-full p-5">
+                <h3 className="eyebrow flex items-center gap-1.5 text-warning">
+                  <AlertTriangle className="h-4 w-4" /> What is holding you back
+                </h3>
+                <ul className="mt-4 space-y-2.5">
+                  {profile.gaps.length ? (
+                    profile.gaps.map((g) => (
+                      <li key={g} className="text-sm leading-relaxed text-foreground">{g}</li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-foreground-muted">Nothing outstanding.</li>
+                  )}
+                </ul>
+              </Card>
+            </StaggerItem>
 
-            {/* Next steps */}
-            <div className="p-5 bg-primary/30 border border-primary/10 rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                <TrendingUp className="w-4 h-4" /> Highest-impact next steps
-              </h3>
-              <ol className="mt-3 space-y-2">
-                {profile.nextSteps.length ? (
-                  profile.nextSteps.map((s, i) => (
-                    <li key={s} className="text-xs text-foreground leading-relaxed flex gap-2">
-                      <span className="font-black text-primary">{i + 1}.</span>
-                      <span>{s}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li className="text-xs text-foreground">Your profile is complete. Keep it fresh.</li>
-                )}
-              </ol>
-              <Link
-                href="/dashboard/wallet"
-                className="mt-4 inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
-              >
-                Upload documents <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-          </div>
+            <StaggerItem>
+              <Card className="h-full p-5">
+                <h3 className="eyebrow flex items-center gap-1.5 text-secondary">
+                  <TrendingUp className="h-4 w-4" /> Highest-impact next steps
+                </h3>
+                <ol className="mt-4 space-y-2.5">
+                  {profile.nextSteps.length ? (
+                    profile.nextSteps.map((s, i) => (
+                      <li key={s} className="flex gap-3 text-sm leading-relaxed text-foreground">
+                        <span className="font-display text-secondary">
+                          {String(i + 1).padStart(2, "0")}
+                        </span>
+                        <span>{s}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-foreground">Your profile is complete. Keep it fresh.</li>
+                  )}
+                </ol>
+                <Link
+                  href="/dashboard/wallet"
+                  className="mt-5 inline-flex items-center gap-1.5 text-xs font-medium text-secondary transition-colors duration-base hover:text-secondary-hover"
+                >
+                  Upload documents <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </Card>
+            </StaggerItem>
+          </Stagger>
 
           {/* Saved public profile links */}
           {profile.profileLinks && profile.profileLinks.length > 0 && (
-            <div className="p-5 bg-surface border border-border rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-                <Link2 className="w-4 h-4" /> Your public profiles
-              </h3>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {profile.profileLinks.map((l) => (
-                  <a
-                    key={l.id}
-                    href={l.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 text-xs font-semibold border rounded-full bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+            <Reveal>
+              <Card className="p-5">
+                <h3 className="eyebrow flex items-center gap-1.5">
+                  <Link2 className="h-4 w-4" /> Your public profiles
+                </h3>
+                <ul className="mt-4 flex flex-wrap gap-2">
+                  {profile.profileLinks.map((l) => (
+                    <li key={l.id}>
+                      <a
+                        href={l.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="chip chip-gold transition-colors duration-base hover:opacity-80"
+                      >
+                        {l.label || kindLabel(l.kind)}
+                        <ExternalLink className="h-3 w-3 opacity-70" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-xs text-foreground-muted">
+                  These count as verified evidence toward Application Readiness. Manage them in the{" "}
+                  <Link
+                    href="/dashboard/wallet"
+                    className="font-medium text-secondary transition-colors duration-base hover:text-secondary-hover"
                   >
-                    {l.label || kindLabel(l.kind)}
-                    <ExternalLink className="w-3 h-3 opacity-70" />
-                  </a>
-                ))}
-              </div>
-              <p className="text-[10px] text-foreground-muted mt-3">
-                These count as verified evidence toward Application Readiness. Manage them in the{" "}
-                <Link href="/dashboard/wallet" className="text-primary font-semibold hover:underline">
-                  wallet
-                </Link>
-                .
-              </p>
-            </div>
+                    wallet
+                  </Link>
+                  .
+                </p>
+              </Card>
+            </Reveal>
           )}
 
-          {/* Top Technologies & Skills */}
+          {/* Top technologies & skills */}
           {(profile.topTechnologies?.length || profile.topSkills?.length) && (
-            <div className="p-5 bg-surface border border-border rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground-muted flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4" /> Your tech stack & skills
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                {profile.topTechnologies?.length && (
-                  <div>
-                    <p className="text-[10px] font-bold text-foreground-muted mb-2">Technologies</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {profile.topTechnologies.map((t) => (
-                        <span key={t} className="px-2.5 py-1 text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20 rounded-full">
-                          {t}
-                        </span>
-                      ))}
+            <Reveal>
+              <Card className="p-5">
+                <h3 className="eyebrow flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4" /> Your tech stack & skills
+                </h3>
+                <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
+                  {profile.topTechnologies?.length ? (
+                    <div>
+                      <p className="eyebrow mb-2.5">Technologies</p>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {profile.topTechnologies.map((t) => (
+                          <li key={t}>
+                            <Chip tone="gold">{t}</Chip>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  </div>
-                )}
-                {profile.topSkills?.length && (
-                  <div>
-                    <p className="text-[10px] font-bold text-foreground-muted mb-2">Skills</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {profile.topSkills.map((s) => (
-                        <span key={s} className="px-2.5 py-1 text-[10px] font-semibold bg-success/10 text-success border border-success/20 rounded-full">
-                          {s}
-                        </span>
-                      ))}
+                  ) : null}
+                  {profile.topSkills?.length ? (
+                    <div>
+                      <p className="eyebrow mb-2.5">Skills</p>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {profile.topSkills.map((s) => (
+                          <li key={s}>
+                            <Chip tone="success">{s}</Chip>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  </div>
-                )}
-              </div>
-            </div>
+                  ) : null}
+                </div>
+              </Card>
+            </Reveal>
           )}
 
-          {/* Skill Gaps */}
+          {/* Skill gaps */}
           {profile.skillGaps?.length && (
-            <div className="p-5 bg-warning/10 border border-warning/20 rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-warning flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4" /> Skill gaps to address
-              </h3>
-              <ul className="mt-3 space-y-1.5">
-                {profile.skillGaps.map((g) => (
-                  <li key={g} className="text-xs text-foreground flex gap-1.5">
-                    <span className="text-warning font-bold">•</span>
-                    <span>{g}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <Reveal>
+              <Card className="border-warning/25 bg-warning-surface p-5">
+                <h3 className="eyebrow flex items-center gap-1.5 text-warning">
+                  <AlertTriangle className="h-4 w-4" /> Skill gaps to address
+                </h3>
+                <ul className="mt-4 space-y-2">
+                  {profile.skillGaps.map((g) => (
+                    <li key={g} className="flex gap-2.5 text-sm text-foreground">
+                      <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-warning" />
+                      <span>{g}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </Reveal>
           )}
 
-          {/* Preparation Focus */}
+          {/* Preparation focus */}
           {profile.prepFocus?.length && (
-            <div className="p-5 bg-primary/10 border border-primary/20 rounded-2xl">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                <Target className="w-4 h-4" /> Preparation focus
-              </h3>
-              <ol className="mt-3 space-y-1.5">
-                {profile.prepFocus.map((p, i) => (
-                  <li key={p} className="text-xs text-foreground flex gap-2">
-                    <span className="font-black text-primary">{i + 1}.</span>
-                    <span>{p}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
+            <Reveal>
+              <Card className="p-5">
+                <h3 className="eyebrow flex items-center gap-1.5 text-secondary">
+                  <Target className="h-4 w-4" /> Preparation focus
+                </h3>
+                <ol className="mt-4 space-y-2">
+                  {profile.prepFocus.map((p, i) => (
+                    <li key={p} className="flex gap-3 text-sm text-foreground">
+                      <span className="font-display text-secondary">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <span>{p}</span>
+                    </li>
+                  ))}
+                </ol>
+              </Card>
+            </Reveal>
           )}
 
           {/* Where the documents live */}
-          <div className="p-5 bg-surface border border-border rounded-2xl">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-foreground-muted">Where your evidence sits</h3>
-            <div className="flex flex-wrap gap-2 mt-3">
-              {WALLET_CATEGORIES.map((c) => {
-                const count = profile.categoryCounts[c] || 0;
-                return (
-                  <span
-                    key={c}
-                    className={`px-3 py-1.5 text-xs font-semibold border rounded-full ${
-                      count > 0 ? "bg-primary/10 text-primary border-primary/20" : "bg-surface-raised text-foreground-muted border-border"
-                    }`}
-                  >
-                    {c}: {count}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
+          <Reveal>
+            <Card className="p-5">
+              <h3 className="eyebrow">Where your evidence sits</h3>
+              <ul className="mt-4 flex flex-wrap gap-2">
+                {WALLET_CATEGORIES.map((c) => {
+                  const count = profile.categoryCounts[c] || 0;
+                  return (
+                    <li key={c}>
+                      <Chip tone={count > 0 ? "gold" : "neutral"}>
+                        {c}: {count}
+                      </Chip>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          </Reveal>
         </>
       )}
-    </motion.div>
+    </div>
   );
 }
