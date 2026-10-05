@@ -147,6 +147,10 @@ export interface PerformanceProfile {
   skillGaps?: string[];
   /** Recommended preparation focus areas. */
   prepFocus?: string[];
+  /** AI-evaluated student level tier (e.g. Level 3: Competent Practitioner). */
+  studentLevel?: string;
+  /** AI justification and deep analysis of student caliber. */
+  studentLevelDescription?: string;
   computedAt: string;
   engineVersion: number;
 }

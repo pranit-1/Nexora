@@ -1355,12 +1355,24 @@ function AnalyticsTab() {
           <div className="w-full flex-1 space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <Chip tone={style.tone}>{bandLabel(band)}</Chip>
+              {profile?.studentLevel && (
+                <Chip tone="gold" icon={<Award className="h-3.5 w-3.5 text-secondary" />}>
+                  {profile.studentLevel}
+                </Chip>
+              )}
               {profile && profile.potential > profile.overall && (
-                <Chip tone="gold" icon={<TrendingUp className="h-3 w-3" />}>
+                <Chip tone="neutral" icon={<TrendingUp className="h-3 w-3" />}>
                   Potential {Math.round(profile.potential)}/100
                 </Chip>
               )}
             </div>
+
+            {profile?.studentLevelDescription && (
+              <div className="rounded-md border border-secondary/20 bg-accent-gold-surface p-3 text-xs leading-relaxed text-secondary-contrast">
+                <span className="font-semibold text-secondary">AI Caliber Verdict: </span>
+                {profile.studentLevelDescription}
+              </div>
+            )}
 
             <p className="text-base leading-relaxed text-foreground text-pretty">
               {profile?.narrative || "No narrative generated yet. Upload documents and recalculate your profile."}
