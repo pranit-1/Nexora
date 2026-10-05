@@ -281,7 +281,7 @@ export default function PerformancePage() {
               Upload your resume, marksheets, certificates, awards and project reports to the wallet. Each file
               is read by the AI, filed into the right category, and turned into evidence for your score.
             </p>
-            <Button href="/dashboard/wallet" className="mt-6">
+            <Button as="a" href="/dashboard/wallet" className="mt-6">
               <Wallet className="h-4 w-4" /> Open wallet
             </Button>
           </Card>
