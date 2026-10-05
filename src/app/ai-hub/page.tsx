@@ -1202,6 +1202,7 @@ function AnalyticsTab() {
   const [profile, setProfile] = useState<PerformanceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
   const [summary, setSummary] = useState("");
   const [summaryError, setSummaryError] = useState("");
   const [atsScore, setAtsScore] = useState<number | null>(null);
@@ -1248,12 +1249,15 @@ function AnalyticsTab() {
 
       if (cached) {
         setProfile(cached);
-        // Silently refresh in background
+        // Silently refresh in background — errors are intentionally swallowed here
         refreshPerformanceProfile(currentUser.uid, { refreshNarrative: false })
           .then((fresh) => { if (fresh) setProfile(fresh); })
-          .catch(() => {});
+          .catch((e) => { console.warn("[performance] background refresh failed:", e?.message); });
       } else {
-        const fresh = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true });
+        const fresh = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true }).catch((e) => {
+          console.warn("[performance] initial compute failed:", e?.message);
+          return null;
+        });
         if (fresh) {
           currentPerf = fresh;
           setProfile(fresh);
@@ -1293,9 +1297,21 @@ function AnalyticsTab() {
   const handleRefresh = async () => {
     if (!currentUser || refreshing) return;
     setRefreshing(true);
+    setRefreshError("");
     try {
-      const data = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true });
-      if (data) setProfile(data);
+      const data = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true, force: true });
+      if (data) {
+        setProfile(data);
+      } else {
+        setRefreshError("Could not recalculate — please try again in a moment.");
+      }
+    } catch (e: any) {
+      const msg = e?.message || "";
+      if (msg.includes("429") || msg.toLowerCase().includes("rate") || msg.toLowerCase().includes("too many")) {
+        setRefreshError("You've recalculated recently. Please wait a minute before trying again.");
+      } else {
+        setRefreshError(msg || "Recalculation failed. Please try again.");
+      }
     } finally {
       setRefreshing(false);
     }
@@ -1345,6 +1361,12 @@ function AnalyticsTab() {
             </Button>
           </div>
         </div>
+        {refreshError && (
+          <div className="mt-3 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{refreshError}</span>
+          </div>
+        )}
       </Reveal>
 
       {/* Main Score & Metrics */}

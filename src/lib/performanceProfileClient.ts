@@ -10,17 +10,19 @@ import { authedFetch, authedJson } from "@/lib/apiClient";
  * from the client — the `uid` argument is retained only as a "signed in" guard
  * and for call-site readability.
  */
-export async function refreshPerformanceProfile(uid: string, opts: { refreshNarrative?: boolean } = {}): Promise<PerformanceSnapshot | null> {
+export async function refreshPerformanceProfile(uid: string, opts: { refreshNarrative?: boolean; force?: boolean } = {}): Promise<PerformanceSnapshot | null> {
   if (!uid) return null;
   try {
     return await authedJson<PerformanceSnapshot>("/api/wallet/performance-profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshNarrative: !!opts.refreshNarrative }),
+      body: JSON.stringify({ refreshNarrative: !!opts.refreshNarrative, force: !!opts.force }),
     });
   } catch (e) {
-    console.warn("[performance] refresh failed:", (e as Error)?.message);
-    return null;
+    const err = e as Error & { status?: number };
+    // Re-throw so the caller can decide how to handle it (e.g. show rate-limit message)
+    // Fire-and-forget silent background refreshes should catch this themselves.
+    throw err;
   }
 }
 
