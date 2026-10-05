@@ -51,3 +51,6 @@ public/serviceAccountKey*.json
 # diff and the AI-bought summaries were reviewed line by line.
 storage/*.json
 !/storage/.gitkeep
+
+# Downloaded Firebase service account JSON
+*firebase-adminsdk*.json
