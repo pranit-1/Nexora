@@ -740,7 +740,7 @@ export default function WalletPage() {
             {documents.length > 0 && (
               <StatPill
                 tone="success"
-                href="/dashboard/performance"
+                href="/ai-hub?tab=analytics"
                 title="Your performance profile is calculated from these documents"
                 label="Performance"
                 value={liveProfile.overall}

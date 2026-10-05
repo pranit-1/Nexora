@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -25,12 +25,152 @@ import {
   TrendingUp,
   UploadCloud,
   ArrowRight,
-  X
+  X,
+  RefreshCw,
+  Wallet,
+  AlertTriangle,
+  CheckCircle2,
+  Target,
+  Link2,
+  ExternalLink,
 } from "lucide-react";
-import { fetchPerformanceProfile } from "@/lib/performanceProfileClient";
+import { fetchPerformanceProfile, refreshPerformanceProfile } from "@/lib/performanceProfileClient";
+import { bandLabel } from "@/lib/wallet/performanceProfile";
+import { WALLET_CATEGORIES } from "@/lib/wallet/categories";
+import { kindLabel } from "@/lib/profileLinks";
+import type { PerformanceBand, PerformanceSnapshot } from "@/lib/types";
 import { Button, Card, Chip, EmptyState, ErrorState, Select, Stat, Textarea } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 import { motion } from "framer-motion";
+
+const EASE_OUT_EXPO = [0.22, 1, 0.36, 1] as const;
+
+const BAND_STYLES: Record<
+  PerformanceBand,
+  { ring: string; text: string; tone: "success" | "gold" | "warning" | "neutral" }
+> = {
+  strong: { ring: "stroke-success", text: "text-success", tone: "success" },
+  solid: { ring: "stroke-secondary", text: "text-secondary", tone: "gold" },
+  developing: { ring: "stroke-warning", text: "text-warning", tone: "warning" },
+  early: { ring: "stroke-border-strong", text: "text-foreground-muted", tone: "neutral" },
+  empty: { ring: "stroke-border", text: "text-foreground-muted", tone: "neutral" },
+};
+
+function scoreTone(score: number, missing: boolean) {
+  if (missing) return { bar: "bg-border", text: "text-foreground-subtle" };
+  if (score >= 70) return { bar: "bg-success", text: "text-success" };
+  if (score >= 45) return { bar: "bg-warning", text: "text-warning" };
+  return { bar: "bg-danger", text: "text-danger" };
+}
+
+function ScoreRing({ score, band }: { score: number; band: PerformanceBand }) {
+  const radius = 68;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (Math.min(100, Math.max(0, score)) / 100) * circumference;
+  const style = BAND_STYLES[band];
+  const rounded = Math.round(score);
+
+  return (
+    <div
+      className="relative h-[168px] w-[168px] shrink-0"
+      role="img"
+      aria-label={`Overall score ${rounded} out of 100`}
+    >
+      <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90">
+        <circle cx="80" cy="80" r={radius} className="fill-none stroke-border" strokeWidth="12" />
+        <motion.circle
+          cx="80"
+          cy="80"
+          r={radius}
+          className={`fill-none ${style.ring}`}
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 0.9, ease: EASE_OUT_EXPO }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`font-display text-5xl leading-none ${style.text}`}>{rounded}</span>
+        <span className="eyebrow mt-2">out of 100</span>
+      </div>
+    </div>
+  );
+}
+
+function DimensionBar({
+  label,
+  score,
+  weight,
+  missing,
+  docCount,
+  evidence,
+  notes,
+}: {
+  label: string;
+  score: number;
+  weight: number;
+  missing: boolean;
+  docCount: number;
+  evidence: string[];
+  notes: string[];
+}) {
+  const tone = scoreTone(score, missing);
+
+  return (
+    <Card className="h-full p-5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-display text-base text-foreground">{label}</span>
+        <span className="flex items-center gap-3">
+          <span className="eyebrow">{Math.round(weight * 100)}% weight</span>
+          <span className={`font-display text-lg ${tone.text}`}>{missing ? "—" : score}</span>
+        </span>
+      </div>
+
+      <div
+        className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised"
+        role="img"
+        aria-label={missing ? `${label}: no evidence yet` : `${label}: ${score} out of 100`}
+      >
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${missing ? 0 : Math.min(100, score)}%` }}
+          transition={{ duration: 0.7, ease: EASE_OUT_EXPO }}
+          className={`h-full rounded-full ${tone.bar}`}
+        />
+      </div>
+
+      <p className="mt-3 text-xs text-foreground-muted">
+        {missing
+          ? "No documents back this dimension yet — it is left out of your average."
+          : `Based on ${docCount} document${docCount === 1 ? "" : "s"}.`}
+      </p>
+
+      {evidence.length > 0 && (
+        <ul className="mt-4 space-y-2">
+          {evidence.slice(0, 4).map((e) => (
+            <li key={e} className="flex items-start gap-2 text-sm text-foreground">
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+              <span>{e}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {notes.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {notes.slice(0, 2).map((n) => (
+            <li key={n} className="flex items-start gap-2 text-sm text-foreground-muted">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+              <span>{n}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
 
 /** Hoisted so the nav does not rebuild the array on every render. */
 const TABS = [
@@ -78,8 +218,26 @@ function matchTone(score: number) {
 export default function AIHub() {
   const { currentUser, loading: authLoading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState<TabId>("recommendations");
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "analytics" || tabParam === "performance") return "analytics";
+    if (tabParam === "resume") return "resume";
+    if (tabParam === "chat") return "chat";
+    return "recommendations";
+  });
+
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "analytics" || tabParam === "performance") {
+      setActiveTab("analytics");
+    } else if (tabParam === "resume") {
+      setActiveTab("resume");
+    } else if (tabParam === "chat") {
+      setActiveTab("chat");
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!authLoading && !currentUser) {
@@ -1040,21 +1198,17 @@ function ChatTab() {
    TAB 4: ANALYTICS & CONFIDENCE TRACKER
    ========================================================================== */
 function AnalyticsTab() {
-  const { currentUser, profile } = useAuth();
+  const { currentUser, profile: authProfile } = useAuth();
+  const [profile, setProfile] = useState<PerformanceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    profileCompletion: 0,
-    resumeScanScore: 0,
-    performanceScore: 0,
-  });
+  const [refreshing, setRefreshing] = useState(false);
   const [summary, setSummary] = useState("");
   const [summaryError, setSummaryError] = useState("");
+  const [atsScore, setAtsScore] = useState<number | null>(null);
 
-  // Profile completion is calculated from the actual fields the user has
-  // filled in — NOT a fixed placeholder. Each field is weighted equally.
   const computeProfileCompletion = (): number => {
-    if (!profile) return 0;
-    const fields: (keyof typeof profile)[] = [
+    if (!authProfile) return 0;
+    const fields: (keyof typeof authProfile)[] = [
       "bio",
       "education",
       "skills",
@@ -1063,18 +1217,22 @@ function AnalyticsTab() {
       "income",
     ];
     const filled = fields.filter((f) => {
-      const val = profile[f];
+      const val = authProfile[f];
       if (Array.isArray(val)) return val.length > 0;
       return typeof val === "string" && val.trim().length > 0;
     }).length;
     return Math.round((filled / fields.length) * 100);
   };
 
-  const loadAnalytics = async () => {
-    if (!currentUser) return;
+  const loadData = useCallback(async () => {
+    if (!currentUser) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+
     try {
-      // Fetch stats
+      // 1. Fetch latest ATS score
       const resumeSnap = await getDocs(
         query(collection(db, "resume_analyses"), where("uid", "==", currentUser.uid), limit(5))
       );
@@ -1082,25 +1240,38 @@ function AnalyticsTab() {
       resumeSnap.forEach((d) => {
         latestATS = d.data().atsScore;
       });
+      setAtsScore(latestATS);
 
+      // 2. Fetch or compute Performance Snapshot
+      const cached = await fetchPerformanceProfile(currentUser.uid);
+      let currentPerf = cached;
+
+      if (cached) {
+        setProfile(cached);
+        // Silently refresh in background
+        refreshPerformanceProfile(currentUser.uid, { refreshNarrative: false })
+          .then((fresh) => { if (fresh) setProfile(fresh); })
+          .catch(() => {});
+      } else {
+        const fresh = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true });
+        if (fresh) {
+          currentPerf = fresh;
+          setProfile(fresh);
+        }
+      }
+
+      // 3. Optional AI progress summary
       const currentStats = {
         profileCompletion: computeProfileCompletion(),
-        // No resume analyzed yet == no score, not a fake placeholder number.
         resumeScanScore: latestATS ?? 0,
-        // Real document-backed score from the wallet. 0 when the wallet is empty.
-        performanceScore: (await fetchPerformanceProfile(currentUser.uid))?.overall ?? 0,
+        performanceScore: currentPerf?.overall ?? 0,
       };
 
-      setStats(currentStats);
-
-      // Generate Gemini tracking text. Failure must not blank out the real
-      // Firestore-derived stats above, so the narrative is handled separately.
       setSummaryError("");
       try {
         const progressSummary = await AIServiceClient.trackConfidence(currentStats);
         setSummary(progressSummary);
       } catch (e) {
-        console.error(e);
         setSummary("");
         setSummaryError(
           e instanceof AIServiceUnavailableError
@@ -1109,76 +1280,367 @@ function AnalyticsTab() {
         );
       }
     } catch (e) {
-      console.error(e);
+      console.error("Error loading performance tracker data:", e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser, authProfile]);
 
   useEffect(() => {
-    loadAnalytics();
-  }, [currentUser, profile]);
+    loadData();
+  }, [loadData]);
+
+  const handleRefresh = async () => {
+    if (!currentUser || refreshing) return;
+    setRefreshing(true);
+    try {
+      const data = await refreshPerformanceProfile(currentUser.uid, { refreshNarrative: true });
+      if (data) setProfile(data);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 spin text-secondary" />
-        <span className="sr-only">Compiling your analytics</span>
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-secondary" />
       </div>
     );
   }
 
+  const band = profile?.band || "empty";
+  const style = BAND_STYLES[band];
+
+  const summaryStats = [
+    { label: "Profile Integrity", value: `${computeProfileCompletion()}%` },
+    { label: "Latest ATS Score", value: atsScore !== null ? `${atsScore}/100` : "—" },
+    { label: "Documents", value: profile?.docCount ?? 0 },
+    { label: "Evidence Coverage", value: `${profile?.coverage ?? 0}%` },
+  ];
+
   return (
-    <div className="space-y-8">
-      <div>
-        <span className="eyebrow">Instrument 04</span>
-        <h2 className="mt-2 font-display text-2xl text-foreground">
-          AI Performance &amp; Analytics
-        </h2>
-        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
-          Overview metrics compiled from database rule actions, with monthly progress digests
-          generated by Gemini.
-        </p>
-      </div>
+    <div className="space-y-10">
+      <Reveal>
+        <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-end">
+          <div>
+            <span className="eyebrow text-secondary">Instrument 04 · Readiness</span>
+            <h2 className="mt-3 text-display-sm text-foreground">AI Performance Tracker</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-foreground-muted text-pretty">
+              Every score here is scientifically calculated from your verified wallet documents — marksheets,
+              certificates, awards, and GitHub/coding links. Upload documents or refresh to evaluate your readiness.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link href="/dashboard/wallet" className="btn btn-sm btn-secondary">
+              <Wallet className="h-3.5 w-3.5" /> Wallet
+            </Link>
+            <Button size="sm" onClick={handleRefresh} disabled={refreshing}>
+              {refreshing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              Recalculate
+            </Button>
+          </div>
+        </div>
+      </Reveal>
 
-      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StaggerItem>
-          <Stat label="Profile Integrity" value={`${stats.profileCompletion}%`} size="sm" />
-        </StaggerItem>
-        <StaggerItem>
-          <Stat label="Latest ATS Score" value={`${stats.resumeScanScore}/100`} size="sm" />
-        </StaggerItem>
-        <StaggerItem>
-          <Stat label="Document Performance" value={`${stats.performanceScore}/100`} size="sm" />
-        </StaggerItem>
-      </Stagger>
+      {/* Main Score & Metrics */}
+      <Reveal delay={0.05}>
+        <Card className="flex flex-col items-center gap-8 p-8 md:flex-row">
+          <ScoreRing score={profile?.overall || 0} band={band} />
 
-      <Card className="flex flex-wrap items-center justify-between gap-4 p-5">
-        <p className="max-w-xl text-sm text-foreground-muted">
-          Document Performance is calculated from your wallet documents — marksheets,
-          certificates, awards, projects and resume. Add more documents and it moves on its own.
-        </p>
-        <Link
-          href="/dashboard/performance"
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
-        >
-          Open performance profile
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      </Card>
+          <div className="w-full flex-1 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone={style.tone}>{bandLabel(band)}</Chip>
+              {profile && profile.potential > profile.overall && (
+                <Chip tone="gold" icon={<TrendingUp className="h-3 w-3" />}>
+                  Potential {Math.round(profile.potential)}/100
+                </Chip>
+              )}
+            </div>
 
+            <p className="text-base leading-relaxed text-foreground text-pretty">
+              {profile?.narrative || "No narrative generated yet. Upload documents and recalculate your profile."}
+            </p>
+
+            <Stagger gap={0.05} className="grid grid-cols-2 gap-3 pt-1 md:grid-cols-4">
+              {summaryStats.map((s) => (
+                <StaggerItem key={s.label}>
+                  <div className="rounded-md border border-border bg-surface-raised px-3 py-2.5">
+                    <span className="eyebrow block">{s.label}</span>
+                    <span className="mt-1 block font-display text-sm text-foreground">{s.value}</span>
+                  </div>
+                </StaggerItem>
+              ))}
+            </Stagger>
+          </div>
+        </Card>
+      </Reveal>
+
+      {/* Monthly AI Progress Digest */}
       <Card tone="raised" className="flex flex-col items-start gap-5 p-6 md:flex-row">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-secondary/25 bg-accent-gold-surface text-secondary">
           <TrendingUp className="h-5 w-5" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <span className="eyebrow">Monthly AI Progress Summary</span>
           <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-foreground">
-            {summary || "No summary available."}
+            {summary || "Upload more credentials to unlock personalized AI growth recommendations."}
           </p>
           {summaryError && <ErrorState description={summaryError} className="mt-4 py-3 text-left" />}
         </div>
       </Card>
+
+      {/* Empty State */}
+      {(!profile || profile.docCount === 0) && (
+        <Reveal>
+          <Card tone="inset" className="border-dashed p-10 text-center">
+            <span className="mx-auto grid h-11 w-11 place-items-center rounded-full border border-border bg-surface text-secondary">
+              <Sparkles className="h-5 w-5" />
+            </span>
+            <h3 className="mt-5 font-display text-xl text-foreground">Nothing to score yet</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-foreground-muted text-pretty">
+              Upload your resume, marksheets, certificates, awards and project reports to the Opportunity Wallet. Each file
+              is analyzed by AI, filed into the right category, and turned into evidence for your score.
+            </p>
+            <Button as="a" href="/dashboard/wallet" className="mt-6">
+              <Wallet className="h-4 w-4" /> Open wallet
+            </Button>
+          </Card>
+        </Reveal>
+      )}
+
+      {/* Dimensions Breakdown */}
+      {profile && profile.docCount > 0 && (
+        <>
+          <Reveal>
+            <div>
+              <h3 className="flex items-center gap-2 font-display text-lg text-foreground">
+                <Target className="h-5 w-5 text-secondary" /> Readiness Dimensions Breakdown
+              </h3>
+              <p className="mt-2 text-xs text-foreground-muted">
+                Dimensions with no documents are excluded from the average instead of pulling down your score.
+              </p>
+            </div>
+          </Reveal>
+
+          <Stagger className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {profile.dimensions.map((d) => (
+              <StaggerItem key={d.key}>
+                <DimensionBar
+                  label={d.label}
+                  score={d.score}
+                  weight={d.weight}
+                  missing={d.missing}
+                  docCount={d.docCount}
+                  evidence={d.evidence}
+                  notes={d.notes}
+                />
+              </StaggerItem>
+            ))}
+          </Stagger>
+
+          {/* Strengths, Gaps, Next Steps */}
+          <Stagger className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StaggerItem>
+              <Card className="h-full p-5">
+                <h4 className="eyebrow flex items-center gap-1.5 text-success">
+                  <CheckCircle2 className="h-4 w-4" /> Proven strengths
+                </h4>
+                <ul className="mt-4 space-y-2.5">
+                  {profile.strengths.length ? (
+                    profile.strengths.map((s) => (
+                      <li key={s} className="text-sm leading-relaxed text-foreground">{s}</li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-foreground-muted">No dimension has crossed 60 yet.</li>
+                  )}
+                </ul>
+              </Card>
+            </StaggerItem>
+
+            <StaggerItem>
+              <Card className="h-full p-5">
+                <h4 className="eyebrow flex items-center gap-1.5 text-warning">
+                  <AlertTriangle className="h-4 w-4" /> What is holding you back
+                </h4>
+                <ul className="mt-4 space-y-2.5">
+                  {profile.gaps.length ? (
+                    profile.gaps.map((g) => (
+                      <li key={g} className="text-sm leading-relaxed text-foreground">{g}</li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-foreground-muted">Nothing outstanding.</li>
+                  )}
+                </ul>
+              </Card>
+            </StaggerItem>
+
+            <StaggerItem>
+              <Card className="h-full p-5">
+                <h4 className="eyebrow flex items-center gap-1.5 text-secondary">
+                  <TrendingUp className="h-4 w-4" /> Highest-impact next steps
+                </h4>
+                <ol className="mt-4 space-y-2.5">
+                  {profile.nextSteps.length ? (
+                    profile.nextSteps.map((s, i) => (
+                      <li key={s} className="flex gap-3 text-sm leading-relaxed text-foreground">
+                        <span className="font-display text-secondary">
+                          {String(i + 1).padStart(2, "0")}
+                        </span>
+                        <span>{s}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-foreground">Your profile is complete. Keep it fresh.</li>
+                  )}
+                </ol>
+                <Link
+                  href="/dashboard/wallet"
+                  className="mt-5 inline-flex items-center gap-1.5 text-xs font-medium text-secondary transition-colors duration-base hover:text-secondary-hover"
+                >
+                  Upload documents <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </Card>
+            </StaggerItem>
+          </Stagger>
+
+          {/* Public Profiles */}
+          {profile.profileLinks && profile.profileLinks.length > 0 && (
+            <Reveal>
+              <Card className="p-5">
+                <h4 className="eyebrow flex items-center gap-1.5">
+                  <Link2 className="h-4 w-4" /> Connected public profiles
+                </h4>
+                <ul className="mt-4 flex flex-wrap gap-2">
+                  {profile.profileLinks.map((l) => (
+                    <li key={l.id}>
+                      <a
+                        href={l.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="chip chip-gold transition-colors duration-base hover:opacity-80"
+                      >
+                        {l.label || kindLabel(l.kind)}
+                        <ExternalLink className="h-3 w-3 opacity-70" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-xs text-foreground-muted">
+                  Connected profiles count as verified evidence toward Application Readiness. Manage them in your{" "}
+                  <Link
+                    href="/dashboard/wallet"
+                    className="font-medium text-secondary transition-colors duration-base hover:text-secondary-hover"
+                  >
+                    wallet
+                  </Link>
+                  .
+                </p>
+              </Card>
+            </Reveal>
+          )}
+
+          {/* Top Technologies & Skills */}
+          {(profile.topTechnologies?.length || profile.topSkills?.length) && (
+            <Reveal>
+              <Card className="p-5">
+                <h4 className="eyebrow flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4" /> Verified tech stack &amp; skills
+                </h4>
+                <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
+                  {profile.topTechnologies?.length ? (
+                    <div>
+                      <p className="eyebrow mb-2.5">Technologies</p>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {profile.topTechnologies.map((t) => (
+                          <li key={t}>
+                            <Chip tone="gold">{t}</Chip>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {profile.topSkills?.length ? (
+                    <div>
+                      <p className="eyebrow mb-2.5">Skills</p>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {profile.topSkills.map((s) => (
+                          <li key={s}>
+                            <Chip tone="success">{s}</Chip>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              </Card>
+            </Reveal>
+          )}
+
+          {/* Skill gaps */}
+          {profile.skillGaps?.length && (
+            <Reveal>
+              <Card className="border-warning/25 bg-warning-surface p-5">
+                <h4 className="eyebrow flex items-center gap-1.5 text-warning">
+                  <AlertTriangle className="h-4 w-4" /> Skill gaps to address
+                </h4>
+                <ul className="mt-4 space-y-2">
+                  {profile.skillGaps.map((g) => (
+                    <li key={g} className="flex gap-2.5 text-sm text-foreground">
+                      <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-warning" />
+                      <span>{g}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </Reveal>
+          )}
+
+          {/* Preparation focus */}
+          {profile.prepFocus?.length && (
+            <Reveal>
+              <Card className="p-5">
+                <h4 className="eyebrow flex items-center gap-1.5 text-secondary">
+                  <Target className="h-4 w-4" /> Preparation focus
+                </h4>
+                <ol className="mt-4 space-y-2">
+                  {profile.prepFocus.map((p, i) => (
+                    <li key={p} className="flex gap-3 text-sm text-foreground">
+                      <span className="font-display text-secondary">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <span>{p}</span>
+                    </li>
+                  ))}
+                </ol>
+              </Card>
+            </Reveal>
+          )}
+
+          {/* Evidence distribution */}
+          <Reveal>
+            <Card className="p-5">
+              <h4 className="eyebrow">Where your evidence sits</h4>
+              <ul className="mt-4 flex flex-wrap gap-2">
+                {WALLET_CATEGORIES.map((c) => {
+                  const count = profile.categoryCounts[c] || 0;
+                  return (
+                    <li key={c}>
+                      <Chip tone={count > 0 ? "gold" : "neutral"}>
+                        {c}: {count}
+                      </Chip>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          </Reveal>
+        </>
+      )}
     </div>
   );
 }
