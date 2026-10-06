@@ -68,29 +68,9 @@ export interface DocumentInsights {
   marksheetSubjects?: Array<{ name: string; marks: number; maxMarks?: number }>;
 }
 
-// ─── PERFORMANCE PROFILE ───────────────────────────────────────────────────
+// ─── PROFILE LINKS ─────────────────────────────────────────────────────────
 
-/**
- * Each dimension is scored 0-100 from the wallet documents that back it.
- * A dimension with no documents at all is reported as `missing` and left out
- * of the weighted average — it lowers `coverage` instead of dragging the score
- * down, and it is listed in `gaps` so the user knows exactly what to upload.
- */
-export type PerformanceDimensionKey =
-  | "academics"
-  | "credentials"
-  | "recognition"
-  | "projects"
-  | "skills"
-  | "recency"
-  | "network"
-  | "github"
-  | "coding"
-  | "readiness";
-
-export type PerformanceBand = "strong" | "solid" | "developing" | "early" | "empty";
-
-/** How a saved public link is treated by the score and the UI. */
+/** How a saved public link is treated by the UI. */
 export type ProfileLinkKind = "linkedin" | "github" | "leetcode" | "codechef" | "codeforces" | "hackerrank" | "portfolio" | "social" | "website" | "other";
 
 /** A public profile URL the user saved by hand — LinkedIn, GitHub, anything. */
@@ -103,64 +83,6 @@ export interface ProfileLink {
   addedAt?: string;
   /** Where it came from: typed by the user, or read out of an uploaded document. */
   origin?: "manual" | "document";
-}
-
-export interface PerformanceDimension {
-  key: PerformanceDimensionKey;
-  label: string;
-  score: number;
-  weight: number;
-  /** How many wallet documents fed this dimension. */
-  docCount: number;
-  /** True when no document supports this dimension yet. */
-  missing: boolean;
-  evidence: string[];
-  notes: string[];
-}
-
-export interface PerformanceProfile {
-  /** Weighted score across the dimensions that have evidence. 0 when empty. */
-  overall: number;
-  /** What the score would become if every missing dimension were filled. */
-  potential: number;
-  band: PerformanceBand;
-  /** Share of dimensions that actually have documents behind them (0-100). */
-  coverage: number;
-  docCount: number;
-  dimensions: PerformanceDimension[];
-  strengths: string[];
-  gaps: string[];
-  nextSteps: string[];
-  /** LLM-written read of the numbers. Falls back to a rule-built summary. */
-  narrative: string;
-  /** Category histogram, so the UI can show where the documents live. */
-  categoryCounts: Partial<Record<WalletCategory, number>>;
-  /** Documents that still need the user to confirm their category. */
-  needsReviewCount: number;
-  /** The user's saved public profile links, mirrored into the snapshot. */
-  profileLinks?: ProfileLink[];
-  /** Top technologies/skills detected across all documents. */
-  topTechnologies?: string[];
-  /** Top skills detected across all documents. */
-  topSkills?: string[];
-  /** Specific skill gaps identified for target roles. */
-  skillGaps?: string[];
-  /** Recommended preparation focus areas. */
-  prepFocus?: string[];
-  /** AI-evaluated student level tier (e.g. Level 3: Competent Practitioner). */
-  studentLevel?: string;
-  /** AI justification and deep analysis of student caliber. */
-  studentLevelDescription?: string;
-  computedAt: string;
-  engineVersion: number;
-}
-
-/** The persisted snapshot at users/{uid}/tracker/performance. */
-export interface PerformanceSnapshot extends PerformanceProfile {
-  uid: string;
-  /** Changes whenever any document's category or review flag changes. */
-  fingerprint?: string;
-  bandLabel?: string;
 }
 
 // ─── CALENDAR ──────────────────────────────────────────────────────

@@ -32,8 +32,6 @@ import {
   type ClassificationResult,
 } from "@/lib/wallet/documentClassifier";
 import { extractInsights } from "@/lib/wallet/documentInsights";
-import { computePerformanceProfile } from "@/lib/wallet/performanceProfile";
-import { refreshPerformanceProfile } from "@/lib/performanceProfileClient";
 import { authedFetch } from "@/lib/apiClient";
 import {
   displayUrl,
@@ -45,8 +43,9 @@ import {
 } from "@/lib/profileLinks";
 import { addProfileLink, removeProfileLink, subscribeProfileLinks } from "@/lib/profileLinksClient";
 
-/** How much of a document's text we keep — feeds the performance profile. */
+/** How much of a document's text we store for AI classification and insights. */
 const STORED_TEXT_CHARS = 3000;
+
 
 /** Tab strip: "All" plus every real category. Derived once, never per render. */
 const CATEGORY_TABS: Array<WalletCategory | "All"> = ["All", ...WALLET_CATEGORIES];
@@ -424,8 +423,6 @@ export default function WalletPage() {
     setFileQueue((prev) => prev.filter((item) => !queue.some((q) => q.id === item.id && !failedIds.has(q.id))));
     setUploadError(failures.length > 0 ? failures.join("\n") : "");
 
-    // More documents = more facts, so rebuild the score immediately.
-    if (successCount > 0) await refreshPerformanceProfile(currentUser.uid);
   };
 
   const handleDelete = async (id: string) => {
@@ -452,7 +449,6 @@ export default function WalletPage() {
       }
 
       await deleteDoc(doc(db, "wallet", id));
-      if (currentUser) await refreshPerformanceProfile(currentUser.uid);
     } catch (err: any) {
       console.error("Delete document error:", err);
       setActionError(err?.message || "Failed to delete this document.");
@@ -526,7 +522,6 @@ export default function WalletPage() {
           ? { insights: extractInsights(target.extractedText, newCategory, target.name) }
           : {}),
       });
-      if (currentUser) await refreshPerformanceProfile(currentUser.uid);
     } catch (err) {
       console.error("Failed to update category:", err);
       alert("Failed to update document category.");
@@ -543,7 +538,6 @@ export default function WalletPage() {
         categorySource: "auto",
         categoryUpdatedAt: new Date().toISOString(),
       });
-      if (currentUser) await refreshPerformanceProfile(currentUser.uid);
     } catch (err) {
       console.error("Failed to unlock category:", err);
       alert("Failed to unlock this document.");
@@ -612,7 +606,6 @@ export default function WalletPage() {
         await new Promise((r) => setTimeout(r, 250));
       }
 
-      await refreshPerformanceProfile(uid, { refreshNarrative: updatedCount > 0 });
 
       const parts = [
         updatedCount > 0 ? `${updatedCount} moved to a new category` : "No categories changed",
@@ -641,7 +634,6 @@ export default function WalletPage() {
         setLinkError(result.error);
       } else {
         setLinkInput("");
-        void refreshPerformanceProfile(currentUser.uid);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -657,7 +649,6 @@ export default function WalletPage() {
     setDeletingLinkId(linkId);
     try {
       await removeProfileLink(currentUser.uid, linkId);
-      void refreshPerformanceProfile(currentUser.uid);
     } catch {
       setLinkError("That link could not be removed. Please try again.");
     } finally {
@@ -680,9 +671,6 @@ export default function WalletPage() {
 
   const totalSizeKB = Math.round(documents.reduce((acc, d) => acc + d.sizeBytes, 0) / 1024);
 
-  // Live preview of the score the wallet is currently producing. The persisted
-  // snapshot (with the AI narrative) lives on the performance page.
-  const liveProfile = useMemo(() => computePerformanceProfile(documents, profileLinks), [documents, profileLinks]);
 
   /* ── Loading ──────────────────────────────────────────────── */
   if (loading) {
@@ -736,17 +724,6 @@ export default function WalletPage() {
               />
             )}
 
-            {/* Live performance link — the wallet and the score stay in sync */}
-            {documents.length > 0 && (
-              <StatPill
-                tone="success"
-                href="/ai-hub?tab=analytics"
-                title="Your performance profile is calculated from these documents"
-                label="Performance"
-                value={liveProfile.overall}
-                suffix="/100"
-              />
-            )}
           </div>
 
           {/* Re-Scan existing button */}

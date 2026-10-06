@@ -55,7 +55,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Opportunity Wallet", href: "/dashboard/wallet", icon: Wallet },
     { name: "Calendar Hub", href: "/dashboard/calendar", icon: CalendarIcon },
-    { name: "AI Career Hub", href: "/ai-hub", icon: Sparkles },
     {
       name: "Notifications",
       href: "/dashboard/notifications",

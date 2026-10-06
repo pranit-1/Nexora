@@ -9,7 +9,6 @@ import { doc, getDoc, getDocs, collection, query, where, deleteDoc } from "fireb
 import { Opportunity } from "@/lib/mockData";
 import { useOpportunities, formatDeadline } from "@/hooks/useOpportunities";
 import {
-  Sparkles,
   Bookmark,
   Calendar,
   Bell,
@@ -50,8 +49,8 @@ function SkeletonDashboard() {
         <div className="skeleton hidden h-14 w-40 rounded-lg sm:block" />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
           <div key={i} className="skeleton h-36 rounded-lg" />
         ))}
       </div>
@@ -164,14 +163,6 @@ export default function Dashboard() {
       icon: Calendar,
       pill: "Deadlines",
     },
-    {
-      title: "AI Career Hub",
-      metric: profile?.category || "Explore Pathways",
-      subtext: "AI resume audit & job match",
-      href: "/ai-hub",
-      icon: Sparkles,
-      pill: "AI Coach",
-    },
   ];
 
   return (
@@ -216,7 +207,7 @@ export default function Dashboard() {
       </Reveal>
 
       {/* Summary grid */}
-      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {tabSummaries.map((tab) => {
           const Icon = tab.icon;
           return (

@@ -1,9 +1,9 @@
 /**
  * Public profile links — the URLs a user wants recruiters, and the AI, to see.
  * Anything from a LinkedIn profile to a random portfolio page counts, so nothing
- * here is allow-list restricted; the kind is only used for labelling and for
- * the performance score.
+ * here is allow-list restricted; the kind is only used for labelling and UI display.
  */
+
 import type { ProfileLinkKind } from "./types";
 
 export const PROFILE_LINK_KINDS: ProfileLinkKind[] = [
