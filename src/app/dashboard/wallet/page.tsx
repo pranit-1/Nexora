@@ -16,6 +16,7 @@ import {
   Loader2,
   X,
   RefreshCw,
+  Replace,
 } from "lucide-react";
 import { Link2, Copy, Check, ExternalLink } from "lucide-react";
 import type { WalletDocument, WalletCategory, ProfileLink } from "@/lib/types";
@@ -207,11 +208,8 @@ export default function WalletPage() {
   const [uploadError, setUploadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-
-  // AI Analysis state (removed per-file LLM review)
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [aiReport, setAiReport] = useState<Record<string, string>>({});
 
   // Re-scan state for existing documents
   const [rescanning, setRescanning] = useState(false);
@@ -457,52 +455,62 @@ export default function WalletPage() {
     }
   };
 
-  const handleAIVerify = async (docId: string, docName: string, category: WalletCategory) => {
-    setAnalyzingId(docId);
-    setActionError("");
+  const handleReplace = async (docId: string) => {
     const target = documents.find((d) => d.id === docId);
-    const storedText = target?.extractedText?.trim() || "";
+    if (!target) return;
 
-    if (!storedText) {
-      setActionError(
-        "No text was extracted from this file, so there is nothing for the model to read. Re-upload it or set the category manually."
-      );
-      setAnalyzingId(null);
-      return;
-    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp,.heic";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
 
-    try {
-      const result = await classifyDocument({
-        text: storedText,
-        name: docName,
-        useAI: true,
-        preferAI: true,
-      });
+      setReplacingId(docId);
+      setActionError("");
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("oldPublicId", target.storagePath || "");
 
-      const lines: string[] = [];
-      lines.push(`### Re-checked: ${docName}`);
-      lines.push(`- **Detected category**: ${result.category}`);
-      lines.push(
-        `- **Confidence**: ${Math.round(result.confidence * 100)}% (${result.source === "ai" ? "from the AI categorizer" : "from local rules only — the AI call did not run"})`
-      );
-      if (result.reason) lines.push(`- **Reasoning**: ${result.reason}`);
-      lines.push(
-        `- **Matches the saved category "${category}": ${result.category === category ? "yes" : "no — review this"}`
-      );
-      if (result.needsReview) {
-        lines.push("- **Needs review**: confidence was too low to lock in automatically.");
+        const res = await authedFetch("/api/wallet/replace", {
+          method: "POST",
+          body: formData,
+        });
+
+        const resText = await res.text();
+        let data: any = {};
+        try {
+          data = JSON.parse(resText);
+        } catch {
+          throw new Error(`Server returned error (${res.status}): ${resText.slice(0, 100)}`);
+        }
+
+        if (!res.ok) {
+          throw new Error(data.error || `Failed to replace ${target.name}`);
+        }
+
+        const now = new Date().toISOString();
+        const text = await extractTextFromFile(file);
+        const insights = extractInsights(text, target.category, target.name);
+
+        await updateDoc(doc(db, "wallet", docId), {
+          storagePath: data.public_id,
+          downloadURL: data.secure_url,
+          sizeBytes: file.size,
+          mimeType: file.type,
+          uploadedAt: now,
+          extractedText: text.slice(0, STORED_TEXT_CHARS),
+          insights,
+        });
+      } catch (err: any) {
+        console.error("Replace document error:", err);
+        setActionError(err?.message || "Failed to replace this document.");
+      } finally {
+        setReplacingId(null);
       }
-      lines.push(
-        "- This is a content-based category check. It does **not** verify that a certificate is genuine or that an ID matches your profile."
-      );
-
-      setAiReport((prev) => ({ ...prev, [docId]: lines.join("\n") }));
-    } catch (error: any) {
-      console.error(error);
-      setActionError(error?.message || "Could not run the AI check right now.");
-    } finally {
-      setAnalyzingId(null);
-    }
+    };
+    input.click();
   };
 
   const handleUpdateDocCategory = async (docId: string, newCategory: WalletCategory) => {
@@ -1265,16 +1273,16 @@ export default function WalletPage() {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => handleAIVerify(document.id, document.name, document.category)}
-                        disabled={analyzingId === document.id}
-                        aria-label={`Re-check ${document.name} with AI`}
-                        title="Re-check this document's category with AI"
-                        className="grid h-8 w-8 place-items-center rounded-md text-primary transition-colors duration-fast hover:bg-primary/10 disabled:opacity-50"
+                        onClick={() => handleReplace(document.id)}
+                        disabled={replacingId === document.id}
+                        aria-label={`Replace ${document.name}`}
+                        title="Replace this document with a new file"
+                        className="grid h-8 w-8 place-items-center rounded-md text-foreground-muted transition-colors duration-fast hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
                       >
-                        {analyzingId === document.id ? (
+                        {replacingId === document.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Sparkles className="h-4 w-4" />
+                          <Replace className="h-4 w-4" />
                         )}
                       </button>
                       <a
@@ -1304,29 +1312,6 @@ export default function WalletPage() {
                     </div>
                   </div>
 
-                  {/* AI audit report */}
-                  <AnimatePresence>
-                    {aiReport[document.id] && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0, y: -8 }}
-                        animate={{ opacity: 1, height: "auto", y: 0 }}
-                        exit={{ opacity: 0, height: 0, y: -8 }}
-                        transition={{ duration: 0.32, ease: [0.23, 1, 0.32, 1] }}
-                        className="card-inset relative space-y-2 overflow-hidden p-4"
-                      >
-                        <Chip
-                          tone="gold"
-                          icon={<Sparkles className="h-2.5 w-2.5" />}
-                          className="absolute right-2 top-2 text-2xs"
-                        >
-                          AI Evaluated
-                        </Chip>
-                        <div className="whitespace-pre-line text-sm font-medium leading-relaxed text-foreground">
-                          {aiReport[document.id]}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
                 </motion.article>
               ))}
 

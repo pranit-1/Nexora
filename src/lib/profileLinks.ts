@@ -13,8 +13,23 @@ export const PROFILE_LINK_KINDS: ProfileLinkKind[] = [
   "codechef",
   "codeforces",
   "hackerrank",
-  "portfolio",
-  "social",
+  "behance",
+  "dribbble",
+  "devto",
+  "hashnode",
+  "codepen",
+  "notion",
+  "medium",
+  "substack",
+  "kaggle",
+  "figma",
+  "youtube",
+  "twitter",
+  "instagram",
+  "facebook",
+  "threads",
+  "mastodon",
+  "telegram",
   "website",
   "other",
 ];
@@ -26,8 +41,23 @@ const KIND_LABELS: Record<ProfileLinkKind, string> = {
   codechef: "CodeChef",
   codeforces: "Codeforces",
   hackerrank: "HackerRank",
-  portfolio: "Portfolio",
-  social: "Social",
+  behance: "Behance",
+  dribbble: "Dribbble",
+  devto: "Dev.to",
+  hashnode: "Hashnode",
+  codepen: "CodePen",
+  notion: "Notion",
+  medium: "Medium",
+  substack: "Substack",
+  kaggle: "Kaggle",
+  figma: "Figma",
+  youtube: "YouTube",
+  twitter: "Twitter / X",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  threads: "Threads",
+  mastodon: "Mastodon",
+  telegram: "Telegram",
   website: "Website",
   other: "Link",
 };
@@ -49,8 +79,23 @@ const KIND_TONE: Record<ProfileLinkKind, ProfileLinkTone> = {
   codechef: "gold",
   codeforces: "info",
   hackerrank: "success",
-  portfolio: "gold",
-  social: "success",
+  behance: "gold",
+  dribbble: "gold",
+  devto: "gold",
+  hashnode: "gold",
+  codepen: "gold",
+  notion: "gold",
+  medium: "gold",
+  substack: "gold",
+  kaggle: "gold",
+  figma: "gold",
+  youtube: "danger",
+  twitter: "info",
+  instagram: "warning",
+  facebook: "info",
+  threads: "info",
+  mastodon: "info",
+  telegram: "info",
   website: "neutral",
   other: "neutral",
 };
@@ -76,25 +121,25 @@ const HOST_KINDS: Array<[RegExp, ProfileLinkKind]> = [
   [/(^|\.)codechef\.com$/, "codechef"],
   [/(^|\.)codeforces\.com$/, "codeforces"],
   [/(^|\.)hackerrank\.com$/, "hackerrank"],
-  [/(^|\.)behance\.net$/, "portfolio"],
-  [/(^|\.)dribbble\.com$/, "portfolio"],
-  [/(^|\.)dev\.to$/, "portfolio"],
-  [/(^|\.)hashnode\.com$/, "portfolio"],
-  [/(^|\.)codepen\.io$/, "portfolio"],
-  [/(^|\.)notion\.site$/, "portfolio"],
-  [/(^|\.)medium\.com$/, "portfolio"],
-  [/(^|\.)substack\.com$/, "portfolio"],
-  [/(^|\.)kaggle\.com$/, "portfolio"],
-  [/(^|\.)figma\.com$/, "portfolio"],
-  [/(^|\.)youtube\.com$/, "social"],
-  [/(^|\.)youtu\.be$/, "social"],
-  [/(^|\.)twitter\.com$/, "social"],
-  [/(^|\.)x\.com$/, "social"],
-  [/(^|\.)instagram\.com$/, "social"],
-  [/(^|\.)facebook\.com$/, "social"],
-  [/(^|\.)threads\.net$/, "social"],
-  [/(^|\.)mastodon\.social$/, "social"],
-  [/(^|\.)t\.me$/, "social"],
+  [/(^|\.)behance\.net$/, "behance"],
+  [/(^|\.)dribbble\.com$/, "dribbble"],
+  [/(^|\.)dev\.to$/, "devto"],
+  [/(^|\.)hashnode\.com$/, "hashnode"],
+  [/(^|\.)codepen\.io$/, "codepen"],
+  [/(^|\.)notion\.site$/, "notion"],
+  [/(^|\.)medium\.com$/, "medium"],
+  [/(^|\.)substack\.com$/, "substack"],
+  [/(^|\.)kaggle\.com$/, "kaggle"],
+  [/(^|\.)figma\.com$/, "figma"],
+  [/(^|\.)youtube\.com$/, "youtube"],
+  [/(^|\.)youtu\.be$/, "youtube"],
+  [/(^|\.)twitter\.com$/, "twitter"],
+  [/(^|\.)x\.com$/, "twitter"],
+  [/(^|\.)instagram\.com$/, "instagram"],
+  [/(^|\.)facebook\.com$/, "facebook"],
+  [/(^|\.)threads\.net$/, "threads"],
+  [/(^|\.)mastodon\.social$/, "mastodon"],
+  [/(^|\.)t\.me$/, "telegram"],
 ];
 
 /** TLDs that almost always belong to a single person's own site. */
@@ -105,11 +150,11 @@ const PERSONAL_TLDS = new Set([
 
 /** Short one-liners shown next to the input so the user knows what to paste. */
 const DOMAIN_HINTS: Array<[RegExp, ProfileLinkKind]> = [
-  [/\b(portfolio|works|homepage)\b/, "portfolio"],
+  [/\b(portfolio|works|homepage)\b/, "website"],
   [/\b(profile|cv|resume|contact|about)\b/, "website"],
   [/\b(repo|projects?|code)\b/, "github"],
-  [/\b(feed|timeline|posts?)\b/, "social"],
-  [/\b(public|public-?site)\b/, "portfolio"],
+  [/\b(feed|timeline|posts?)\b/, "website"],
+  [/\b(public|public-?site)\b/, "website"],
 ];
 
 export interface LinkParseResult {
@@ -183,13 +228,12 @@ export function detectKind(hostOrUrl: string): ProfileLinkKind {
   for (const [re, kind] of HOST_KINDS) {
     if (re.test(host)) return kind;
   }
-  if (/\.(edu|ac\.[a-z]{2})$/.test(host)) return "portfolio";
+  if (/\.(edu|ac\.[a-z]{2})$/.test(host)) return "website";
   for (const [re, kind] of DOMAIN_HINTS) {
     if (re.test(host)) return kind;
   }
-  // name.dev, yourname.me, studio.xyz, sub.yourname.io — a personal domain.
   const labels = host.split(".");
-  if (PERSONAL_TLDS.has(labels[labels.length - 1])) return "portfolio";
+  if (PERSONAL_TLDS.has(labels[labels.length - 1])) return "website";
   return "website";
 }
 
@@ -219,8 +263,8 @@ export function isSameLink(a: string, b: string): boolean {
 export const LINK_SUGGESTIONS: Array<{ kind: ProfileLinkKind; label: string; placeholder: string }> = [
   { kind: "linkedin", label: "LinkedIn", placeholder: "linkedin.com/in/yourname" },
   { kind: "github", label: "GitHub", placeholder: "github.com/yourname" },
-  { kind: "portfolio", label: "Portfolio", placeholder: "yourname.dev" },
-  { kind: "social", label: "Other", placeholder: "behance.net/you" },
+  { kind: "website", label: "Website", placeholder: "yourname.dev" },
+  { kind: "behance", label: "Behance", placeholder: "behance.net/you" },
 ];
 
 /** LinkedIn needs a profile path — the bare domain is not a profile anyone can open. */

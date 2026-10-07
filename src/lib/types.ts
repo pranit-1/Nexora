@@ -71,7 +71,7 @@ export interface DocumentInsights {
 // ─── PROFILE LINKS ─────────────────────────────────────────────────────────
 
 /** How a saved public link is treated by the UI. */
-export type ProfileLinkKind = "linkedin" | "github" | "leetcode" | "codechef" | "codeforces" | "hackerrank" | "portfolio" | "social" | "website" | "other";
+export type ProfileLinkKind = "linkedin" | "github" | "leetcode" | "codechef" | "codeforces" | "hackerrank" | "behance" | "dribbble" | "devto" | "hashnode" | "codepen" | "notion" | "medium" | "substack" | "kaggle" | "figma" | "youtube" | "twitter" | "instagram" | "facebook" | "threads" | "mastodon" | "telegram" | "website" | "other";
 
 /** A public profile URL the user saved by hand — LinkedIn, GitHub, anything. */
 export interface ProfileLink {
