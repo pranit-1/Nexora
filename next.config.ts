@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
   turbopack: {},
   serverExternalPackages: [
     "firebase-admin",
+    "jwks-rsa",
+    "jose",
     "node-cron",
     "@google-cloud/firestore",
     "@google-cloud/storage",
