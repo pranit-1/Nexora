@@ -18,12 +18,14 @@ export class AIRouterService {
     AIRouterService.lastRequestUsedVision = false;
 
     // 1. Try Gemini first if keys exist
-    try {
-      const geminiResult = await GeminiRotatorService.requestGemini(prompt, jsonMode);
-      AIRouterService.lastRequestProvider = "gemini";
-      return geminiResult;
-    } catch (geminiErr: any) {
-      console.warn(`[AIRouter] Gemini failed, falling back to OpenRouter. Reason: ${geminiErr.message}`);
+    if (process.env.GEMINI_API_KEYS || process.env.NEXT_PUBLIC_GEMINI_API_KEYS) {
+      try {
+        const geminiResult = await GeminiRotatorService.requestGemini(prompt, jsonMode);
+        AIRouterService.lastRequestProvider = "gemini";
+        return geminiResult;
+      } catch (geminiErr: any) {
+        console.warn(`[AIRouter] Gemini failed, falling back to OpenRouter. Reason: ${geminiErr.message}`);
+      }
     }
 
     // 2. Try OpenRouter
@@ -34,17 +36,22 @@ export class AIRouterService {
     } catch (openRouterErr: any) {
       console.warn(`[AIRouter] OpenRouter failed, falling back to Groq. Reason: ${openRouterErr.message}`);
 
-      // 3. Try Groq
-      try {
-        const result = await GroqService.request(prompt, jsonMode);
-        AIRouterService.lastRequestProvider = "groq";
-        return result;
-      } catch (groqErr: any) {
-        AIRouterService.lastRequestProvider = null;
-        throw new Error(
-          `All AI providers (Gemini, OpenRouter, Groq) failed. Last error: ${groqErr.message}`
-        );
+      // 3. Try Groq if keys configured
+      if (process.env.GROQ_API_KEYS && process.env.GROQ_API_KEYS.trim().length > 0 && !process.env.GROQ_API_KEYS.includes("your_groq_api_key")) {
+        try {
+          const result = await GroqService.request(prompt, jsonMode);
+          AIRouterService.lastRequestProvider = "groq";
+          return result;
+        } catch (groqErr: any) {
+          AIRouterService.lastRequestProvider = null;
+          throw new Error(
+            `All AI providers (OpenRouter, Groq) failed. Last error: ${groqErr.message}`
+          );
+        }
       }
+
+      AIRouterService.lastRequestProvider = null;
+      throw new Error(`AI request failed: ${openRouterErr.message}`);
     }
   }
 

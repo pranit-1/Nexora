@@ -9,6 +9,7 @@ import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, collection, addDoc, getDocs, query, where, orderBy, limit } from "firebase/firestore";
 import { useOpportunities } from "@/hooks/useOpportunities";
+import { authedFetch } from "@/lib/apiClient";
 import { AIServiceClient, AIServiceUnavailableError, ResumeAnalysisResult } from "@/lib/aiServiceClient";
 import {
   Sparkles,
@@ -157,10 +158,39 @@ export default function AIHub() {
    ========================================================================== */
 
 function RecommendationsTab() {
+  const { profile } = useAuth();
   const { opportunities } = useOpportunities();
   const [showCount, setShowCount] = useState(8);
 
-  const displayed = opportunities.slice(0, showCount);
+  // Compute profile-based match relevance
+  const userSkills = (profile?.skills || []).map((s) => s.toLowerCase());
+  const userInterests = (profile?.interests || []).map((i) => i.toLowerCase());
+  const userEducation = (profile?.education || "").toLowerCase();
+
+  const scoredOpportunities = opportunities.map((opp) => {
+    let score = 50; // Base score
+    const textToMatch = `${opp.title} ${opp.description || ""} ${opp.field || ""} ${opp.category || ""}`.toLowerCase();
+
+    // Check matching skills
+    userSkills.forEach((skill) => {
+      if (textToMatch.includes(skill)) score += 15;
+    });
+
+    // Check matching interests
+    userInterests.forEach((interest) => {
+      if (textToMatch.includes(interest)) score += 10;
+    });
+
+    // Match education
+    if (userEducation && textToMatch.includes(userEducation)) score += 10;
+
+    const matchPercent = Math.min(98, Math.max(55, score));
+    return { ...opp, matchPercent };
+  });
+
+  // Sort by highest match score
+  const sortedOpportunities = [...scoredOpportunities].sort((a, b) => b.matchPercent - a.matchPercent);
+  const displayed = sortedOpportunities.slice(0, showCount);
 
   return (
     <div className="space-y-8">
@@ -168,7 +198,7 @@ function RecommendationsTab() {
         <span className="eyebrow">Instrument 01</span>
         <h2 className="mt-2 font-display text-2xl text-foreground">Opportunity Matcher</h2>
         <p className="mt-2 max-w-xl text-sm text-foreground-muted">
-          Browse all available opportunities matched to your profile.
+          Browse opportunities ranked and matched to your profile skills, field, and interests.
         </p>
       </div>
 
@@ -184,7 +214,7 @@ function RecommendationsTab() {
             <p className="text-xs text-foreground-subtle">
               Showing <span className="font-semibold text-foreground">{displayed.length}</span>{" "}
               of <span className="font-semibold text-foreground">{opportunities.length}</span>{" "}
-              opportunities
+              opportunities matched to your profile
             </p>
             <Stagger as="ul" className="grid grid-cols-1 gap-4">
               {displayed.map((opportunity) => (
@@ -195,6 +225,10 @@ function RecommendationsTab() {
                         <div className="mb-2 flex flex-wrap items-center gap-2">
                           <Chip tone="gold">{opportunity.category}</Chip>
                           <span className="text-2xs text-foreground-subtle">{opportunity.field}</span>
+                          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-secondary/10 px-2.5 py-0.5 text-xs font-semibold text-secondary">
+                            <Sparkles className="h-3 w-3" />
+                            {opportunity.matchPercent}% Match
+                          </span>
                         </div>
                         <h3 className="font-display text-lg leading-snug text-foreground">
                           <Link
@@ -296,62 +330,86 @@ function ResumeTab() {
   // here is caught and surfaced as a friendly message — it never breaks the
   // rest of the tab, and the user can always fall back to pasting text
   // manually below.
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
   const handleFileUpload = async (file: File) => {
     setExtractError("");
     setExtracting(true);
     setUploadedFileName(file.name);
+    setSelectedFile(file);
 
     try {
       const ext = file.name.split(".").pop()?.toLowerCase();
-      let text = "";
-
       if (ext === "txt") {
-        text = await file.text();
-      } else if (ext === "pdf") {
-        const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        const pageTexts: string[] = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          pageTexts.push(content.items.map((item: any) => item.str).join(" "));
-        }
-        text = pageTexts.join("\n\n");
-      } else if (ext === "docx") {
-        const mammoth = await import("mammoth");
-        const arrayBuffer = await file.arrayBuffer();
-        const res = await mammoth.extractRawText({ arrayBuffer });
-        text = res.value;
+        const text = await file.text();
+        setResumeText(text.trim());
       } else {
-        throw new Error("Unsupported file type. Please upload a .pdf, .docx, or .txt file.");
+        // For PDF and DOCX, we send file directly to server-side parser
+        setResumeText(`[Uploaded File: ${file.name}] (Server-side parser will analyze contents)`);
       }
-
-      if (!text.trim()) {
-        throw new Error(
-          "Couldn't find readable text in this file (it may be a scanned image). Please paste your resume text manually below."
-        );
-      }
-
-      setResumeText(text.trim());
     } catch (err: any) {
-      console.error("Resume file extraction failed:", err);
-      setExtractError(
-        err?.message || "Failed to read this file. Please paste your resume text manually below."
-      );
+      console.error("Resume file preview failed:", err);
+      setExtractError(err?.message || "Failed to read this file.");
     } finally {
       setExtracting(false);
     }
   };
 
   const analyzeResume = async () => {
-    if (!resumeText.trim()) return;
+    if (!resumeText.trim() && !selectedFile) return;
     setLoading(true);
     setAnalysisError("");
     try {
-      const analysis = await AIServiceClient.analyzeResume(resumeText);
+      let analysis: ResumeAnalysisResult;
+
+      if (selectedFile) {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+        const res = await authedFetch("/api/resume/analyze", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error || `Analysis failed with status ${res.status}`);
+        }
+        const data = await res.json();
+        const a = data.audit;
+        analysis = {
+          atsScore: a.atsScore ?? 0,
+          strengths: a.strengths || [],
+          weaknesses: a.criticalNegatives || a.weaknesses || [],
+          missingSkills: a.missingRecommendedKeywords || a.missingSkills || [],
+          formattingFeedback: a.executiveSummary || a.formattingFeedback || "",
+          improvementSuggestions: (a.actionPlan && a.actionPlan.length > 0)
+            ? a.actionPlan
+            : (a.bulletImprovements || []).map((b: any) => `${b.original} -> ${b.improved}`),
+        };
+      } else {
+        const res = await authedFetch("/api/resume/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resumeText }),
+        });
+        if (!res.ok) {
+          // Fallback to legacy action if /api/resume/analyze is rejected
+          analysis = await AIServiceClient.analyzeResume(resumeText);
+        } else {
+          const data = await res.json();
+          const a = data.audit;
+          analysis = {
+            atsScore: a.atsScore ?? 0,
+            strengths: a.strengths || [],
+            weaknesses: a.criticalNegatives || a.weaknesses || [],
+            missingSkills: a.missingRecommendedKeywords || a.missingSkills || [],
+            formattingFeedback: a.executiveSummary || a.formattingFeedback || "",
+            improvementSuggestions: (a.actionPlan && a.actionPlan.length > 0)
+              ? a.actionPlan
+              : (a.bulletImprovements || []).map((b: any) => `${b.original} -> ${b.improved}`),
+          };
+        }
+      }
+
       setResult(analysis);
 
       if (currentUser) {
@@ -367,13 +425,11 @@ function ResumeTab() {
         });
         await fetchHistory();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setResult(null);
       setAnalysisError(
-        error instanceof AIServiceUnavailableError
-          ? error.message
-          : "Could not analyze your resume right now. Please try again."
+        error?.message || "Could not analyze your resume right now. Please try again."
       );
     } finally {
       setLoading(false);
@@ -413,6 +469,7 @@ function ResumeTab() {
                   onClick={(e) => {
                     e.preventDefault();
                     setUploadedFileName("");
+                    setSelectedFile(null);
                     setResumeText("");
                     setExtractError("");
                   }}
