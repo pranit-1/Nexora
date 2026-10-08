@@ -3,6 +3,7 @@
 // Based on Bob's implementation, adapted for Nexora (Next.js/TypeScript)
 // ---------------------------------------------------------------------------
 import { AIRouterService } from '../aiProviders';
+import { neutralize } from '../promptGuard';
 import { extractText } from './documentReaderService';
 import PDFDocument from 'pdfkit';
 
@@ -118,7 +119,7 @@ function attemptParse(text: string | null): any {
   for (const cand of candidates) {
     try {
       return JSON.parse(cand);
-    } catch (_) {}
+    } catch {}
   }
   return null;
 }
@@ -130,19 +131,38 @@ function getVerdict(score: number): AuditResult['verdict'] {
   return 'High Risk';
 }
 
+/** Tolerant numeric parse: accepts 87, "87", "87%", "87/100". NaN if absent. */
+function parseScore(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const m = value.match(/-?\d+(\.\d+)?/);
+    if (m) return Number(m[0]);
+  }
+  return NaN;
+}
+
 function normalizeAudit(audit: any): AuditResult {
-  const atsScore = Math.max(0, Math.min(100, Number(audit.atsScore) || 0));
-  const verdict = audit.verdict || getVerdict(atsScore);
+  const parsedScore = parseScore(audit.atsScore);
+  const atsScore = Number.isFinite(parsedScore)
+    ? Math.max(0, Math.min(100, Math.round(parsedScore)))
+    : 0;
+  // Always derive the verdict from the score: trusting the model's free-text
+  // verdict allowed "Tier-1 Ready" alongside a score of 40.
+  const verdict = getVerdict(atsScore);
   const breakdown = audit.breakdown || {};
+  const b = (v: unknown) => {
+    const n = parseScore(v);
+    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+  };
   return {
     atsScore,
     verdict,
     breakdown: {
-      impactAndMetrics: Math.max(0, Math.min(100, Number(breakdown.impactAndMetrics) || 0)),
-      skillsRelevance: Math.max(0, Math.min(100, Number(breakdown.skillsRelevance) || 0)),
-      actionVerbs: Math.max(0, Math.min(100, Number(breakdown.actionVerbs) || 0)),
-      formattingAndClarity: Math.max(0, Math.min(100, Number(breakdown.formattingAndClarity) || 0)),
-      experienceDepth: Math.max(0, Math.min(100, Number(breakdown.experienceDepth) || 0)),
+      impactAndMetrics: b(breakdown.impactAndMetrics),
+      skillsRelevance: b(breakdown.skillsRelevance),
+      actionVerbs: b(breakdown.actionVerbs),
+      formattingAndClarity: b(breakdown.formattingAndClarity),
+      experienceDepth: b(breakdown.experienceDepth),
     },
     executiveSummary: typeof audit.executiveSummary === 'string' ? audit.executiveSummary : '',
     strengths: Array.isArray(audit.strengths) ? audit.strengths.filter((s: any) => typeof s === 'string') : [],
@@ -186,10 +206,10 @@ export async function auditResume(options: AuditOptions): Promise<AuditResult> {
 
 RESUME:
 """
-${resumeText.slice(0, 25000)}
+${neutralize(resumeText, 25000)}
 """
 
-${targetJobDescription ? `TARGET JOB:\n"""\n${targetJobDescription.slice(0, 10000)}\n"""` : ''}`;
+${targetJobDescription ? `TARGET JOB:\n"""\n${neutralize(targetJobDescription, 10000)}\n"""` : ''}`;
 
   const response = await callAI(prompt);
   const rawText = typeof response === 'string' ? response : JSON.stringify(response);
@@ -209,7 +229,9 @@ ${targetJobDescription ? `TARGET JOB:\n"""\n${targetJobDescription.slice(0, 1000
 
   const scoreMatch = cleaned.match(/"atsScore"\s*:\s*(\d+)/);
   if (scoreMatch) {
-    const fallbackScore = Number(scoreMatch[1]) || 80;
+    // `(\d+)` guarantees a valid number — including a legitimate 0, which the
+    // old `|| 80` coerced into a fabricated 80-point audit.
+    const fallbackScore = Number(scoreMatch[1]);
     return normalizeAudit({ atsScore: fallbackScore });
   }
 

@@ -110,21 +110,9 @@ export async function POST(req: NextRequest) {
       return res.json();
     };
 
-    let deleteResult = await deleteFromCloudinary(trimmedOldId, "image");
-    if (deleteResult.result !== "ok") {
-      const rawResult = await deleteFromCloudinary(trimmedOldId, "raw");
-      if (rawResult.result === "ok") {
-        deleteResult = rawResult;
-      }
-    }
-
-    if (deleteResult.result !== "ok" && deleteResult.result !== "not found") {
-      return NextResponse.json(
-        { error: `Failed to delete old file: ${deleteResult.result}` },
-        { status: 500 }
-      );
-    }
-
+    // SAFETY ORDER: upload the replacement FIRST, delete the old file only
+    // after the new asset is confirmed live. Deleting first meant any upload
+    // failure/timeout permanently destroyed the user's original document.
     const uploadFormData = new FormData();
     uploadFormData.append("file", file);
     uploadFormData.append("folder", folder);
@@ -161,6 +149,25 @@ export async function POST(req: NextRequest) {
         { error: data?.error?.message || "Cloudinary upload failed." },
         { status: uploadRes.status >= 400 && uploadRes.status < 600 ? uploadRes.status : 502 }
       );
+    }
+
+    // New file is live — now clean up the old asset. A cleanup failure only
+    // leaves an orphaned file on the CDN, so it must NOT fail the replace.
+    try {
+      let deleteResult = await deleteFromCloudinary(trimmedOldId, "image");
+      if (deleteResult.result !== "ok") {
+        const rawResult = await deleteFromCloudinary(trimmedOldId, "raw");
+        if (rawResult.result === "ok") {
+          deleteResult = rawResult;
+        }
+      }
+      if (deleteResult.result !== "ok" && deleteResult.result !== "not found") {
+        console.warn(
+          `wallet/replace: new file uploaded but old file cleanup failed (${trimmedOldId}): ${deleteResult.result}`
+        );
+      }
+    } catch (cleanupErr) {
+      console.warn("wallet/replace: old file cleanup error:", cleanupErr);
     }
 
     return NextResponse.json({

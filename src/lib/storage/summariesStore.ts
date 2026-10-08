@@ -1,13 +1,19 @@
 // Persistent store for AI-generated opportunity summaries.
 // Keyed by normalized source URL so repeat clicks are instant
 // and summaries survive restarts without re-scraping / re-asking AI.
+//
+// The durable copy lives in Firestore ("summary_cache"), not a JSON file under
+// `process.cwd()/storage`. Vercel's filesystem is read-only and ephemeral, so
+// the old file store lost every write and forgot everything on cold start:
+// the "cache" was a no-op in production and every explore click re-paid for an
+// AI call. The process-local memo stays as the hot path — one bulk read per
+// process, then O(1) lookups — and degrades to an empty cache in local dev
+// without a service account instead of throwing.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { createHash } from "node:crypto";
+import { getAdminDb, hasAdminCredentials } from "@/lib/firebaseAdmin";
 
-const STORAGE_DIR = join(process.cwd(), "storage");
-const SUMMARIES_PATH = join(STORAGE_DIR, "scraped-summaries.json");
-const SUMMARIES_TMP = `${SUMMARIES_PATH}.tmp`;
+const COLLECTION = "summary_cache";
 
 // Re-summarize after this many days (freshness).
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -25,107 +31,63 @@ interface SummaryEntry {
   createdAt: string;
 }
 
-/**
- * Process-local mirror of the store, plus a `Map` index for O(1) lookups.
- *
- * Every accessor used to `readFileSync` + `JSON.parse` the whole file. The batch
- * summarizer calls `getCachedSummary` once per stored opportunity to decide what
- * to process and again to count the results, so a store of N opportunities in a
- * file of M summaries cost O(N*M) of synchronous disk reads and JSON parses on
- * every single batch run. The file is small and only this module writes it, so
- * holding it in memory is safe; the memo is rebuilt lazily per process.
- */
-let memo: { byKey: Map<string, SummaryEntry>; order: SummaryEntry[] } | null = null;
+type MemoState = { byKey: Map<string, SummaryEntry>; order: SummaryEntry[] };
+
+let memo: MemoState | null = null;
+let loadPromise: Promise<MemoState> | null = null;
 
 /**
  * Saves are serialized through this chain.
  *
- * `saveSummary` is a read-modify-write against a shared file. The batch
+ * `saveSummary` is a read-modify-write against shared state. The batch
  * summarizer runs three workers concurrently, so without a queue two workers
- * could read the same base array and the second write would silently drop the
+ * could read the same base state and the second write would silently drop the
  * first one's entry.
  */
 let writeQueue: Promise<void> = Promise.resolve();
 
-function quarantineCorruptFile(err: unknown) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backup = `${SUMMARIES_PATH}.corrupt-${stamp}`;
-  try {
-    renameSync(SUMMARIES_PATH, backup);
-    console.error(
-      `[summaries-store] ${SUMMARIES_PATH} is unreadable (${(err as Error)?.message}). ` +
-        `Moved aside to ${backup} rather than overwriting it — check that file before deleting.`
-    );
-  } catch (renameErr) {
-    console.error("[summaries-store] could not quarantine corrupt file:", (renameErr as Error)?.message);
-  }
+/** Doc ids must match [A-Za-z0-9_-]{1,1500}; a URL cannot. Hash it. */
+function docIdFor(normalizedUrl: string): string {
+  return createHash("sha256").update(normalizedUrl).digest("hex");
 }
 
-function loadFromDisk(): { byKey: Map<string, SummaryEntry>; order: SummaryEntry[] } {
+async function loadFromFirestore(): Promise<MemoState> {
   const byKey = new Map<string, SummaryEntry>();
   const order: SummaryEntry[] = [];
-
-  if (!existsSync(SUMMARIES_PATH)) return { byKey, order };
-
-  let raw: string;
+  if (!hasAdminCredentials()) return { byKey, order };
   try {
-    raw = readFileSync(SUMMARIES_PATH, "utf-8");
+    const snap = await getAdminDb()
+      .collection(COLLECTION)
+      .orderBy("createdAt", "desc")
+      .limit(MAX_ENTRIES)
+      .get();
+    snap.forEach((d) => {
+      const entry = d.data() as SummaryEntry;
+      if (!entry || typeof entry.normalizedUrl !== "string") return;
+      if (byKey.has(entry.normalizedUrl)) return;
+      byKey.set(entry.normalizedUrl, entry);
+      order.push(entry);
+    });
   } catch (err) {
-    console.warn("[summaries-store] read failed:", (err as Error)?.message);
-    return { byKey, order };
-  }
-
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch (err) {
-    // Previously this returned [] and the next save overwrote the file, which
-    // silently destroyed the whole cache and forced every summary to be re-bought
-    // with a paid AI call. Keep the damaged file for inspection instead.
-    quarantineCorruptFile(err);
-    return { byKey, order };
-  }
-
-  const list = Array.isArray(data) ? data : (data as { summaries?: SummaryEntry[] })?.summaries;
-  if (!Array.isArray(list)) return { byKey, order };
-
-  for (const entry of list) {
-    if (!entry || typeof entry.normalizedUrl !== "string") continue;
-    if (byKey.has(entry.normalizedUrl)) continue;
-    byKey.set(entry.normalizedUrl, entry);
-    order.push(entry);
+    // Fail soft: a cache miss costs one AI call, an exception would take the
+    // whole summarize route down.
+    console.warn(
+      "[summaries-store] Firestore load failed, starting with an empty cache:",
+      (err as Error)?.message
+    );
   }
   return { byKey, order };
 }
 
-function ensureLoaded() {
-  if (!memo) memo = loadFromDisk();
-  return memo;
-}
-
-/**
- * Write via temp file + rename.
- *
- * `renameSync` within a directory is atomic, so a reader (or a crash) can only
- * ever observe the complete previous file or the complete new one. Writing
- * straight to the target left a truncated, unparseable file if the process was
- * frozen or killed mid-write, which the reader above would treat as an empty
- * cache.
- */
-function writeAll(entries: SummaryEntry[]) {
-  if (!existsSync(STORAGE_DIR)) mkdirSync(STORAGE_DIR, { recursive: true });
-  const payload = JSON.stringify({ summaries: entries }, null, 2);
-  try {
-    writeFileSync(SUMMARIES_TMP, payload, "utf-8");
-    renameSync(SUMMARIES_TMP, SUMMARIES_PATH);
-  } catch (err: any) {
-    console.warn("[summaries-store] write failed:", err.message);
-    try {
-      if (existsSync(SUMMARIES_TMP)) unlinkSync(SUMMARIES_TMP);
-    } catch {
-      // best effort
-    }
+function ensureLoaded(): Promise<MemoState> {
+  if (memo) return Promise.resolve(memo);
+  if (!loadPromise) {
+    loadPromise = loadFromFirestore().then((state) => {
+      memo = state;
+      return state;
+    });
   }
+  return loadPromise;
 }
 
 export function normalizeSummaryKey(url: string): string {
@@ -133,9 +95,10 @@ export function normalizeSummaryKey(url: string): string {
 }
 
 /** Returns a fresh cached summary for the url, or null. */
-export function getCachedSummary(url: string): SummaryEntry | null {
+export async function getCachedSummary(url: string): Promise<SummaryEntry | null> {
   const key = normalizeSummaryKey(url);
-  const found = ensureLoaded().byKey.get(key);
+  const state = await ensureLoaded();
+  const found = state.byKey.get(key);
   if (!found) return null;
   const createdAt = new Date(found.createdAt).getTime();
   // An unparseable timestamp means we cannot prove freshness, so treat the entry
@@ -145,7 +108,10 @@ export function getCachedSummary(url: string): SummaryEntry | null {
 }
 
 /** Saves/updates the cached summary for a url. */
-export function saveSummary(url: string, entry: { summary: string; provider: string; title: string; orgName: string }) {
+export function saveSummary(
+  url: string,
+  entry: { summary: string; provider: string; title: string; orgName: string }
+): Promise<void> {
   const normalizedUrl = normalizeSummaryKey(url);
   const record: SummaryEntry = {
     url,
@@ -157,8 +123,12 @@ export function saveSummary(url: string, entry: { summary: string; provider: str
     createdAt: new Date().toISOString(),
   };
 
-  writeQueue = writeQueue.then(() => {
-    const state = ensureLoaded();
+  writeQueue = writeQueue.then(async () => {
+    // Local dev without a service account: keep the request working, just
+    // uncached, instead of throwing out of the summarize response.
+    if (!hasAdminCredentials()) return;
+    const state = await ensureLoaded();
+
     const previous = state.byKey.get(normalizedUrl);
     if (previous) {
       const at = state.order.indexOf(previous);
@@ -167,26 +137,41 @@ export function saveSummary(url: string, entry: { summary: string; provider: str
     state.byKey.set(normalizedUrl, record);
     state.order.unshift(record);
 
-    // keep bounded — trim the memo and the file from the same source of truth
+    // Keep the memo and the collection bounded from the same source of truth.
+    let trimmed: SummaryEntry[] = [];
     if (state.order.length > MAX_ENTRIES) {
-      state.order.length = MAX_ENTRIES;
+      trimmed = state.order.splice(MAX_ENTRIES);
       const live = new Set(state.order.map((e) => e.normalizedUrl));
       for (const key of [...state.byKey.keys()]) {
         if (!live.has(key)) state.byKey.delete(key);
       }
     }
 
-    writeAll(state.order);
+    try {
+      const db = getAdminDb();
+      await db.collection(COLLECTION).doc(docIdFor(normalizedUrl)).set(record);
+      if (trimmed.length) {
+        const batch = db.batch();
+        for (const entry of trimmed) {
+          batch.delete(db.collection(COLLECTION).doc(docIdFor(entry.normalizedUrl)));
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      // The memo still serves this process; the durable copy will catch up on
+      // the next successful save of the same url.
+      console.warn("[summaries-store] Firestore write failed:", (err as Error)?.message);
+    }
   });
 
   return writeQueue;
 }
 
-export function getSummaryCount(): number {
-  return ensureLoaded().order.length;
+export async function getSummaryCount(): Promise<number> {
+  return (await ensureLoaded()).order.length;
 }
 
-/** Resolves once every queued write has hit disk. */
+/** Resolves once every queued write has been persisted. */
 export function flushSummaryWrites(): Promise<void> {
   return writeQueue;
 }

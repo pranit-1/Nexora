@@ -280,8 +280,12 @@ export default function WalletPage() {
           imageDataUrl,
           mimeType: item.file.type,
           name: item.file.name,
-          useAI: false,
-          preferAI: false,
+          // LLM-first as documentClassifier documents it; on any AI failure
+          // (network, quota, categorize route unavailable) it falls back to the
+          // local rules, so the queue never stalls. Categorize route is
+          // authenticated + rate-limited.
+          useAI: true,
+          preferAI: true,
         });
 
         setFileQueue((prev) =>

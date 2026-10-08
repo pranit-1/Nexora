@@ -3,10 +3,35 @@ import { AIRouterService } from "@/lib/aiProviders";
 import { getCachedSummary, saveSummary } from "@/lib/storage/summariesStore";
 import { requireUser } from "@/lib/serverAuth";
 import { enforceRateLimit, LIMITS } from "@/lib/rateLimit";
-import { validateOutboundUrl } from "@/lib/urlGuard";
+import { validateOutboundUrlDeep } from "@/lib/urlGuard";
+import { neutralize } from "@/lib/promptGuard";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
+
+const MAX_PAGE_BYTES = 3 * 1024 * 1024;
+
+/**
+ * Buffers a fetched page with guards: refuses non-text content types and
+ * rejects oversized bodies BEFORE arrayBuffer() materializes them, so a fast
+ * multi-GB response can't exhaust function memory.
+ */
+async function readPageBody(res: Response): Promise<ArrayBuffer> {
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType && !/text\/html|text\/plain|application\/xhtml\+xml|application\/xml|text\/xml/i.test(contentType)) {
+    throw new Error(`Unsupported content-type: ${contentType.split(";")[0]}`);
+  }
+  const declared = Number(res.headers.get("content-length") || "0");
+  if (declared > MAX_PAGE_BYTES) throw new Error("Page exceeds size limit");
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > MAX_PAGE_BYTES) throw new Error("Page exceeds size limit");
+  return buf;
+}
+
+/** Neutralize a metadata value and escape quotes for `Key="..."` prompt contexts. */
+function q(value: string): string {
+  return neutralize(value, 500).replace(/"/g, "'");
+}
 
 function stripHtml(html: string): string {
   return html
@@ -132,14 +157,15 @@ export async function POST(request: Request) {
 
     // SSRF guard: rejects loopback / RFC1918 / link-local (cloud metadata) /
     // CGNAT / IPv6-local targets, non-http(s) schemes and embedded credentials.
-    const checked = validateOutboundUrl(url);
+    // Deep variant also resolves DNS and rejects names pointing at private IPs.
+    const checked = await validateOutboundUrlDeep(url);
     if (!checked.ok) {
       return NextResponse.json({ error: checked.reason }, { status: 400 });
     }
     const safeUrl = checked.url.toString();
 
     // 1. Serve cache instantly (repeat clicks: no re-scrape / no AI cost)
-    const cached = getCachedSummary(safeUrl);
+    const cached = await getCachedSummary(safeUrl);
     if (cached) {
       return NextResponse.json({
         success: true,
@@ -167,7 +193,9 @@ export async function POST(request: Request) {
       });
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("location");
-        const followed = location ? validateOutboundUrl(new URL(location, safeUrl).toString()) : null;
+        const followed = location
+          ? await validateOutboundUrlDeep(new URL(location, safeUrl).toString())
+          : null;
         if (!followed?.ok) {
           throw new Error("Blocked cross-origin redirect");
         }
@@ -180,11 +208,11 @@ export async function POST(request: Request) {
           redirect: "error",
         });
         if (!followRes.ok) throw new Error(`Fetch failed ${followRes.status}`);
-        const followBuf = await followRes.arrayBuffer();
+        const followBuf = await readPageBody(followRes);
         text = stripHtml(decodeBody(followBuf, followRes.headers.get("content-type") || ""));
       } else {
         if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
-        const buf = await res.arrayBuffer();
+        const buf = await readPageBody(res);
         const contentType = res.headers.get("content-type") || "";
         text = stripHtml(decodeBody(buf, contentType));
       }
@@ -192,7 +220,9 @@ export async function POST(request: Request) {
       text = "";
     }
 
-    const raw = text.slice(0, 12000);
+    // Neutralized: scraped page content must not be able to close the ```"""
+    // fence or impersonate control tags and rewrite the instructions.
+    const raw = neutralize(text, 12000);
     const snippets = cleanSnippets(text);
 
     // 3. Try AI
@@ -228,7 +258,7 @@ Bullet list of 5-8 key facts the user MUST know (most important info compressed)
 
 If any info is not found on the page, write "Check official page" rather than guessing. Keep total under 450 words.
 
-Context (card info): Title="${title}" Organization="${orgName}" Category="${category}" Deadline="${deadline}" Country="${country}" Field="${field}" Eligibility="${eligibility}" URL="${safeUrl}"
+Context (card info): Title="${q(title)}" Organization="${q(orgName)}" Category="${q(category)}" Deadline="${q(deadline)}" Country="${q(country)}" Field="${q(field)}" Eligibility="${q(eligibility)}" URL="${safeUrl}"
 
 FULL PAGE TEXT:
 """
@@ -238,7 +268,9 @@ ${raw}
         const summary = await AIRouterService.requestAI(prompt, false);
         const summaryText = typeof summary === "string" ? summary : JSON.stringify(summary);
         if (summaryText && summaryText.trim().length > 50) {
-          saveSummary(safeUrl, { summary: summaryText, provider: "ai-router", title, orgName });
+          // Awaited: on a frozen serverless instance an un-awaited write can
+          // be lost, forcing the next visitor to pay for the same AI call.
+          await saveSummary(safeUrl, { summary: summaryText, provider: "ai-router", title, orgName });
           return NextResponse.json({
             success: true,
             url: safeUrl,

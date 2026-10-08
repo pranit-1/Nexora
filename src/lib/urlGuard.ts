@@ -8,6 +8,8 @@
 // `src/lib/profileLinks.ts` already validates user-submitted URLs correctly for
 // href rendering; this module is the fetch-side counterpart.
 
+import { lookup as dnsLookup } from "node:dns/promises";
+
 const BLOCKED_HOSTNAMES = new Set([
   "localhost",
   "localhost.localdomain",
@@ -34,14 +36,70 @@ function isPrivateIPv4(host: string): boolean {
   return false;
 }
 
+/**
+ * Expand an IPv6 literal into its 8 16-bit groups, or null if malformed.
+ * Handles embedded IPv4 tails ("::ffff:127.0.0.1", "::7f00:1") so that all
+ * the v4-in-v6 spellings go through the same private-range checks.
+ */
+function parseIPv6(input: string): number[] | null {
+  let h = input.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  // Fold a dotted-quad tail into two hex groups.
+  const v4 = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h);
+  if (v4) {
+    const parts = v4[1].split(".").map(Number);
+    if (parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    const hi = ((parts[0] << 8) | parts[1]).toString(16);
+    const lo = ((parts[2] << 8) | parts[3]).toString(16);
+    h = h.slice(0, v4.index) + `${hi}:${lo}`;
+  }
+  const halves = h.split("::");
+  if (halves.length > 2) return null;
+  const toGroups = (s: string) => (s === "" ? [] : s.split(":"));
+  let groups: string[];
+  if (halves.length === 2) {
+    const head = toGroups(halves[0]);
+    const tail = toGroups(halves[1]);
+    if (head.length + tail.length > 8) return null;
+    groups = [...head, ...Array(8 - head.length - tail.length).fill("0"), ...tail];
+  } else {
+    groups = toGroups(h);
+    if (groups.length !== 8) return null;
+  }
+  const out: number[] = [];
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+    out.push(parseInt(g, 16));
+  }
+  return out;
+}
+
+function v4FromGroups(hi: number, lo: number): string {
+  return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+}
+
 function isPrivateIPv6(host: string): boolean {
-  const h = host.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
-  if (h === "::1" || h === "::") return true;
-  if (h.startsWith("fe80")) return true; // link-local
-  if (/^f[cd]/.test(h)) return true; // unique local fc00::/7
-  // IPv4-mapped (::ffff:127.0.0.1) must be checked against the v4 rules.
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h);
-  if (mapped) return isPrivateIPv4(mapped[1]);
+  const g = parseIPv6(host);
+  // Malformed literal: fail closed.
+  if (!g) return true;
+  const allZeroExceptLast = g.slice(0, 7).every((n) => n === 0);
+  if (allZeroExceptLast && (g[7] === 0 || g[7] === 1)) return true; // :: and ::1
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((g[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 site-local (deprecated)
+  if (g[0] >= 0xfc00 && g[0] <= 0xfdff) return true; // fc00::/7 unique local
+  // IPv4-mapped ::ffff:a.b.c.d (and the hex-group spelling ::ffff:7f00:1)
+  if (g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0xffff) {
+    return isPrivateIPv4(v4FromGroups(g[6], g[7]));
+  }
+  // Deprecated IPv4-compatible ::a.b.c.d — still routable, so check it.
+  if (g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
+    return isPrivateIPv4(v4FromGroups(g[6], g[7]));
+  }
+  // 6to4 (2002::/16) embeds a v4 address in groups 1-2.
+  if (g[0] === 0x2002) return isPrivateIPv4(v4FromGroups(g[1], g[2]));
+  // NAT64 (64:ff9b::/96) embeds a v4 address in the last two groups.
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
+    return isPrivateIPv4(v4FromGroups(g[6], g[7]));
+  }
   return false;
 }
 
@@ -99,6 +157,36 @@ export function validateOutboundUrl(raw: unknown): SafeUrlResult {
   }
 
   return { ok: true, url };
+}
+
+/**
+ * DNS-rebinding-safe variant: everything `validateOutboundUrl` checks, plus a
+ * DNS resolution check that every address behind the hostname is public. A
+ * hostname-only check passes `rebind.attacker.example` that resolves to
+ * 169.254.169.254. Residual TOCTOU between this lookup and the actual fetch
+ * remains (blocking it properly needs an egress proxy), but a one-shot rebind
+ * would have to flip DNS between two lookups milliseconds apart.
+ */
+export async function validateOutboundUrlDeep(raw: unknown): Promise<SafeUrlResult> {
+  const basic = validateOutboundUrl(raw);
+  if (!basic.ok) return basic;
+  const host = basic.url.hostname.toLowerCase().replace(/\.$/, "");
+  // IPv6 literals were already vetted against the private ranges above.
+  if (host.startsWith("[") || host.includes(":")) return basic;
+  let addrs: Array<{ address: string; family: number }>;
+  try {
+    addrs = await dnsLookup(host, { all: true, verbatim: true });
+  } catch {
+    return { ok: false, reason: "Host could not be resolved." };
+  }
+  if (addrs.length === 0) return { ok: false, reason: "Host could not be resolved." };
+  for (const a of addrs) {
+    const priv = a.family === 6 ? isPrivateIPv6(a.address) : isPrivateIPv4(a.address);
+    if (priv) {
+      return { ok: false, reason: "That host resolves to a private network address." };
+    }
+  }
+  return basic;
 }
 
 /** Guard an inbound JSON field that must be a Firestore uid / public id. */

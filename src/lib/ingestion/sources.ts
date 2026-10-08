@@ -36,14 +36,26 @@ function stripHtml(html: string): string {
   ).trim();
 }
 
+const FETCH_TIMEOUT_MS = 12_000;
+const MAX_FEED_BYTES = 3 * 1024 * 1024;
+
 async function fetchText(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: {
       "User-Agent": "NexoraOpportunityBot/1.0 (+https://nexora.vercel.app)",
     },
+    // Without a timeout one hung upstream stalls Promise.allSettled for the
+    // whole run (allSettled waits on the hung promise) until the function dies.
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Fetch failed for ${url}: ${res.status}`);
-  return res.text();
+  // Reject oversized bodies before/while buffering so one huge feed can't
+  // exhaust function memory.
+  const declared = Number(res.headers.get("content-length") || "0");
+  if (declared > MAX_FEED_BYTES) throw new Error(`Feed too large (${declared} bytes): ${url}`);
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > MAX_FEED_BYTES) throw new Error(`Feed too large: ${url}`);
+  return new TextDecoder().decode(buf);
 }
 
 /** Parses <item>...</item> blocks out of a raw RSS/XML string. */

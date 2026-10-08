@@ -1,25 +1,46 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/serverAuth';
-import { auditResume, auditResumeBuffer, AuditResult } from '@/lib/services/resumeAnalyzerService';
-import { extractText } from '@/lib/services/documentReaderService';
+import { enforceRateLimit, LIMITS } from '@/lib/rateLimit';
+import { auditResume, auditResumeBuffer } from '@/lib/services/resumeAnalyzerService';
 
 export const runtime = 'nodejs';
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 export async function POST(request: Request) {
   const auth = await requireUser(request);
   if (!auth.ok) return auth.response;
 
+  const limited = enforceRateLimit(request, { ...LIMITS.resumeAnalyze, uid: auth.user.uid });
+  if (!limited.ok) return limited.response;
+
   try {
+    // Reject oversized bodies before buffering them into memory.
+    const contentLength = Number(request.headers.get('content-length') || '0');
+    if (contentLength > MAX_UPLOAD_BYTES + 8 * 1024) {
+      return NextResponse.json(
+        { error: `Resume is too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.` },
+        { status: 413 }
+      );
+    }
+
     const formData = await request.formData().catch(() => null);
     const body = !formData ? await request.json().catch(() => null) : null;
 
-    const targetJobDescription = formData?.get('targetJobDescription')?.toString() || body?.targetJobDescription || '';
+    const rawTarget = formData?.get('targetJobDescription') ?? body?.targetJobDescription;
+    const targetJobDescription = typeof rawTarget === 'string' ? rawTarget : '';
 
     // File upload case
     if (formData && formData.has('file')) {
       const file = formData.get('file');
       if (!(file instanceof File)) {
         return NextResponse.json({ error: 'Invalid file upload' }, { status: 400 });
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        return NextResponse.json(
+          { error: `Resume is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.` },
+          { status: 413 }
+        );
       }
       const buffer = Buffer.from(await file.arrayBuffer());
       const result = await auditResumeBuffer(buffer, file.name, targetJobDescription);
@@ -33,7 +54,7 @@ export async function POST(request: Request) {
     }
 
     // Raw text case
-    if (body?.resumeText) {
+    if (typeof body?.resumeText === 'string' && body.resumeText) {
       const audit = await auditResume({
         resumeText: body.resumeText,
         targetJobDescription,
@@ -42,7 +63,7 @@ export async function POST(request: Request) {
     }
 
     // Try to get from stored base resume text if provided
-    if (body?.baseResumeText) {
+    if (typeof body?.baseResumeText === 'string' && body.baseResumeText) {
       const audit = await auditResume({
         resumeText: body.baseResumeText,
         targetJobDescription,

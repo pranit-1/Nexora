@@ -4,7 +4,8 @@
 // Runs side-by-side with the website (startup + cron + /api/summarize-all).
 
 import { AIRouterService } from "@/lib/aiProviders";
-import { readStore } from "./scrapedStore";
+import { neutralize } from "@/lib/promptGuard";
+import { getAdminDb, hasAdminCredentials } from "@/lib/firebaseAdmin";
 import { getCachedSummary, saveSummary, flushSummaryWrites } from "./summariesStore";
 
 const CONCURRENCY = 3;
@@ -12,6 +13,29 @@ const CONCURRENCY = 3;
 /** Upper bound on one batch. Each item is a paid AI call. */
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 15;
+
+/** How many stored opportunities we scan for missing summaries. */
+const SCAN_LIMIT = 400;
+
+/**
+ * Input now comes from Firestore (`org_opportunities`), the single live store.
+ *
+ * The old source was `storage/scraped-opportunities.json`, which had no writer
+ * left anywhere in the repo — and on Vercel's read-only filesystem `readStore()`
+ * returned null regardless, so `/api/summarize-all` processed 0 items and still
+ * reported success.
+ */
+async function loadStoredOpportunities(): Promise<any[]> {
+  // No orderBy: a status+updatedAt sort needs a composite index, and
+  // firestore.indexes.json defines none — the query would fail with
+  // FAILED_PRECONDITION until someone deploys one.
+  const snap = await getAdminDb()
+    .collection("org_opportunities")
+    .where("status", "==", "approved")
+    .limit(SCAN_LIMIT)
+    .get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
 
 export interface BatchSummaryStats {
   processed: number;
@@ -27,15 +51,19 @@ export interface BatchSummaryStats {
 }
 
 function buildPrompt(o: any): string {
-  const title = o.title || "";
-  const orgName = o.orgName || "";
-  const category = o.category || "";
-  const deadline = o.deadline || "";
-  const country = o.country || "";
-  const field = o.field || "";
-  const eligibility = o.eligibility || "";
-  const url = o.applyLink || o.sourceUrl || "";
-  const description = (o.description || "").slice(0, 2500);
+  // Stored card fields can originate from scraped pages — neutralize before
+  // interpolation so they cannot close the ```""" fences or impersonate
+  // control tags and rewrite the instructions (prompt injection).
+  const q = (v: unknown, max = 500) => neutralize(v, max).replace(/"/g, "'");
+  const title = q(o.title);
+  const orgName = q(o.orgName);
+  const category = q(o.category);
+  const deadline = q(o.deadline);
+  const country = q(o.country);
+  const field = q(o.field);
+  const eligibility = q(o.eligibility, 1000);
+  const url = q(o.applyLink || o.sourceUrl, 2000);
+  const description = neutralize((o.description || "").slice(0, 2500), 2500);
 
   return `You are NEXORA's opportunity explainer. Summarize the opportunity described below into a proper easy-to-understand format so any student can understand what is happening.
 
@@ -96,9 +124,6 @@ export async function summarizePendingOpportunities(
   opts: { limit?: number; force?: boolean } = {},
   onProgress?: (done: number, total: number) => void
 ): Promise<BatchSummaryStats> {
-  const store = readStore();
-  const opps: any[] = (store?.opportunities as any[]) || [];
-
   // `?limit=100000` used to be honoured verbatim. Every item in the batch is a
   // paid AI call, so an unbounded (or merely careless) limit could spend an
   // arbitrary amount of money in a single request. Clamp, and say so.
@@ -110,21 +135,37 @@ export async function summarizePendingOpportunities(
   const limitClamped = Number.isFinite(requested) && requested > MAX_LIMIT;
   const force = !!opts.force;
 
+  const errors: string[] = [];
+
+  // An empty scan must never masquerade as success: say why the batch did
+  // nothing instead of returning `processed: 0` with no explanation.
+  let opps: any[] = [];
+  if (!hasAdminCredentials()) {
+    errors.push("Admin credentials unavailable — cannot read opportunities from Firestore.");
+  } else {
+    try {
+      opps = await loadStoredOpportunities();
+    } catch (err: any) {
+      errors.push(`Firestore read failed: ${(err?.message || "unknown error").slice(0, 120)}`);
+    }
+  }
+
   let skippedNoUrl = 0;
-  const toProcess = opps.filter((o: any) => {
+  const toProcess: any[] = [];
+  for (const o of opps) {
     const applyLink = (o.applyLink || o.sourceUrl || "") as string;
     if (!applyLink) {
       skippedNoUrl++;
-      return false;
+      continue;
     }
-    if (!force && getCachedSummary(applyLink)) return false;
-    return true;
-  }).slice(0, limit);
+    if (!force && (await getCachedSummary(applyLink))) continue;
+    toProcess.push(o);
+    if (toProcess.length >= limit) break;
+  }
 
   let saved = 0;
   let failed = 0;
   let aiCalls = 0;
-  const errors: string[] = [];
 
   let index = 0;
 
@@ -151,12 +192,15 @@ export async function summarizePendingOpportunities(
   const workerCount = Math.min(CONCURRENCY, toProcess.length || 1);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  // `saveSummary` serialises its disk writes behind a queue, so the route must
+  // `saveSummary` serialises its writes behind a queue, so the route must
   // await the queue or it can return before the summaries have actually landed
   // (and, on a frozen serverless instance, lose them entirely).
   await flushSummaryWrites();
 
-  const summarized = opps.filter((o: any) => !!getCachedSummary(o.applyLink || o.sourceUrl || "")).length;
+  let summarized = 0;
+  for (const o of opps) {
+    if (await getCachedSummary((o.applyLink || o.sourceUrl || "") as string)) summarized++;
+  }
 
   if (limitClamped) {
     errors.push(

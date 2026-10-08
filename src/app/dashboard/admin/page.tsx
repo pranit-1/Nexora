@@ -231,6 +231,14 @@ export default function AdminPage() {
     if (!currentUser) return;
     if (!isAdmin) return;
 
+    // Both onSnapshot listeners must die with the effect. Cleanup is tracked
+    // explicitly because the listeners are registered inside an async
+    // function: by the time they attach, this effect may already have been
+    // cleaned up (navigating away mid-load), so a late registration has to be
+    // unsubscribed immediately instead of being orphaned.
+    let disposed = false;
+    const cleanups: Array<() => void> = [];
+
     // Load admin panel dashboard data
     const loadAdminData = async () => {
       try {
@@ -238,6 +246,7 @@ export default function AdminPage() {
         const userSnap = await getDocs(collection(db, "users"));
         const users: any[] = [];
         userSnap.forEach((u) => users.push({ id: u.id, ...u.data() }));
+        if (disposed) return;
         setUsersList(users);
 
         // 2/3. Counts for applications and community posts come from the server
@@ -280,6 +289,8 @@ export default function AdminPage() {
           });
           setLoading(false);
         });
+        if (disposed) unsubOrgOpp();
+        else cleanups.push(unsubOrgOpp);
 
         // 5. Fetch organization access requests (self-service signups)
         const orgReqQuery = query(collection(db, "org_requests"));
@@ -288,20 +299,22 @@ export default function AdminPage() {
           snap.forEach((d) => items.push(d.data() as OrgRequest));
           setOrgRequests(items);
         });
-
-        return () => {
-          unsubOrgOpp();
-          unsubOrgReq();
-        };
+        if (disposed) unsubOrgReq();
+        else cleanups.push(unsubOrgReq);
       } catch (err) {
         console.error(err);
-        setLoading(false);
+        if (!disposed) setLoading(false);
       }
     };
 
     loadAdminData();
     fetchTelemetry();
-  }, [currentUser]);
+
+    return () => {
+      disposed = true;
+      for (const unsubscribe of cleanups) unsubscribe();
+    };
+  }, [currentUser, isAdmin]);
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);

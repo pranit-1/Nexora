@@ -5,9 +5,12 @@
       "schedule": "0 3 * * *"
     },
     {
-      "path": "/api/scrape",
+      "path": "/api/scrape?force=1",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/summarize-all",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
-

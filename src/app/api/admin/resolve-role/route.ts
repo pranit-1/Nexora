@@ -46,6 +46,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ uid, role: storedRole, changed: false });
     }
 
+    // The user explicitly chose "organization" via /api/account/role. That
+    // choice is not derivable from the token, so this route must never rewrite
+    // it back to "user" on sign-in (an admin allow-list match still wins).
+    if (storedRole === "organization" && computedRole !== "admin") {
+      return NextResponse.json({ uid, role: storedRole, changed: false });
+    }
+
     const patch: Record<string, unknown> = { role: computedRole, roleUpdatedAt: new Date().toISOString() };
     // Bind the stored email to the verified token email on first resolution, so
     // the profile can never be created with a forged address.
@@ -58,6 +65,6 @@ export async function POST(request: Request) {
   } catch (e) {
     const msg = (e as Error)?.message || String(e);
     console.error("[admin/resolve] Crash:", msg, (e as Error)?.stack);
-    return NextResponse.json({ error: `Could not resolve role: ${msg}`, details: msg }, { status: 500 });
+    return NextResponse.json({ error: "Could not resolve role" }, { status: 500 });
   }
 }

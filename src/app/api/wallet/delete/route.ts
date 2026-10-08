@@ -87,6 +87,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, result: data.result });
   } catch (err: any) {
     console.error("Wallet delete API error:", err);
-    return NextResponse.json({ error: err.message || "Delete failed" }, { status: 500 });
+    return NextResponse.json({ error: "Delete failed" }, { status: 500 });
   }
 }

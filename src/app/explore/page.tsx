@@ -304,9 +304,11 @@ function ExploreContent() {
     }
   };
 
-  // ── Solid local storage: auto-load cached data on first mount (no re-scrape, instant)
-  // Storage is at storage/scraped-opportunities.json (400 cap), refreshed every 2 days via instrumentation.ts
-  // and expiry pruned every 12h. This call hits /api/scrape?preview=1 which serves cached if <2 days old.
+  // ── Auto-load cached data on first mount (no re-scrape, instant)
+  // Opportunities live in Firestore "org_opportunities"; AI summaries are
+  // cached in Firestore "summary_cache" (src/lib/storage/summariesStore.ts) —
+  // the old storage/scraped-opportunities.json file store is gone.
+  // This call hits /api/scrape?preview=1 which serves cached if <2 days old.
   useEffect(() => {
     fetchLive({ silent: true });
   }, []);

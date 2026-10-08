@@ -20,8 +20,15 @@ type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
  * correctly refuse it -- which means the shortlist feature was silently broken.
  * Rather than widen the rules to let any signed-in user edit any application,
  * the decision is made server-side where it can be authorized: the caller must
- * own at least one `org_opportunities` document whose `organization` matches
- * the target application. Only the two decision fields are written.
+ * own at least one **admin-approved** `org_opportunities` document whose
+ * `organization`/`orgName` matches the target application. Only the two
+ * decision fields are written.
+ *
+ * SECURITY: the approved-status constraint is load-bearing. Client-created
+ * listings are forced to `status: "pending"` by the create rule and only an
+ * admin can approve, so an attacker cannot create a pending listing named
+ * after a victim org and pass the ownership check to reject/shortlist that
+ * org's candidates.
  */
 export async function POST(request: Request) {
   const auth = await requireUser(request);
@@ -56,49 +63,71 @@ export async function POST(request: Request) {
     );
   }
 
-  const db = getAdminDb();
-  const apps = db.collection("applications");
-  const opps = db.collection("org_opportunities");
+  try {
+    const db = getAdminDb();
+    const apps = db.collection("applications");
+    const opps = db.collection("org_opportunities");
 
-  const appSnap = await apps.doc(applicationId).get();
-  if (!appSnap.exists) {
-    return NextResponse.json({ error: "Application not found." }, { status: 404 });
-  }
+    const appSnap = await apps.doc(applicationId).get();
+    if (!appSnap.exists) {
+      return NextResponse.json({ error: "Application not found." }, { status: 404 });
+    }
 
-  const app = appSnap.data() ?? {};
-  const targetOrg =
-    typeof app.organization === "string"
-      ? app.organization
-      : typeof app.orgName === "string"
-        ? app.orgName
-        : "";
+    const app = appSnap.data() ?? {};
+    const targetOrg =
+      typeof app.organization === "string"
+        ? app.organization
+        : typeof app.orgName === "string"
+          ? app.orgName
+          : "";
 
-  if (!targetOrg) {
+    if (!targetOrg) {
+      return NextResponse.json(
+        { error: "This application is not linked to an organization." },
+        { status: 403 }
+      );
+    }
+
+    // The caller must have posted an admin-approved program under that
+    // organization. Both name fields are checked because writers set one or
+    // the other (client create requires `orgName`, ingestion writes both).
+    const ownership = await opps
+      .where("postedByUid", "==", uid)
+      .where("status", "==", "approved")
+      .where("organization", "==", targetOrg)
+      .limit(1)
+      .get();
+
+    let ownsOrg = !ownership.empty;
+    if (!ownsOrg) {
+      const byOrgName = await opps
+        .where("postedByUid", "==", uid)
+        .where("status", "==", "approved")
+        .where("orgName", "==", targetOrg)
+        .limit(1)
+        .get();
+      ownsOrg = !byOrgName.empty;
+    }
+
+    if (!ownsOrg) {
+      return NextResponse.json(
+        { error: "You do not have permission to manage applications for this organization." },
+        { status: 403 }
+      );
+    }
+
+    await apps.doc(applicationId).update({
+      status,
+      updatedAt: new Date().toISOString(),
+      reviewedByUid: uid,
+    });
+
+    return NextResponse.json({ ok: true, applicationId, status });
+  } catch (err) {
+    console.error("organization/applications/status POST error:", err);
     return NextResponse.json(
-      { error: "This application is not linked to an organization." },
-      { status: 403 }
+      { error: "Failed to update application status." },
+      { status: 500 }
     );
   }
-
-  // The caller must have posted a program under that organization.
-  const ownedOpps = await opps
-    .where("postedByUid", "==", uid)
-    .where("organization", "==", targetOrg)
-    .limit(1)
-    .get();
-
-  if (ownedOpps.empty) {
-    return NextResponse.json(
-      { error: "You do not have permission to manage applications for this organization." },
-      { status: 403 }
-    );
-  }
-
-  await apps.doc(applicationId).update({
-    status,
-    updatedAt: new Date().toISOString(),
-    reviewedByUid: uid,
-  });
-
-  return NextResponse.json({ ok: true, applicationId, status });
 }

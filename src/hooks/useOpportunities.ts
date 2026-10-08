@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Opportunity } from "@/lib/mockData";
+import { Opportunity, normalizeOpportunityDoc } from "@/lib/mockData";
 
 /**
  * Loads real, approved opportunities from Firestore's "org_opportunities"
@@ -45,7 +45,7 @@ export function useOpportunities() {
               }
             }
           }
-          items.push({ id: d.id, ...data } as unknown as Opportunity);
+          items.push(normalizeOpportunityDoc(d.id, data));
         });
         setOpportunities(items);
         setLoading(false);

@@ -11,6 +11,7 @@ const FIREBASE_ADMIN_EXTERNALS = [
 ];
 
 const nextConfig: NextConfig = {
+  turbopack: {},
   serverExternalPackages: [
     "firebase-admin",
     "node-cron",
@@ -20,6 +21,7 @@ const nextConfig: NextConfig = {
     "@grpc/grpc-js",
     "google-auth-library",
     "googleapis",
+    "pdfkit",
   ],
   webpack: (config, { isServer }) => {
     if (!isServer) {

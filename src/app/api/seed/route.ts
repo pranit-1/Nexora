@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   } catch (error: any) {
     console.error("[api/seed] Error seeding Firestore:", error);
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to seed Firestore" },
+      { success: false, error: "Failed to seed Firestore" },
       { status: 500 }
     );
   }

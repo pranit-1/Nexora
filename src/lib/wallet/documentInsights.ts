@@ -97,23 +97,31 @@ function findLinks(text: string): string[] {
 /** "8.7 CGPA" / "CGPA: 8.7/10" / "SGPA 9.1" → 0-100. Returns null if not a GPA. */
 function findGpa(text: string): { value: number; raw: string } | null {
   const patterns: RegExp[] = [
-    /\b(?:cgpa|sgpa|gpa)\s*[:\-]?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:\/\s*(10|4|5|100))?/i,
+    // "100" must come before "10" in the alternation, otherwise "/100" matches
+    // the leading "10" and "8.7/100" is parsed as a /10 scale (→ 870 → dropped).
+    /\b(?:cgpa|sgpa|gpa)\s*[:\-]?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:\/\s*(100|10|5|4))?/i,
     /(\d{1,2}(?:\.\d{1,2})?)\s*(?:cgpa|sgpa|gpa)\b/i,
-    /aggregate\s*(?:score)?\s*[:\-]?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:\/\s*(10|4|5|100))?/i,
+    /aggregate\s*(?:score)?\s*[:\-]?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:\/\s*(100|10|5|4))?/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);
     if (!m) continue;
     const rawNum = parseFloat(m[1]);
-    if (Number.isNaN(rawNum)) continue;
-    const scale = m[2] ? parseFloat(m[2]) : rawNum > 10 ? 100 : 10;
-    let value: number;
-    if (scale === 10) value = rawNum * 10;
-    else if (scale === 5) value = rawNum * 20;
-    else if (scale === 4) value = rawNum * 25;
-    else value = rawNum;
-    if (value > 0 && value <= 100) {
-      return { value: Math.round(value * 10) / 10, raw: clean(m[0]) };
+    if (Number.isNaN(rawNum) || rawNum <= 0) continue;
+    const explicit = m[2] ? parseFloat(m[2]) : null;
+    // No written scale: guess from magnitude, trying plausible scales in order
+    // so a value that overflows one scale is re-tried on the next instead of
+    // being dropped (e.g. "GPA 4.3" on a 4.33 scale).
+    const scales = explicit
+      ? [explicit]
+      : rawNum <= 4.5 ? [4, 10, 100]
+      : rawNum <= 10 ? [10, 100]
+      : [100];
+    for (const scale of scales) {
+      const value = scale === 10 ? rawNum * 10 : scale === 5 ? rawNum * 20 : scale === 4 ? rawNum * 25 : rawNum;
+      if (value > 0 && value <= 100) return { value: Math.round(value * 10) / 10, raw: clean(m[0]) };
+      // Slight overshoot on a 4.0 scale (4.33-scale GPAs) tops out at 100.
+      if (scale === 4 && value > 100 && value <= 110) return { value: 100, raw: clean(m[0]) };
     }
   }
   return null;
@@ -409,13 +417,15 @@ function extractMarksheetData(text: string): {
     || text.match(/(\d{1,3}(?:\.\d{1,2})?)\s*%\s*(?:aggregate|overall|total)/i);
   if (pctMatch) {
     const v = parseFloat(pctMatch[1]);
-    if (v > 0 && v <= 100) result.percentage = Math.round(v * 10) / 10;
-    else if (pctMatch[2]) {
-      const max = parseFloat(pctMatch[2]);
-      if (max > 0) {
-        const calc = (v / max) * 100;
-        if (calc <= 100) result.percentage = Math.round(calc * 10) / 10;
-      }
+    const max = pctMatch[2] ? parseFloat(pctMatch[2]) : null;
+    // Only pattern 2 captures a denominator. Check it BEFORE the plain-value
+    // branch, otherwise "Total: 92/500" short-circuits at v=92 and is reported
+    // as 92% instead of 18.4%.
+    if (max && max > 0 && max !== 100) {
+      const calc = (v / max) * 100;
+      if (calc > 0 && calc <= 100) result.percentage = Math.round(calc * 10) / 10;
+    } else if (v > 0 && v <= 100) {
+      result.percentage = Math.round(v * 10) / 10;
     }
   }
 
@@ -467,7 +477,9 @@ export function extractInsights(text: string, category: WalletCategory, name = "
   // Prefer marksheet percentage (more accurate)
   if (marksheet?.percentage !== undefined) {
     insights.percentage = marksheet.percentage;
-    insights.gpa = marksheet.percentage;
+    // Only borrow it as the normalized score when no real GPA was parsed —
+    // otherwise gpaRaw still shows "CGPA 8.7/10" while gpa says 92.
+    if (gpa === null && percentage === null) insights.gpa = marksheet.percentage;
   }
 
   const roll = findRollNumber(body);

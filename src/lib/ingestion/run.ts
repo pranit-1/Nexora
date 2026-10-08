@@ -35,7 +35,17 @@ interface PersistResult {
 }
 
 /** Fields that, when unchanged, mean a re-run has nothing new to say. */
-const COMPARED_FIELDS = ["title", "orgName", "deadline", "description", "applyLink"] as const;
+const COMPARED_FIELDS = [
+  "title",
+  "orgName",
+  "deadline",
+  "description",
+  "applyLink",
+  "eligibility",
+  "country",
+  "category",
+  "field",
+] as const;
 
 /**
  * Writes one opportunity under its deterministic document ID.
@@ -93,7 +103,10 @@ async function persistOpportunityById(
 
   if (existing) {
     const priorStatus = typeof existing.status === "string" ? existing.status : "";
-    const contentSame = COMPARED_FIELDS.every((f) => existing![f] === opp[f]);
+    const contentSame =
+      COMPARED_FIELDS.every((f) => existing![f] === opp[f]) &&
+      // Arrays: reference equality would always report a change.
+      JSON.stringify(existing!.requiredDocuments ?? []) === JSON.stringify(opp.requiredDocuments ?? []);
     if (contentSame) {
       return { outcome: "unchanged", status: priorStatus || "approved" };
     }
@@ -114,7 +127,12 @@ async function persistOpportunityById(
       ingestedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    if (priorStatus !== "pending" && priorStatus !== "rejected") {
+    // Only write a status when the document never had one. Previously this
+    // ran whenever priorStatus wasn't pending/rejected, so a content change
+    // on an autoApprove:false source demoted an admin-approved document back
+    // to "pending" and silently revoked the approval. Status now changes only
+    // at creation or via the admin panel.
+    if (!priorStatus) {
       patch.status = meta.autoApprove ? "approved" : "pending";
     }
     await ref.set(patch, { merge: true });

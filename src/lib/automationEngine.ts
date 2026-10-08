@@ -10,21 +10,42 @@ import {
   where,
   doc,
   getDoc,
+  setDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { NotificationCategory } from "@/lib/types";
 
-// Milestone thresholds (days before deadline) at which we fire timeline warnings
-const DEADLINE_MILESTONES = [30, 14, 7, 3, 1];
+// Milestone thresholds (days before deadline) at which we fire timeline
+// warnings. MUST be ascending: both loops below take the FIRST milestone
+// where `days <= milestone` and break, so ascending order selects the
+// TIGHTEST applicable milestone. (A descending list always matched 30 first,
+// making the 14/7/3/1-day alerts unreachable.)
+const DEADLINE_MILESTONES = [1, 3, 7, 14, 30];
+
+// Dedup keys are safe to use as Firestore document ids directly, which makes
+// concurrent notification writes idempotent instead of racing on a
+// check-then-insert query.
+const SAFE_DOC_ID = /^[A-Za-z0-9_-]{1,120}$/;
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
 
 function daysUntil(dateStr: string): number {
   if (!dateStr) return -1;
-  const target = new Date(dateStr);
-  if (isNaN(target.getTime())) return -1;
+  // Deadline is a calendar-day concept, so compare calendar dates in the
+  // viewer's local timezone. (Parsing "YYYY-MM-DD" as UTC midnight and
+  // diffing against local now shifted the day boundary by the tz offset.)
+  const datePart = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  let target: Date;
+  if (datePart) {
+    target = new Date(Number(datePart[1]), Number(datePart[2]) - 1, Number(datePart[3]));
+  } else {
+    const parsed = new Date(dateStr);
+    if (isNaN(parsed.getTime())) return -1;
+    target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  }
   const now = new Date();
-  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
 }
 
 function formatDeadlineDate(dateStr: string): string {
@@ -59,7 +80,7 @@ async function createNotification(
   // Prevent duplicate notifications using a dedup key
   if (key && (await notificationExists(uid, key))) return;
 
-  await addDoc(collection(db, "notifications", uid, "items"), {
+  const payload = {
     uid,
     title,
     message,
@@ -68,7 +89,16 @@ async function createNotification(
     linkedRoute: linkedRoute || null,
     key: key || null,
     createdAt: new Date().toISOString(),
-  });
+  };
+
+  // Write to a deterministic doc id derived from the key when possible: two
+  // concurrent runs (bookmark seed vs. notifications-page refresh) then land
+  // on the same document instead of both inserting.
+  if (key && SAFE_DOC_ID.test(key)) {
+    await setDoc(doc(db, "notifications", uid, "items", key), payload);
+  } else {
+    await addDoc(collection(db, "notifications", uid, "items"), payload);
+  }
 }
 
 // ─── PUBLIC API ────────────────────────────────────────────────────────────
@@ -103,13 +133,19 @@ export async function seedOpportunityNotification(
 
     // 2. Seed any milestone warnings that are currently triggered
     //    e.g. if they save with 6 days left → fire the 7-day warning immediately
+    //    (ascending order: first `days <= milestone` match is the tightest one)
     for (const milestone of DEADLINE_MILESTONES) {
       if (days <= milestone) {
-        const urgency = days <= 1 ? "🔴 URGENT" : days <= 3 ? "🟠" : "⚠️";
+        const urgency = days <= 0 ? "🔴 URGENT" : days <= 3 ? "🟠" : "⚠️";
+        const dayLabel = days <= 0 ? "Last Day" : days === 1 ? "1 Day Left" : `${days} Days Left`;
+        const closesIn =
+          days <= 0
+            ? "closes today"
+            : `closes in ${days} day${days === 1 ? "" : "s"}`;
         await createNotification(
           uid,
-          `${urgency} ${days === 1 ? "Last Day" : `${days} Days Left`} — Deadline Alert`,
-          `"${opportunityTitle}" closes in ${days} day${days === 1 ? "" : "s"}! Don't miss it.`,
+          `${urgency} ${dayLabel} — Deadline Alert`,
+          `"${opportunityTitle}" ${closesIn}! Don't miss it.`,
           "deadline_alert",
           `/opportunity/${opportunityId}`,
           `warning_${milestone}d_${opportunityId}`
@@ -214,15 +250,21 @@ export async function refreshDeadlineAlerts(uid: string): Promise<void> {
       const days = daysUntil(deadline);
       if (days < 0) continue; // already past deadline
 
-      // Fire a notification for each milestone the current day count falls at or below
+      // Fire a notification for the tightest milestone the current day count
+      // falls at or below (ascending order + dedup key per milestone means
+      // tighter milestones fire on later refreshes as the deadline nears).
       for (const milestone of DEADLINE_MILESTONES) {
         if (days <= milestone) {
-          const urgency = days <= 1 ? "🔴 URGENT" : days <= 3 ? "🟠" : "⚠️";
-          const dayLabel = days === 1 ? "Last Day" : `${days} Days Left`;
+          const urgency = days <= 0 ? "🔴 URGENT" : days <= 3 ? "🟠" : "⚠️";
+          const dayLabel = days <= 0 ? "Last Day" : days === 1 ? "1 Day Left" : `${days} Days Left`;
+          const closesIn =
+            days <= 0
+              ? "closes today"
+              : `closes in ${days} day${days === 1 ? "" : "s"}`;
           await createNotification(
             uid,
             `${urgency} ${dayLabel} — Deadline Alert`,
-            `"${title}" closes in ${days} day${days === 1 ? "" : "s"}! Apply now before the deadline.`,
+            `"${title}" ${closesIn}! Apply now before the deadline.`,
             "deadline_alert",
             `/opportunity/${oppId}`,
             `warning_${milestone}d_${oppId}`

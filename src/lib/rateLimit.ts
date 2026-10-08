@@ -95,6 +95,8 @@ export const LIMITS = {
   ai: { scope: "ai", limit: 20, windowMs: 60_000 },
   summarize: { scope: "summarize", limit: 30, windowMs: 60_000 },
   categorize: { scope: "categorize", limit: 15, windowMs: 60_000 },
+  /** Paid resume audits (LLM round-trip + PDF extraction) — heavier, so tighter. */
+  resumeAnalyze: { scope: "resume-analyze", limit: 10, windowMs: 60_000 },
   /** Cloudinary storage + bandwidth. */
   upload: { scope: "wallet-upload", limit: 20, windowMs: 60_000 },
   walletDelete: { scope: "wallet-delete", limit: 30, windowMs: 60_000 },

@@ -4,6 +4,11 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
 
+  // node-cron timers only run in local/dev. On Vercel serverless the instance
+  // freezes after the response, so in-process crons never tick reliably there —
+  // production scheduling lives in vercel.json (ingest 3am, scrape?force=1 4am,
+  // summarize-all every 6h). Do NOT remove this gate to "enable" prod crons;
+  // use vercel.json instead.
   if (process.env.NODE_ENV !== "production" || process.env.ENABLE_LOCAL_CRON === "1") {
     try {
       const cron = await import("node-cron");
@@ -97,7 +102,9 @@ export async function register() {
         }, 25000);
       }
     } catch (e) {
-      console.warn("[firestore-cron] node-cron not available:", e);
+      // Also fires when a SCRAPE_CRON/EXPIRY_CRON/SUMMARY_CRON expression is
+      // invalid — log the real error so bad env values aren't misdiagnosed.
+      console.warn("[firestore-cron] Failed to schedule local crons (node-cron unavailable or invalid cron expression):", e);
     }
   }
 }

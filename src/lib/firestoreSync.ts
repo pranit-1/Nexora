@@ -195,8 +195,17 @@ export interface SyncResult {
   errors: string[];
 }
 
-/** Statuses a human admin may have set. Ingestion must never overwrite these. */
-const HUMAN_DECIDED_STATUSES = new Set(["pending", "rejected"]);
+/**
+ * Statuses that already exist on a document and must survive a re-sync.
+ *
+ * `pending`/`rejected` protect the admin from being overruled (the old bug:
+ * every cron reset a pulled listing back to `approved`); `approved` protects
+ * the admin from the opposite direction — an `autoApprove:false` source used
+ * to demote an approved document back to `pending` on content change, silently
+ * revoking the approval. Once a doc has a status, only the admin panel may
+ * change it.
+ */
+const HUMAN_DECIDED_STATUSES = new Set(["pending", "rejected", "approved"]);
 
 /**
  * Reads the current `status` of the given document IDs.

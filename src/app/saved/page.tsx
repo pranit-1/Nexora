@@ -45,10 +45,12 @@ interface SavedItem {
 
 // ── Timeline helpers ────────────────────────────────────────────
 
-function daysUntil(dateStr?: string): number {
-  if (!dateStr) return -1;
+// Returns days until the deadline, or `null` when there is no parseable
+// date at all — `null` must NOT be confused with "already expired".
+function daysUntil(dateStr?: string): number | null {
+  if (!dateStr) return null;
   const target = new Date(dateStr);
-  if (isNaN(target.getTime())) return -1;
+  if (isNaN(target.getTime())) return null;
   const now = new Date();
   return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
@@ -59,14 +61,16 @@ function daysUntil(dateStr?: string): number {
  */
 function deadlineProgress(dateStr?: string): number {
   const days = daysUntil(dateStr);
+  if (days === null) return 0;
   if (days < 0) return 100;
   const totalWindow = 90;
   return Math.max(0, Math.min(100, Math.round(((totalWindow - days) / totalWindow) * 100)));
 }
 
-type UrgencyLevel = "expired" | "critical" | "urgent" | "approaching" | "safe";
+type UrgencyLevel = "none" | "expired" | "critical" | "urgent" | "approaching" | "safe";
 
-function getUrgency(days: number): UrgencyLevel {
+function getUrgency(days: number | null): UrgencyLevel {
+  if (days === null) return "none";
   if (days < 0) return "expired";
   if (days <= 1) return "critical";
   if (days <= 3) return "urgent";
@@ -78,6 +82,13 @@ const urgencyConfig: Record<
   UrgencyLevel,
   { label: string; bar: string; badge: string; text: string; icon: React.ReactNode }
 > = {
+  none: {
+    label: "No deadline",
+    bar: "bg-border",
+    badge: "chip",
+    text: "text-foreground-muted",
+    icon: <Calendar className="w-3.5 h-3.5" />,
+  },
   expired: {
     label: "Expired",
     bar: "bg-foreground-subtle",
@@ -122,7 +133,9 @@ function DeadlineTimeline({ deadline }: { deadline?: string }) {
   const cfg = urgencyConfig[urgency];
 
   const dayLabel =
-    days < 0
+    days === null
+      ? "No deadline set"
+      : days < 0
       ? "Deadline passed"
       : days === 0
       ? "Today!"
@@ -228,6 +241,10 @@ export default function SavedOpportunities() {
   const sortedItems = [...savedItems].sort((a, b) => {
     const da = daysUntil(a.deadline);
     const db_ = daysUntil(b.deadline);
+    // Undated items go to the very bottom (expired sits above them)
+    if (da === null && db_ === null) return 0;
+    if (da === null) return 1;
+    if (db_ === null) return -1;
     // Expired at the bottom
     if (da < 0 && db_ >= 0) return 1;
     if (db_ < 0 && da >= 0) return -1;
@@ -239,9 +256,12 @@ export default function SavedOpportunities() {
   const totalSaved = savedItems.length;
   const criticalCount = savedItems.filter((i) => {
     const d = daysUntil(i.deadline);
-    return d >= 0 && d <= 3;
+    return d !== null && d >= 0 && d <= 3;
   }).length;
-  const expiredCount = savedItems.filter((i) => daysUntil(i.deadline) < 0).length;
+  const expiredCount = savedItems.filter((i) => {
+    const d = daysUntil(i.deadline);
+    return d !== null && d < 0;
+  }).length;
   const activeCount = totalSaved - expiredCount;
 
   if (authLoading || loading) {
@@ -330,9 +350,15 @@ export default function SavedOpportunities() {
                             </span>
                           )}
                         </div>
-                        <Chip tone="danger" className="p-1.5 rounded-full flex-shrink-0" aria-label="Remove bookmark for {opp.title}">
+                        <button
+                          type="button"
+                          onClick={() => removeBookmark(opp.id)}
+                          aria-label={`Remove bookmark for ${opp.title}`}
+                          title="Remove bookmark"
+                          className="inline-flex items-center p-1.5 rounded-full flex-shrink-0 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/60 transition-colors"
+                        >
                           <Trash2 className="w-3.5 h-3.5" />
-                        </Chip>
+                        </button>
                       </div>
 
                       {/* Title */}
