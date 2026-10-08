@@ -116,11 +116,9 @@ export async function POST(req: NextRequest) {
     const uploadFormData = new FormData();
     uploadFormData.append("file", file);
     uploadFormData.append("folder", folder);
-    uploadFormData.append("format", format);
-    uploadFormData.append("allowed_formats", Object.values(ALLOWED_TYPES).join(","));
 
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const paramsToSign = `folder=${folder}&format=${format}&timestamp=${timestamp}${apiSecret}`;
+    const paramsToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
     const signature = crypto.createHash("sha1").update(paramsToSign).digest("hex");
 
     uploadFormData.append("api_key", apiKey);

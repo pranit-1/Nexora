@@ -1025,11 +1025,7 @@ export default function WalletPage() {
 
           <p className="text-xs leading-snug text-foreground-muted">
             Save the public pages recruiters should see — LinkedIn, GitHub, your portfolio, or
-            anything else. These count as verified evidence in your{" "}
-            <Link href="/dashboard/performance" className="link-ink">
-              performance profile
-            </Link>
-            .
+            anything else. These count as verified evidence in your profile.
           </p>
 
           <form onSubmit={handleAddLink} className="space-y-2">

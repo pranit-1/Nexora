@@ -98,21 +98,14 @@ export async function POST(req: NextRequest) {
     const uploadFormData = new FormData();
     uploadFormData.append("file", file);
     uploadFormData.append("folder", folder);
-    // Explicit format allow-list instead of relying on `auto`, so an
-    // unrecognised payload cannot be stored and served as an active content type.
-    uploadFormData.append("format", format);
-    uploadFormData.append("allowed_formats", Object.values(ALLOWED_TYPES).join(","));
 
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const paramsToSign = `folder=${folder}&format=${format}&timestamp=${timestamp}${apiSecret}`;
+    const paramsToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
     const signature = crypto.createHash("sha1").update(paramsToSign).digest("hex");
 
     uploadFormData.append("api_key", apiKey);
     uploadFormData.append("timestamp", timestamp);
     uploadFormData.append("signature", signature);
-
-    // Unused, but kept so a preset-only deployment path stays obvious.
-    void uploadPreset;
 
     const uploadRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
       method: "POST",

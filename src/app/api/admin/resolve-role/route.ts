@@ -65,6 +65,6 @@ export async function POST(request: Request) {
   } catch (e) {
     const msg = (e as Error)?.message || String(e);
     console.error("[admin/resolve] Crash:", msg, (e as Error)?.stack);
-    return NextResponse.json({ error: "Could not resolve role" }, { status: 500 });
+    return NextResponse.json({ error: "Could not resolve role", details: msg }, { status: 500 });
   }
 }

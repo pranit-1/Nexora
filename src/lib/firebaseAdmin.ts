@@ -17,14 +17,30 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 function loadCredential(): Record<string, unknown> {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  let raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (raw) {
+    raw = raw.trim();
+    // Try raw JSON first
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (parsed.private_key && typeof parsed.private_key === "string") {
+        parsed.private_key = parsed.private_key.replace(/\\n/g, "\n");
+      }
+      return parsed;
     } catch {
-      throw new Error(
-        "FIREBASE_SERVICE_ACCOUNT_KEY is set but is not valid JSON. Paste the full service account JSON as a single-line string."
-      );
+      // Fallback: try base64 decode if env var was base64 encoded
+      try {
+        const decoded = Buffer.from(raw, "base64").toString("utf-8");
+        const parsed = JSON.parse(decoded);
+        if (parsed.private_key && typeof parsed.private_key === "string") {
+          parsed.private_key = parsed.private_key.replace(/\\n/g, "\n");
+        }
+        return parsed;
+      } catch {
+        throw new Error(
+          "FIREBASE_SERVICE_ACCOUNT_KEY is set but is not valid JSON or base64 JSON."
+        );
+      }
     }
   }
 
