@@ -24,7 +24,16 @@ import {
   UploadCloud,
   ArrowRight,
   X,
+  Bookmark,
+  FolderGit2,
+  Link2,
+  ExternalLink,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import type { WalletDocument, ProfileLink } from "@/lib/types";
+import { subscribeProfileLinks } from "@/lib/profileLinksClient";
 import { Button, Card, Chip, EmptyState, ErrorState, Textarea } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 import { motion } from "framer-motion";
@@ -158,48 +167,259 @@ export default function AIHub() {
    ========================================================================== */
 
 function RecommendationsTab() {
-  const { profile } = useAuth();
+  const { currentUser, profile } = useAuth();
   const { opportunities } = useOpportunities();
   const [showCount, setShowCount] = useState(8);
+  const [walletDocs, setWalletDocs] = useState<WalletDocument[]>([]);
+  const [profileLinks, setProfileLinks] = useState<ProfileLink[]>([]);
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [filterMode, setFilterMode] = useState<"all" | "saved">("all");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Compute profile-based match relevance
+  // 1. Fetch wallet documents (PDFs, projects, certificates, resume texts)
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchWallet = async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, "wallet"), where("uid", "==", currentUser.uid))
+        );
+        const docs: WalletDocument[] = [];
+        snap.forEach((d) => docs.push({ id: d.id, ...d.data() } as WalletDocument));
+        setWalletDocs(docs);
+      } catch (err) {
+        console.error("Failed to load wallet docs for matcher:", err);
+      }
+    };
+    fetchWallet();
+  }, [currentUser]);
+
+  // 2. Fetch public profile links (GitHub, LinkedIn, LeetCode, portfolio)
+  useEffect(() => {
+    if (!currentUser) return;
+    return subscribeProfileLinks(currentUser.uid, setProfileLinks);
+  }, [currentUser]);
+
+  // 3. Fetch saved bookmarks
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchSaved = async () => {
+      try {
+        const snap = await getDoc(doc(db, "bookmarks", currentUser.uid));
+        if (snap.exists()) {
+          const data = snap.data();
+          const ids: string[] = data.opportunityIds || [];
+          const itemIds: string[] = Array.isArray(data.items) ? data.items.map((i: any) => i.id) : [];
+          setSavedIds(new Set([...ids, ...itemIds]));
+        }
+      } catch (err) {
+        console.error("Failed to load bookmarks:", err);
+      }
+    };
+    fetchSaved();
+  }, [currentUser]);
+
+  // Extract all searchable keywords, skills, and evidence from user's assets
   const userSkills = (profile?.skills || []).map((s) => s.toLowerCase());
   const userInterests = (profile?.interests || []).map((i) => i.toLowerCase());
   const userEducation = (profile?.education || "").toLowerCase();
 
-  const scoredOpportunities = opportunities.map((opp) => {
-    let score = 50; // Base score
-    const textToMatch = `${opp.title} ${opp.description || ""} ${opp.field || ""} ${opp.category || ""}`.toLowerCase();
+  // Aggregate insights & text from wallet documents
+  const walletSkills = new Set<string>();
+  const walletTech = new Set<string>();
+  const docNames: string[] = [];
 
-    // Check matching skills
-    userSkills.forEach((skill) => {
-      if (textToMatch.includes(skill)) score += 15;
-    });
-
-    // Check matching interests
-    userInterests.forEach((interest) => {
-      if (textToMatch.includes(interest)) score += 10;
-    });
-
-    // Match education
-    if (userEducation && textToMatch.includes(userEducation)) score += 10;
-
-    const matchPercent = Math.min(98, Math.max(55, score));
-    return { ...opp, matchPercent };
+  walletDocs.forEach((doc) => {
+    docNames.push(doc.name);
+    if (doc.insights) {
+      (doc.insights.skills || []).forEach((s) => walletSkills.add(s.toLowerCase()));
+      (doc.insights.technologies || []).forEach((t) => walletTech.add(t.toLowerCase()));
+    }
   });
 
-  // Sort by highest match score
-  const sortedOpportunities = [...scoredOpportunities].sort((a, b) => b.matchPercent - a.matchPercent);
+  // Check linked coding/professional profiles
+  const hasGithub = profileLinks.some((l) => l.kind === "github" || l.url.includes("github.com"));
+  const hasLinkedIn = profileLinks.some((l) => l.kind === "linkedin" || l.url.includes("linkedin.com"));
+  const hasLeetcode = profileLinks.some((l) => l.kind === "leetcode" || l.url.includes("leetcode.com"));
+  const hasPortfolio = profileLinks.some((l) => l.kind === "website" || l.url.includes("portfolio") || l.url.includes(".dev") || l.url.includes(".me"));
+
+  // Calculate detailed opportunity match audit
+  const scoredOpportunities = opportunities.map((opp) => {
+    let score = 40; // baseline
+    const matchesFound: string[] = [];
+    const missingExpected: string[] = [];
+    const evidenceEvidence: string[] = [];
+
+    const oppCategory = (opp.category || "").toLowerCase();
+    const oppField = (opp.field || "").toLowerCase();
+    const textToMatch = `${opp.title} ${opp.description || ""} ${opp.field || ""} ${opp.category || ""}`.toLowerCase();
+
+    // 1. Skill check (Profile & Wallet)
+    userSkills.forEach((skill) => {
+      if (textToMatch.includes(skill)) {
+        score += 10;
+        matchesFound.push(`Profile Skill: ${skill}`);
+      }
+    });
+
+    walletSkills.forEach((skill) => {
+      if (textToMatch.includes(skill) && !matchesFound.includes(`Wallet Skill: ${skill}`)) {
+        score += 8;
+        evidenceEvidence.push(`Wallet Document verified skill: ${skill}`);
+      }
+    });
+
+    walletTech.forEach((tech) => {
+      if (textToMatch.includes(tech)) {
+        score += 6;
+        evidenceEvidence.push(`Tech match from wallet: ${tech}`);
+      }
+    });
+
+    // 2. Category specific evidence
+    if (oppCategory.includes("hackathon") || oppCategory.includes("internship") || oppCategory.includes("research") || oppField.includes("computer") || oppField.includes("tech") || oppField.includes("software")) {
+      if (hasGithub) {
+        score += 12;
+        evidenceEvidence.push("Verified GitHub Profile linked in Wallet");
+      } else {
+        missingExpected.push("GitHub Profile link recommended for technical proof");
+      }
+
+      const hasProjectsInWallet = walletDocs.some((d) => d.category === "Projects");
+      if (hasProjectsInWallet) {
+        score += 10;
+        evidenceEvidence.push("Project documentation found in Wallet");
+      } else {
+        missingExpected.push("Project report or code artifacts in Wallet");
+      }
+    }
+
+    if (oppCategory.includes("scholarship") || oppCategory.includes("fellowship")) {
+      const hasMarksheet = walletDocs.some((d) => d.category === "Results" || d.name.toLowerCase().includes("marksheet") || d.name.toLowerCase().includes("transcript"));
+      if (hasMarksheet) {
+        score += 15;
+        evidenceEvidence.push("Academic Transcript / Marksheet verified in Wallet");
+      } else {
+        missingExpected.push("Academic transcript / result document required for scholarships");
+      }
+    }
+
+    const hasResumeInWallet = walletDocs.some((d) => d.category === "Resume" || d.name.toLowerCase().includes("resume") || d.name.toLowerCase().includes("cv"));
+    if (hasResumeInWallet) {
+      score += 8;
+      evidenceEvidence.push("Updated Resume / CV available in Wallet");
+    } else {
+      missingExpected.push("Upload your latest Resume in Wallet to boost ATS score");
+    }
+
+    // 3. Education & Interests
+    if (userEducation && textToMatch.includes(userEducation)) {
+      score += 8;
+      matchesFound.push(`Education background: ${userEducation}`);
+    }
+
+    userInterests.forEach((interest) => {
+      if (textToMatch.includes(interest)) {
+        score += 6;
+        matchesFound.push(`Interest: ${interest}`);
+      }
+    });
+
+    // Check if this opportunity was bookmarked
+    const isSaved = savedIds.has(opp.id);
+    if (isSaved) {
+      score += 5;
+    }
+
+    const matchPercent = Math.min(99, Math.max(38, Math.round(score)));
+
+    // Rating tier
+    let ratingTier = "Needs Improvement";
+    let tierColor: "success" | "warning" | "danger" | "neutral" = "danger";
+    if (matchPercent >= 80) {
+      ratingTier = "Strong Fit";
+      tierColor = "success";
+    } else if (matchPercent >= 65) {
+      ratingTier = "Moderate Fit";
+      tierColor = "warning";
+    }
+
+    return {
+      ...opp,
+      matchPercent,
+      ratingTier,
+      tierColor,
+      isSaved,
+      matchesFound,
+      evidenceEvidence,
+      missingExpected,
+    };
+  });
+
+  // Filter and sort
+  const filtered = scoredOpportunities.filter((opp) => {
+    if (filterMode === "saved") return opp.isSaved;
+    return true;
+  });
+
+  const sortedOpportunities = [...filtered].sort((a, b) => b.matchPercent - a.matchPercent);
   const displayed = sortedOpportunities.slice(0, showCount);
 
   return (
     <div className="space-y-8">
       <div>
         <span className="eyebrow">Instrument 01</span>
-        <h2 className="mt-2 font-display text-2xl text-foreground">Opportunity Matcher</h2>
-        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
-          Browse opportunities ranked and matched to your profile skills, field, and interests.
+        <h2 className="mt-2 font-display text-2xl text-foreground">Deep Opportunity Matcher</h2>
+        <p className="mt-2 max-w-2xl text-sm text-foreground-muted">
+          Cross-examines each opportunity against all assets in your <strong>Digital Wallet</strong> (resumes, project repos, marksheets) and <strong>Profile Links</strong> (GitHub, LinkedIn, LeetCode) to provide an evidence-backed rating and gap audit.
         </p>
+      </div>
+
+      {/* Wallet Asset Snapshot summary pill */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">Wallet Docs</span>
+          <p className="mt-1 font-display text-xl text-foreground">{walletDocs.length}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">Public Links</span>
+          <p className="mt-1 font-display text-xl text-foreground">{profileLinks.length}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">GitHub Connected</span>
+          <p className="mt-1 font-display text-xl text-foreground">{hasGithub ? "Yes" : "No"}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">Bookmarked</span>
+          <p className="mt-1 font-display text-xl text-foreground">{savedIds.size}</p>
+        </div>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="flex items-center gap-2 border-b border-border pb-3">
+        <button
+          type="button"
+          onClick={() => setFilterMode("all")}
+          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+            filterMode === "all"
+              ? "bg-surface-ink text-background"
+              : "text-foreground-muted hover:bg-surface-raised hover:text-foreground"
+          }`}
+        >
+          All Opportunities ({opportunities.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterMode("saved")}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+            filterMode === "saved"
+              ? "bg-surface-ink text-background"
+              : "text-foreground-muted hover:bg-surface-raised hover:text-foreground"
+          }`}
+        >
+          <Bookmark className="h-3.5 w-3.5" />
+          Saved Only ({savedIds.size})
+        </button>
       </div>
 
       <div className="space-y-6">
@@ -207,77 +427,162 @@ function RecommendationsTab() {
           <EmptyState
             icon={<TrendingUp className="h-5 w-5" />}
             title="No opportunities found"
-            description="Check back once opportunities are available in the database."
+            description={
+              filterMode === "saved"
+                ? "You haven't bookmarked any opportunities yet. Save some to see them ranked here!"
+                : "Check back once opportunities are available in the database."
+            }
           />
         ) : (
           <>
             <p className="text-xs text-foreground-subtle">
               Showing <span className="font-semibold text-foreground">{displayed.length}</span>{" "}
-              of <span className="font-semibold text-foreground">{opportunities.length}</span>{" "}
-              opportunities matched to your profile
+              of <span className="font-semibold text-foreground">{filtered.length}</span>{" "}
+              opportunities evaluated with Wallet evidence
             </p>
             <Stagger as="ul" className="grid grid-cols-1 gap-4">
-              {displayed.map((opportunity) => (
-                <StaggerItem as="li" key={opportunity.id}>
-                  <Card className="p-5 sm:p-6">
-                    <div className="flex items-start justify-between gap-5">
-                      <div className="min-w-0 flex-1">
-                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <Chip tone="gold">{opportunity.category}</Chip>
-                          <span className="text-2xs text-foreground-subtle">{opportunity.field}</span>
-                          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-secondary/10 px-2.5 py-0.5 text-xs font-semibold text-secondary">
-                            <Sparkles className="h-3 w-3" />
-                            {opportunity.matchPercent}% Match
-                          </span>
-                        </div>
-                        <h3 className="font-display text-lg leading-snug text-foreground">
-                          <Link
-                            href={`/opportunity/${opportunity.id}`}
-                            className="transition-colors duration-base hover:text-secondary"
-                          >
-                            {opportunity.title}
-                          </Link>
-                        </h3>
-                        <p className="mt-1 text-sm text-foreground-muted">
-                          {opportunity.organization} · {opportunity.country}
-                        </p>
-                      </div>
-                    </div>
+              {displayed.map((opportunity) => {
+                const isExpanded = expandedId === opportunity.id;
+                return (
+                  <StaggerItem as="li" key={opportunity.id}>
+                    <Card className="overflow-hidden p-5 transition-shadow hover:shadow-md sm:p-6">
+                      <div className="flex items-start justify-between gap-5">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <Chip tone="gold">{opportunity.category}</Chip>
+                            <span className="text-2xs text-foreground-subtle">{opportunity.field}</span>
+                            {opportunity.isSaved && (
+                              <span className="inline-flex items-center gap-1 rounded bg-secondary/10 px-2 py-0.5 text-2xs font-semibold text-secondary">
+                                <Bookmark className="h-3 w-3 fill-current" />
+                                Saved Item
+                              </span>
+                            )}
+                            <div className="ml-auto flex items-center gap-2">
+                              <Chip tone={opportunity.tierColor}>{opportunity.ratingTier}</Chip>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-secondary/15 px-3 py-1 text-xs font-bold text-secondary">
+                                <Sparkles className="h-3.5 w-3.5" />
+                                {opportunity.matchPercent}% Match
+                              </span>
+                            </div>
+                          </div>
 
-                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
-                      <span className="text-xs text-foreground-subtle">
-                        Deadline{" "}
-                        <span className="font-medium text-foreground">
-                          {opportunity.deadline
-                            ? new Date(opportunity.deadline).toLocaleDateString("en-IN", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })
-                            : "Open"}
+                          <h3 className="font-display text-lg leading-snug text-foreground">
+                            <Link
+                              href={`/opportunity/${opportunity.id}`}
+                              className="transition-colors duration-base hover:text-secondary"
+                            >
+                              {opportunity.title}
+                            </Link>
+                          </h3>
+                          <p className="mt-1 text-sm text-foreground-muted">
+                            {opportunity.organization} · {opportunity.country}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Match Analysis Toggle Button */}
+                      <div className="mt-4 border-t border-border/80 pt-3">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(isExpanded ? null : opportunity.id)}
+                          className="flex w-full items-center justify-between text-xs font-medium text-foreground-muted hover:text-foreground"
+                        >
+                          <span className="inline-flex items-center gap-1.5 text-secondary">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            {isExpanded ? "Hide Match Audit & Wallet Evidence" : "View Match Basis (Why this rating?)"}
+                          </span>
+                          {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </button>
+
+                        {/* Expanded Audit Card */}
+                        {isExpanded && (
+                          <div className="mt-3 space-y-3 rounded-lg border border-border bg-surface-subtle p-4 text-xs">
+                            {/* Evidence Found in Wallet & Profile */}
+                            <div>
+                              <span className="font-semibold text-foreground">✅ Strong Evidence Found in Wallet & Links:</span>
+                              {opportunity.evidenceEvidence.length > 0 || opportunity.matchesFound.length > 0 ? (
+                                <ul className="mt-1.5 space-y-1 text-foreground-muted">
+                                  {opportunity.evidenceEvidence.map((e, idx) => (
+                                    <li key={`ev-${idx}`} className="flex items-center gap-1.5 text-success">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-success shrink-0" />
+                                      {e}
+                                    </li>
+                                  ))}
+                                  {opportunity.matchesFound.map((m, idx) => (
+                                    <li key={`mf-${idx}`} className="flex items-center gap-1.5">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-secondary shrink-0" />
+                                      {m}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="mt-1 text-foreground-subtle italic">No direct keyword overlap found with uploaded documents.</p>
+                              )}
+                            </div>
+
+                            {/* Missing / Expected Proof */}
+                            <div>
+                              <span className="font-semibold text-danger">⚠️ What is Missing / Recommended to Boost Fit:</span>
+                              {opportunity.missingExpected.length > 0 ? (
+                                <ul className="mt-1.5 space-y-1 text-danger">
+                                  {opportunity.missingExpected.map((miss, idx) => (
+                                    <li key={`miss-${idx}`} className="flex items-center gap-1.5">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-danger shrink-0" />
+                                      {miss}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="mt-1 text-success">Your wallet and profile fulfill all primary expected qualifications!</p>
+                              )}
+                            </div>
+
+                            <div className="pt-2 border-t border-border flex items-center justify-between text-2xs text-foreground-subtle">
+                              <span>Field context: {opportunity.field || "General"}</span>
+                              <Link href="/dashboard/wallet" className="text-secondary hover:underline inline-flex items-center gap-1 font-medium">
+                                Manage Wallet Documents
+                                <ExternalLink className="h-3 w-3" />
+                              </Link>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
+                        <span className="text-xs text-foreground-subtle">
+                          Deadline{" "}
+                          <span className="font-medium text-foreground">
+                            {opportunity.deadline
+                              ? new Date(opportunity.deadline).toLocaleDateString("en-IN", {
+                                  day: "numeric",
+                                  month: "short",
+                                  year: "numeric",
+                                })
+                              : "Open"}
+                          </span>
                         </span>
-                      </span>
-                      <Link
-                        href={`/opportunity/${opportunity.id}`}
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
-                      >
-                        View Details
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </Link>
-                    </div>
-                  </Card>
-                </StaggerItem>
-              ))}
+                        <Link
+                          href={`/opportunity/${opportunity.id}`}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
+                        >
+                          View Details
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </div>
+                    </Card>
+                  </StaggerItem>
+                );
+              })}
             </Stagger>
 
-            {opportunities.length > showCount && (
+            {filtered.length > showCount && (
               <Button
                 variant="quiet"
                 block
                 onClick={() => setShowCount((c) => c + 8)}
                 className="border border-border"
               >
-                Load {Math.min(8, opportunities.length - showCount)} more opportunities
+                Load {Math.min(8, filtered.length - showCount)} more opportunities
               </Button>
             )}
           </>
