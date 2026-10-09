@@ -239,7 +239,9 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       allow create, update: if isOwner(uid)
         && isText(request.resource.data.url, 500)
-        && isText(request.resource.data.kind, 40);
+        && isText(request.resource.data.kind, 40)
+        && (!("origin" in request.resource.data) || isText(request.resource.data.origin, 20))
+        && (!("label" in request.resource.data) || isText(request.resource.data.label, 100));
       allow delete: if isOwner(uid);
     }
 
