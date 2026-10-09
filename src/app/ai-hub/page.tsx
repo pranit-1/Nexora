@@ -899,21 +899,38 @@ function ResumeTab() {
 
       {history.length > 0 && (
         <div className="border-t border-border pt-8">
-          <span className="eyebrow mb-4">Recent analysis history</span>
+          <span className="eyebrow mb-4">Recent analysis history (Click to view)</span>
           <ul className="space-y-2">
             {history.map((h, i) => (
-              <li
-                key={i}
-                className="flex items-center justify-between gap-4 rounded-md bg-surface-raised px-4 py-3"
-              >
-                <span className="font-display text-lg text-foreground">{h.atsScore}</span>
-                <span className="text-xs text-foreground-subtle">
-                  {new Date(h.timestamp).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
-                </span>
+              <li key={i}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResult({
+                      atsScore: h.atsScore,
+                      strengths: h.strengths || [],
+                      weaknesses: h.weaknesses || [],
+                      missingSkills: h.missingSkills || [],
+                      formattingFeedback: h.formattingFeedback || "",
+                      improvementSuggestions: h.improvementSuggestions || [],
+                    });
+                  }}
+                  className="flex w-full items-center justify-between gap-4 rounded-md bg-surface-raised px-4 py-3 text-left transition-colors hover:border-secondary hover:bg-surface"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-display text-lg text-foreground">{h.atsScore}/100</span>
+                    <Chip tone={h.atsScore >= 75 ? "success" : "warning"}>
+                      {h.atsScore >= 75 ? "Ready" : "Needs Polish"}
+                    </Chip>
+                  </div>
+                  <span className="text-xs text-foreground-subtle">
+                    {new Date(h.timestamp).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
