@@ -344,18 +344,20 @@ export class OpenRouterService {
         const promptTokens = Math.ceil(prompt.length / 4);
 
         if (response.status === 429) {
+          lastError = `Rate limit (429) hit on key #${keyIndex + 1}`;
           console.warn(`[OpenRouterService] Key #${keyIndex + 1} (${maskedKey}) rate limited (429). Ejecting to fallback bucket.`);
           tel.failedRequests++;
-          this.ejectKeyToFallback(keyIndex, 3);
+          this.ejectKeyToFallback(keyIndex, 30);
           attempts++;
           continue;
         }
 
         if (!response.ok) {
           const errText = await response.text();
+          lastError = `Status ${response.status}: ${errText.slice(0, 200)}`;
           console.warn(`[OpenRouterService] Key #${keyIndex + 1} (${maskedKey}) failed status ${response.status}: ${errText}. Ejecting.`);
           tel.failedRequests++;
-          this.ejectKeyToFallback(keyIndex, response.status === 401 ? 60 : 3);
+          this.ejectKeyToFallback(keyIndex, response.status === 401 ? 120 : 30);
           attempts++;
           continue;
         }
@@ -364,9 +366,10 @@ export class OpenRouterService {
         const text = data?.choices?.[0]?.message?.content;
 
         if (!text || text.trim().length === 0) {
+          lastError = `Empty response received from key #${keyIndex + 1}`;
           console.warn(`[OpenRouterService] Key #${keyIndex + 1} returned empty content.`);
           tel.failedRequests++;
-          this.ejectKeyToFallback(keyIndex, 2);
+          this.ejectKeyToFallback(keyIndex, 15);
           attempts++;
           continue;
         }
