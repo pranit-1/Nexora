@@ -1,4 +1,3 @@
-import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 
 export interface ExtractResult {
@@ -25,8 +24,16 @@ function toStandaloneBytes(buffer: Buffer | Uint8Array): Uint8Array {
 }
 
 async function extractFromPdf(buffer: Buffer | Uint8Array): Promise<{ text: string; pageCount: number | null }> {
+  // Use legacy build for headless Node.js environments (Vercel Serverless / Docker)
+  // This avoids looking for external browser workers (pdf.worker.mjs)
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const data = new Uint8Array(toStandaloneBytes(buffer));
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const loadingTask = pdfjsLib.getDocument({
+    data,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  });
+  const pdf = await loadingTask.promise;
   const pageTexts: string[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);

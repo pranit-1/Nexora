@@ -306,16 +306,16 @@ function ResumeTab() {
   const fetchHistory = async () => {
     if (!currentUser) return;
     try {
+      // Query without composite ordering so missing Firestore index doesn't throw
       const q = query(
         collection(db, "resume_analyses"),
-        where("uid", "==", currentUser.uid),
-        orderBy("timestamp", "desc"),
-        limit(3)
+        where("uid", "==", currentUser.uid)
       );
       const snap = await getDocs(q);
       const list: any[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-      setHistory(list);
+      list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+      setHistory(list.slice(0, 3));
     } catch (e) {
       console.error(e);
     }
