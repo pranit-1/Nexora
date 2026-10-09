@@ -24,8 +24,17 @@ function toStandaloneBytes(buffer: Buffer | Uint8Array): Uint8Array {
 }
 
 async function extractFromPdf(buffer: Buffer | Uint8Array): Promise<{ text: string; pageCount: number | null }> {
-  // Use legacy build for headless Node.js environments (Vercel Serverless / Docker)
-  // This avoids looking for external browser workers (pdf.worker.mjs)
+  // Headless Node.js / Vercel Serverless environment:
+  // Inject the legacy worker into globalThis.pdfjsWorker so pdfjs never tries
+  // to dynamically import './pdf.worker.mjs' from missing serverless chunks on disk.
+  try {
+    // @ts-expect-error - legacy worker file does not have separate type declarations
+    const worker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
+    (globalThis as any).pdfjsWorker = worker;
+  } catch (err) {
+    console.warn('[documentReaderService] Failed to preload pdf.worker:', err);
+  }
+
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const data = new Uint8Array(toStandaloneBytes(buffer));
   const loadingTask = pdfjsLib.getDocument({
