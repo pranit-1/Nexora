@@ -104,11 +104,11 @@ export class OpenRouterService {
   /**
    * Eject key from active bucket into the fallback bucket upon 429/error.
    */
-  private static ejectKeyToFallback(keyIndex: number, cooldownMinutes: number = 3) {
+  private static ejectKeyToFallback(keyIndex: number, cooldownSeconds: number = 30) {
     const tel = this.telemetry.get(keyIndex);
     if (tel) {
       tel.status = "cooling_down";
-      tel.cooldownUntil = Date.now() + cooldownMinutes * 60 * 1000;
+      tel.cooldownUntil = Date.now() + cooldownSeconds * 1000;
     }
 
     if (this.activeBucket === "A") {
@@ -130,12 +130,6 @@ export class OpenRouterService {
 
   /**
    * A key is only allowed to serve once its cooldown has elapsed.
-   *
-   * `cooldownUntil` used to be written by `ejectKeyToFallback` and then never
-   * read, so the cooldown was decorative: as soon as a swap promoted the standby
-   * bucket, every key in it was reset to "idle" and could be handed straight
-   * back to an upstream that had just rate-limited it. That is what turns a
-   * single 429 burst into all keys locked out at once.
    */
   private static isCoolingDown(index: number): boolean {
     const tel = this.telemetry.get(index);
@@ -143,16 +137,16 @@ export class OpenRouterService {
     return tel.cooldownUntil > Date.now();
   }
 
-  /** Milliseconds until the last key in rotation becomes usable again. */
-  private static longestCooldownMs(): number {
+  /** Milliseconds until the earliest key becomes usable again. */
+  private static shortestCooldownMs(): number {
     const now = Date.now();
-    let longest = 0;
+    let shortest = Infinity;
     for (const tel of this.telemetry.values()) {
       if (tel.cooldownUntil && tel.cooldownUntil > now) {
-        longest = Math.max(longest, tel.cooldownUntil - now);
+        shortest = Math.min(shortest, tel.cooldownUntil - now);
       }
     }
-    return longest;
+    return shortest === Infinity ? 0 : shortest;
   }
 
   /** First key in `list` that is actually allowed to serve right now. */
@@ -162,41 +156,41 @@ export class OpenRouterService {
 
   /**
    * Check if active bucket has a usable key. If not, trigger full failover swap
-   * to the other bucket. Returns false only when no key anywhere can serve.
+   * to the standby bucket. Returns false only when both buckets have 0 eligible keys.
    */
   private static ensureActiveBucket(): boolean {
     const currentActiveList = this.activeBucket === "A" ? this.queueA : this.queueB;
 
+    // 1. If active bucket has an eligible key right now, proceed
     if (this.firstEligible(currentActiveList) !== undefined) {
-      return true; // Still have a usable key in the active bucket
+      return true;
     }
 
-    // Active bucket has nothing usable! Swap roles.
+    // 2. If active bucket has no eligible keys (or is completely empty): Swap roles!
     const nextBucket = this.activeBucket === "A" ? "B" : "A";
     const nextList = nextBucket === "A" ? this.queueA : this.queueB;
 
-    // Refuse to promote a key whose cooldown has not elapsed. Swapping anyway
-    // is what made the cooldown unenforced.
-    if (this.firstEligible(nextList) === undefined) {
-      console.error(
-        "[OpenRouterService] ❌ No OpenRouter key is currently usable in either bucket (all are cooling down)."
-      );
-      return false;
+    if (nextList.length > 0) {
+      console.log(`[OpenRouterService] 🔄 Active Queue-${this.activeBucket} empty/cooling down! Swapping to Queue-${nextBucket} (${nextList.length} keys).`);
+      this.activeBucket = nextBucket;
+
+      // Update telemetry labels
+      nextList.forEach((idx) => {
+        const tel = this.telemetry.get(idx);
+        if (tel) {
+          tel.currentBucket = `${nextBucket === "A" ? "Queue-A" : "Queue-B"} (Active)` as any;
+          if (!this.isCoolingDown(idx)) tel.status = "idle";
+        }
+      });
+
+      // If any key is ready in the swapped queue, proceed
+      if (this.firstEligible(nextList) !== undefined) {
+        return true;
+      }
     }
 
-    console.log(`[OpenRouterService] 🔄 Active Queue-${this.activeBucket} has no usable key! Swapping to Queue-${nextBucket}.`);
-    this.activeBucket = nextBucket;
-
-    // Refresh telemetry bucket labels
-    nextList.forEach((idx) => {
-      const tel = this.telemetry.get(idx);
-      if (tel) {
-        tel.currentBucket = `${nextBucket === "A" ? "Queue-A" : "Queue-B"} (Active)` as any;
-        if (!this.isCoolingDown(idx)) tel.status = "idle";
-      }
-    });
-
-    return true;
+    // If both queues are cooling down, check if active bucket has any key whose cooldown is almost done
+    return false;
   }
 
   /**
@@ -271,9 +265,14 @@ export class OpenRouterService {
     while (attempts < maxAttempts) {
       const hasAvailable = this.ensureActiveBucket();
       if (!hasAvailable) {
-        const waitMs = this.longestCooldownMs();
+        const waitMs = this.shortestCooldownMs();
+        if (waitMs > 0 && waitMs <= 4000) {
+          await new Promise((r) => setTimeout(r, waitMs + 200));
+          attempts++;
+          continue;
+        }
         throw new Error(
-          `All OpenRouter API keys are cooling down. The last one frees up in ${Math.ceil(waitMs / 1000)}s.`
+          `OpenRouter API rate limit reached. Next available key frees up in ${Math.ceil(waitMs / 1000)}s.`
         );
       }
 
