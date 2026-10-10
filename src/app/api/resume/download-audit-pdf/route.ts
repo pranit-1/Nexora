@@ -31,6 +31,59 @@ function clampScore(value: unknown): number {
   return Math.min(100, Math.max(0, Math.round(n)));
 }
 
+function boolValue(value: unknown): boolean {
+  return value === true || value === 'true' || value === 1;
+}
+
+function sanitizeContactInfo(raw: unknown): AuditResult['contactInfo'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const present = Array.isArray(o.present)
+    ? (o.present as unknown[])
+        .filter((p: any) => p && typeof p.label === 'string' && typeof p.value === 'string')
+        .slice(0, 6)
+        .map((p: any) => ({ label: p.label.slice(0, 30), value: p.value.slice(0, MAX_ITEM_CHARS) }))
+    : [];
+  const missing = strList(o.missing).slice(0, 6);
+  if (present.length === 0 && missing.length === 0) return undefined;
+  return {
+    complete: boolValue(o.complete) || (present.length >= 3 && missing.length === 0),
+    present,
+    missing,
+    suggestion: typeof o.suggestion === 'string' ? o.suggestion.slice(0, MAX_SUMMARY_CHARS) : '',
+  };
+}
+
+function sanitizeQuantifiedImpact(raw: unknown): AuditResult['quantifiedImpact'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  return {
+    detected: Number.isFinite(Number(o.detected)) ? Math.max(0, Math.round(Number(o.detected))) : 0,
+    bulletsWithoutMetrics: strList(o.bulletsWithoutMetrics).slice(0, 4),
+    suggestion: typeof o.suggestion === 'string' ? o.suggestion.slice(0, MAX_SUMMARY_CHARS) : '',
+  };
+}
+
+function sanitizeSections(raw: unknown): AuditResult['sections'] {
+  if (!Array.isArray(raw)) return undefined;
+  const sections = raw
+    .filter((s: any) => s && typeof s.name === 'string' && typeof s.present === 'boolean')
+    .slice(0, 12)
+    .map((s: any) => ({ name: s.name.slice(0, 40), present: s.present }));
+  return sections.length > 0 ? sections : undefined;
+}
+
+function sanitizeJobMatch(raw: unknown): AuditResult['jobMatch'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  return {
+    score: clampScore(o.score),
+    matchedKeywords: strList(o.matchedKeywords).slice(0, 12),
+    missingKeywords: strList(o.missingKeywords).slice(0, 12),
+    summary: typeof o.summary === 'string' ? o.summary.slice(0, MAX_SUMMARY_CHARS) : '',
+  };
+}
+
 function verdictFor(score: number): AuditResult['verdict'] {
   if (score >= 85) return 'Tier-1 Ready';
   if (score >= 70) return 'Strong Contender';
@@ -79,6 +132,15 @@ function sanitizeAudit(raw: unknown): AuditResult | null {
     missingRecommendedKeywords: strList(input.missingRecommendedKeywords),
     bulletImprovements: [],
     actionPlan: strList(input.actionPlan),
+    contactInfo: sanitizeContactInfo(input.contactInfo),
+    quantifiedImpact: sanitizeQuantifiedImpact(input.quantifiedImpact),
+    sections: sanitizeSections(input.sections),
+    talentGaps: strList(input.talentGaps).slice(0, 6),
+    interviewQuestions: strList(input.interviewQuestions).slice(0, 6),
+    ...(input.jobMatch ? { jobMatch: sanitizeJobMatch(input.jobMatch) } : {}),
+    ...(typeof input.readabilityScore !== 'undefined'
+      ? { readabilityScore: clampScore(input.readabilityScore) }
+      : {}),
   };
 }
 

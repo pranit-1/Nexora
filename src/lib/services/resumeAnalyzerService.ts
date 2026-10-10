@@ -24,6 +24,34 @@ export interface BulletImprovement {
   improved: string;
 }
 
+export interface ContactInfoCheck {
+  complete: boolean;
+  present: { label: string; value: string }[];
+  missing: string[];
+  suggestion: string;
+}
+
+export interface QuantitativeImpactCheck {
+  /** Number of resume bullets that back the claim with a measurable metric. */
+  detected: number;
+  /** Up to a few example bullets that make claims the model proved unquantified. */
+  bulletsWithoutMetrics: string[];
+  suggestion: string;
+}
+
+export interface SectionCheck {
+  name: string;
+  present: boolean;
+}
+
+export interface JobMatchResult {
+  /** 0-100 relevance of the resume against the target job description. */
+  score: number;
+  matchedKeywords: string[];
+  missingKeywords: string[];
+  summary: string;
+}
+
 export interface AuditResult {
   atsScore: number;
   verdict: 'Tier-1 Ready' | 'Strong Contender' | 'Needs Polish' | 'High Risk';
@@ -35,6 +63,20 @@ export interface AuditResult {
   missingRecommendedKeywords: string[];
   bulletImprovements: BulletImprovement[];
   actionPlan: string[];
+  /** Present/absent critical contact fields required by a recruiter. */
+  contactInfo?: ContactInfoCheck;
+  /** Whether the resume quantifies impact with numbers, not just verbs. */
+  quantifiedImpact?: QuantitativeImpactCheck;
+  /** Standard resume sections the auditor could and could not find. */
+  sections?: SectionCheck[];
+  /** Skills the resume is missing that the candidate should consider. */
+  talentGaps?: string[];
+  /** Role-tailored interview questions a recruiter would ask from this resume. */
+  interviewQuestions?: string[];
+  /** Only present when the caller supplied a target job description. */
+  jobMatch?: JobMatchResult;
+  /** Heuristic sentence-density score computed server-side (0-100). */
+  readabilityScore?: number;
 }
 
 export interface AuditOptions {
@@ -141,7 +183,82 @@ function parseScore(value: unknown): number {
   return NaN;
 }
 
-function normalizeAudit(audit: any): AuditResult {
+/** Coerce an unknown value into a capped string array; [] when not an array. */
+function strArr(v: unknown, max = 8): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((s: unknown): s is string => typeof s === 'string').slice(0, max);
+}
+
+function parseContactInfo(raw: unknown): ContactInfoCheck | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const present = Array.isArray(o.present)
+    ? (o.present as unknown[])
+        .filter(
+          (p): p is { label: string; value: string } =>
+            !!p &&
+            typeof (p as { label?: unknown }).label === 'string' &&
+            typeof (p as { value?: unknown }).value === 'string'
+        )
+        .slice(0, 6)
+    : [];
+  const missing = strArr(o.missing, 6);
+  if (present.length === 0 && missing.length === 0) return undefined;
+  return {
+    complete: Boolean(o.complete) || (present.length >= 3 && missing.length === 0),
+    present,
+    missing,
+    suggestion: typeof o.suggestion === 'string' ? o.suggestion : '',
+  };
+}
+
+function parseQuantifiedImpact(raw: unknown): QuantitativeImpactCheck | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const n = parseScore(o.detected);
+  return {
+    detected: Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0,
+    bulletsWithoutMetrics: strArr(o.bulletsWithoutMetrics, 4),
+    suggestion: typeof o.suggestion === 'string' ? o.suggestion : '',
+  };
+}
+
+function parseSections(raw: unknown): SectionCheck[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((s: any) => s && typeof s.name === 'string' && typeof s.present === 'boolean')
+    .slice(0, 12);
+}
+
+function parseJobMatch(raw: unknown): JobMatchResult | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const n = parseScore(o.score);
+  if (!Number.isFinite(n) && !Array.isArray(o.matchedKeywords) && !Array.isArray(o.missingKeywords)) {
+    return undefined;
+  }
+  return {
+    score: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0,
+    matchedKeywords: strArr(o.matchedKeywords, 12),
+    missingKeywords: strArr(o.missingKeywords, 12),
+    summary: typeof o.summary === 'string' ? o.summary : '',
+  };
+}
+
+/**
+ * Server-side sentence-density heuristic (0-100). Long, run-on sentences make a
+ * resume dense to read; a healthy resume averages ~12 words per sentence.
+ */
+function computeReadability(text: string): number {
+  const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+  const words = text.split(/\s+/).filter((w) => w.trim().length > 0).length;
+  if (sentences.length === 0 || words === 0) return 0;
+  const avg = words / sentences.length;
+  const penalty = Math.max(0, avg - 12.5);
+  return Math.max(0, Math.min(100, Math.round(100 - penalty * 4)));
+}
+
+function normalizeAudit(audit: any, readability?: number): AuditResult {
   const parsedScore = parseScore(audit.atsScore);
   const atsScore = Number.isFinite(parsedScore)
     ? Math.max(0, Math.min(100, Math.round(parsedScore)))
@@ -154,6 +271,7 @@ function normalizeAudit(audit: any): AuditResult {
     const n = parseScore(v);
     return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
   };
+  const jobMatch = parseJobMatch(audit.jobMatch);
   return {
     atsScore,
     verdict,
@@ -165,16 +283,24 @@ function normalizeAudit(audit: any): AuditResult {
       experienceDepth: b(breakdown.experienceDepth),
     },
     executiveSummary: typeof audit.executiveSummary === 'string' ? audit.executiveSummary : '',
-    strengths: Array.isArray(audit.strengths) ? audit.strengths.filter((s: any) => typeof s === 'string') : [],
-    criticalNegatives: Array.isArray(audit.criticalNegatives) ? audit.criticalNegatives.filter((s: any) => typeof s === 'string') : [],
-    atsKeywordsFound: Array.isArray(audit.atsKeywordsFound) ? audit.atsKeywordsFound.filter((s: any) => typeof s === 'string') : [],
-    missingRecommendedKeywords: Array.isArray(audit.missingRecommendedKeywords) ? audit.missingRecommendedKeywords.filter((s: any) => typeof s === 'string') : [],
+    strengths: strArr(audit.strengths, 8),
+    criticalNegatives: strArr(audit.criticalNegatives, 8),
+    atsKeywordsFound: strArr(audit.atsKeywordsFound, 10),
+    missingRecommendedKeywords: strArr(audit.missingRecommendedKeywords, 10),
     bulletImprovements: Array.isArray(audit.bulletImprovements)
       ? audit.bulletImprovements
           .filter((b: any) => b && typeof b.original === 'string' && typeof b.improved === 'string')
           .map((b: any) => ({ original: b.original, improved: b.improved }))
+          .slice(0, 5)
       : [],
-    actionPlan: Array.isArray(audit.actionPlan) ? audit.actionPlan.filter((s: any) => typeof s === 'string') : [],
+    actionPlan: strArr(audit.actionPlan, 8),
+    contactInfo: parseContactInfo(audit.contactInfo),
+    quantifiedImpact: parseQuantifiedImpact(audit.quantifiedImpact),
+    sections: parseSections(audit.sections),
+    talentGaps: strArr(audit.talentGaps, 6),
+    interviewQuestions: strArr(audit.interviewQuestions, 6),
+    ...(jobMatch ? { jobMatch } : {}),
+    ...(typeof readability === 'number' ? { readabilityScore: readability } : {}),
   };
 }
 
@@ -184,7 +310,9 @@ export async function auditResume(options: AuditOptions): Promise<AuditResult> {
     throw new Error('Resume content is too short or empty to analyze.');
   }
 
-  const prompt = `You are a Principal Tech Recruiter and Merciless Fortune 500 ATS Auditor. Perform a deep, strict, zero-leniency review. Return ONLY a valid JSON object with this structure:
+  const readability = computeReadability(resumeText);
+
+  const prompt = `You are a Principal Tech Recruiter and Merciless Fortune 500 ATS Auditor. Perform a deep, strict, zero-leniency review of the resume. Return ONLY a valid JSON object with this structure:
 {
   "atsScore": <integer 0-100>,
   "verdict": "<Tier-1 Ready | Strong Contender | Needs Polish | High Risk>",
@@ -196,13 +324,38 @@ export async function auditResume(options: AuditOptions): Promise<AuditResult> {
     "experienceDepth": <integer 0-100>
   },
   "executiveSummary": "<2-3 sentences>",
-  "strengths": ["<strength>"],
-  "criticalNegatives": ["<weakness>"],
-  "atsKeywordsFound": ["<keyword>"],
-  "missingRecommendedKeywords": ["<keyword>"],
-  "bulletImprovements": [{ "original": "<bullet>", "improved": "<rewrite>" }],
-  "actionPlan": ["<step>"]
+  "strengths": ["<max 6 strengths>"],
+  "criticalNegatives": ["<max 6 weaknesses>"],
+  "atsKeywordsFound": ["<max 8 keywords actually present>"],
+  "missingRecommendedKeywords": ["<max 8 important missing keywords>"],
+  "bulletImprovements": [{ "original": "<exact bullet>", "improved": "<rewrite that quantifies impact>" }],
+  "actionPlan": ["<max 6 concrete steps>"],
+  "contactInfo": {
+    "complete": <true/false>,
+    "present": [{ "label": "Email|Phone|Location|LinkedIn|Portfolio|Name", "value": "<as written>" }],
+    "missing": ["<critical field not found, e.g. LinkedIn>"],
+    "suggestion": "<one sentence>"
+  },
+  "quantifiedImpact": {
+    "detected": <integer count of bullets containing numbers/metrics>,
+    "bulletsWithoutMetrics": ["<max 3 example bullets that make unquantified claims>"],
+    "suggestion": "<one sentence on adding metrics>"
+  },
+  "sections": [{ "name": "Summary|Experience|Education|Skills|Projects|Certifications", "present": true/false }],
+  "talentGaps": ["<max 5 high-value skills or credentials the role expects that are absent>"],
+  "interviewQuestions": ["<max 5 sharp, resume-specific questions a recruiter would ask>"]${targetJobDescription ? `,
+  "jobMatch": {
+    "score": <integer 0-100 resume vs target job relevance>,
+    "matchedKeywords": ["<keywords in both resume and job>"],
+    "missingKeywords": ["<keywords the job demands but the resume lacks>"],
+    "summary": "<2-3 sentences>"
+  }` : ''}
 }
+
+Rules:
+- BulletImprovements must quote the original exact bullet. Rewrite each improved bullet to lead with a strong verb and a quantified result.
+- Keep every string crisp; do not pad lists.
+- atsScore must reflect how an ATS + human screener would honestly grade this resume.
 
 RESUME:
 """
@@ -224,7 +377,7 @@ ${targetJobDescription ? `TARGET JOB:\n"""\n${neutralize(targetJobDescription, 1
 
   const parsed = attemptParse(cleaned.slice(startIdx, endIdx + 1));
   if (parsed && typeof parsed === 'object') {
-    return normalizeAudit(parsed);
+    return normalizeAudit(parsed, readability);
   }
 
   const scoreMatch = cleaned.match(/"atsScore"\s*:\s*(\d+)/);
@@ -232,7 +385,7 @@ ${targetJobDescription ? `TARGET JOB:\n"""\n${neutralize(targetJobDescription, 1
     // `(\d+)` guarantees a valid number — including a legitimate 0, which the
     // old `|| 80` coerced into a fabricated 80-point audit.
     const fallbackScore = Number(scoreMatch[1]);
-    return normalizeAudit({ atsScore: fallbackScore });
+    return normalizeAudit({ atsScore: fallbackScore }, readability);
   }
 
   throw new Error(`Audit JSON parse failed. Snippet: ${cleaned.slice(0, 240)}`);
@@ -291,7 +444,59 @@ export function buildAuditReportPdfBuffer(audit: AuditResult, resumeFileName = '
         doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(`${labels[k] || k}: `, { continued: true });
         doc.font('Helvetica').fillColor('#334155').text(`${v}%`);
       }
+      if (typeof audit.readabilityScore === 'number') {
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text('Readability (sentence density): ', { continued: true });
+        doc.font('Helvetica').fillColor('#334155').text(`${audit.readabilityScore}%`);
+      }
+      if (audit.jobMatch && typeof audit.jobMatch.score === 'number') {
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text('Job Match (target JD): ', { continued: true });
+        doc.font('Helvetica').fillColor('#334155').text(`${audit.jobMatch.score}%`);
+      }
       doc.moveDown(1);
+
+      if (audit.contactInfo) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text(`Contact Info ${audit.contactInfo.complete ? '(Complete)' : '(Incomplete)'}`);
+        audit.contactInfo.present.forEach((p) => doc.font('Helvetica').fontSize(9).fillColor('#059669').text(`  • ${p.label}: ${p.value}`));
+        if (audit.contactInfo.missing.length > 0) {
+          doc.font('Helvetica').fontSize(9).fillColor('#dc2626').text(`  ✗ Missing: ${audit.contactInfo.missing.join(', ')}`);
+        }
+        if (audit.contactInfo.suggestion) doc.font('Helvetica').fontSize(9).fillColor('#334155').text(`  → ${audit.contactInfo.suggestion}`);
+        doc.moveDown(1);
+      }
+
+      if (audit.quantifiedImpact) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Quantified Impact');
+        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(`  Bullets containing concrete metrics: ${audit.quantifiedImpact.detected}`);
+        audit.quantifiedImpact.bulletsWithoutMetrics.forEach((bl) => doc.font('Helvetica').fontSize(9).fillColor('#f59e0b').text(`  • ${bl}`));
+        if (audit.quantifiedImpact.suggestion) doc.font('Helvetica').fontSize(9).fillColor('#334155').text(`  → ${audit.quantifiedImpact.suggestion}`);
+        doc.moveDown(1);
+      }
+
+      if (audit.sections && audit.sections.length > 0) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Sections Detected');
+        audit.sections.forEach((s) => doc.font('Helvetica').fontSize(9).fillColor(s.present ? '#059669' : '#dc2626').text(`  ${s.present ? '✓' : '✗'} ${s.name}`));
+        doc.moveDown(1);
+      }
+
+      if (audit.jobMatch) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Job Match Detail');
+        if (audit.jobMatch.summary) doc.font('Helvetica').fontSize(9).fillColor('#334155').text(`  ${audit.jobMatch.summary}`);
+        if (audit.jobMatch.matchedKeywords.length > 0) {
+          doc.font('Helvetica-Bold').fontSize(9).fillColor('#059669').text('  Matched: ');
+          doc.font('Helvetica').fontSize(9).fillColor('#334155').text(` ${audit.jobMatch.matchedKeywords.join(', ')}`);
+        }
+        if (audit.jobMatch.missingKeywords.length > 0) {
+          doc.font('Helvetica-Bold').fontSize(9).fillColor('#dc2626').text('  Missing: ');
+          doc.font('Helvetica').fontSize(9).fillColor('#334155').text(` ${audit.jobMatch.missingKeywords.join(', ')}`);
+        }
+        doc.moveDown(1);
+      }
+
+      if (audit.talentGaps && audit.talentGaps.length > 0) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Talent Gaps');
+        audit.talentGaps.forEach((g) => doc.font('Helvetica').fontSize(9).fillColor('#f59e0b').text(`  • ${g}`));
+        doc.moveDown(1);
+      }
 
       doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Strengths');
       audit.strengths.forEach((s) => doc.font('Helvetica').fontSize(9).fillColor('#059669').text(`  • ${s}`));
@@ -300,6 +505,12 @@ export function buildAuditReportPdfBuffer(audit: AuditResult, resumeFileName = '
       doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Critical Negatives');
       audit.criticalNegatives.forEach((n) => doc.font('Helvetica').fontSize(9).fillColor('#dc2626').text(`  • ${n}`));
       doc.moveDown(1);
+
+      if (audit.interviewQuestions && audit.interviewQuestions.length > 0) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Likely Interview Questions');
+        audit.interviewQuestions.forEach((q, i) => doc.font('Helvetica').fontSize(9).fillColor('#334155').text(`  ${i + 1}. ${q}`));
+        doc.moveDown(1);
+      }
 
       doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text('Action Plan');
       audit.actionPlan.forEach((step, i) => doc.font('Helvetica').fontSize(9).fillColor('#334155').text(`  ${i + 1}. ${step}`));
