@@ -23,6 +23,17 @@ export interface KeyTelemetry {
   cooldownUntil?: number;
 }
 
+/**
+ * Thrown when OpenRouter says the configured model does not exist (404).
+ * This is a config problem, not a key problem, so it must never eject keys.
+ */
+class OpenRouterModelError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenRouterModelError";
+  }
+}
+
 export class OpenRouterService {
   private static telemetry: Map<number, KeyTelemetry> = new Map();
 
@@ -419,6 +430,19 @@ export class OpenRouterService {
           continue;
         }
 
+        if (response.status === 404) {
+          // Model removed/renamed (e.g. OPENROUTER_MODEL points to a dead model).
+          // Every key would fail identically, so fail fast and keep keys healthy.
+          const errText = await response.text();
+          tel.status = "idle";
+          console.error(
+            `[OpenRouterService] Model "${model}" not found (404). Fix OPENROUTER_MODEL (or unset it to use "openrouter/free"). Response: ${errText.slice(0, 300)}`
+          );
+          throw new OpenRouterModelError(
+            `OpenRouter model "${model}" not found (404). Check OPENROUTER_MODEL env var.`
+          );
+        }
+
         if (!response.ok) {
           const errText = await response.text();
           lastError = `Status ${response.status}: ${errText.slice(0, 200)}`;
@@ -469,7 +493,7 @@ export class OpenRouterService {
       } catch (err: any) {
         // A format failure is a request bug, not a key fault: rethrow without
         // ejecting so one bad key cannot cascade into a total outage.
-        if (isAiFormatError(err)) {
+        if (isAiFormatError(err) || err instanceof OpenRouterModelError) {
           throw err;
         }
         const isTimeout = err?.name === "AbortError";
