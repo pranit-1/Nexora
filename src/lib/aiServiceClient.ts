@@ -93,6 +93,61 @@ export class AIServiceClient {
     return result;
   }
 
+  /**
+   * Multi-file career chat. Posts an optional set of attachments together with
+   * the message; the server extracts readable text from each and answers in
+   * markdown. Returns the model's reply.
+   */
+  public static async chatWithFiles(
+    message: string,
+    history: { role: "user" | "model"; text: string }[],
+    profileContext: unknown,
+    files: File[] = []
+  ): Promise<{ reply: string; files: { name: string; kind: "doc" | "image" }[] }> {
+    let response: Response;
+    try {
+      const formData = new FormData();
+      formData.append("message", message);
+      formData.append("history", JSON.stringify(history));
+      formData.append("profileContext", JSON.stringify(profileContext ?? {}));
+      for (const file of files) {
+        formData.append("files", file, file.name);
+      }
+      response = await authedFetch("/api/chat", { method: "POST", body: formData });
+    } catch (e) {
+      console.error("AI Client network error for chat:", e);
+      throw new AIServiceUnavailableError("network", "Could not reach the AI service. Check your connection.");
+    }
+
+    if (!response.ok) {
+      let message = `The AI service returned ${response.status}.`;
+      try {
+        const errData = await response.json();
+        if (errData && typeof errData.error === "string" && errData.error.length > 0) {
+          message = errData.error;
+        }
+      } catch {
+        // non-JSON error body; keep the status-derived message
+      }
+      if (response.status === 401) {
+        throw new AIServiceUnavailableError("unauthenticated", "Please sign in to use AI features.");
+      }
+      if (response.status === 429) {
+        throw new AIServiceUnavailableError("rate_limited", "Too many AI requests. Wait a moment and try again.");
+      }
+      throw new AIServiceUnavailableError("provider", message);
+    }
+
+    const body = await response.json();
+    if (typeof body?.reply !== "string" || body.reply.trim().length === 0) {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an empty response.");
+    }
+    return {
+      reply: body.reply,
+      files: Array.isArray(body.files) ? body.files : [],
+    };
+  }
+
 
 
   public static async trackConfidence(scores: unknown): Promise<string> {

@@ -93,6 +93,8 @@ export function enforceRateLimit(
 export const LIMITS = {
   /** Paid LLM endpoints. */
   ai: { scope: "ai", limit: 20, windowMs: 60_000 },
+  /** Multi-file career chat (LLM round-trip + document parsing). */
+  chat: { scope: "chat", limit: 30, windowMs: 60_000 },
   summarize: { scope: "summarize", limit: 30, windowMs: 60_000 },
   categorize: { scope: "categorize", limit: 15, windowMs: 60_000 },
   /** Paid resume audits (LLM round-trip + PDF extraction) — heavier, so tighter. */
