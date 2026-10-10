@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -31,15 +31,145 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Paperclip,
+  Download,
 } from "lucide-react";
 import type { WalletDocument, ProfileLink } from "@/lib/types";
 import { subscribeProfileLinks } from "@/lib/profileLinksClient";
 import { Button, Card, Chip, EmptyState, ErrorState, Textarea } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 import { motion } from "framer-motion";
+import MarkdownText from "@/components/ai/MarkdownText";
 
 
 const EASE_OUT_EXPO = [0.22, 1, 0.36, 1] as const;
+
+/* ==========================================================================
+   Rich resume-audit shape. Mirrors the server's AuditResult so the full
+   breakdown the analyzer produces can be rendered (and stored) verbatim.
+   ========================================================================== */
+
+interface RichBreakdown {
+  impactAndMetrics: number;
+  skillsRelevance: number;
+  actionVerbs: number;
+  formattingAndClarity: number;
+  experienceDepth: number;
+}
+
+interface RichContactInfo {
+  complete: boolean;
+  present: { label: string; value: string }[];
+  missing: string[];
+  suggestion: string;
+}
+
+interface RichQuantifiedImpact {
+  detected: number;
+  bulletsWithoutMetrics: string[];
+  suggestion: string;
+}
+
+interface RichSectionCheck {
+  name: string;
+  present: boolean;
+}
+
+interface RichJobMatch {
+  score: number;
+  matchedKeywords: string[];
+  missingKeywords: string[];
+  summary: string;
+}
+
+interface RichAudit {
+  atsScore: number;
+  verdict?: string;
+  breakdown: RichBreakdown;
+  executiveSummary: string;
+  strengths: string[];
+  criticalNegatives: string[];
+  atsKeywordsFound: string[];
+  missingRecommendedKeywords: string[];
+  bulletImprovements: { original: string; improved: string }[];
+  actionPlan: string[];
+  contactInfo?: RichContactInfo;
+  quantifiedImpact?: RichQuantifiedImpact;
+  sections?: RichSectionCheck[];
+  talentGaps?: string[];
+  interviewQuestions?: string[];
+  jobMatch?: RichJobMatch;
+  readabilityScore?: number;
+}
+
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+}
+
+function strList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+}
+
+/** Coerce whatever the server sent into a render-safe RichAudit. */
+function richAudit(raw: unknown): RichAudit {
+  const a = (raw ?? {}) as Record<string, unknown>;
+  const b = (a.breakdown ?? {}) as Record<string, unknown>;
+  const bullets = Array.isArray(a.bulletImprovements)
+    ? (a.bulletImprovements as unknown[]).filter(
+        (x): x is { original: string; improved: string } =>
+          !!x && typeof (x as { original?: unknown }).original === "string" &&
+          typeof (x as { improved?: unknown }).improved === "string"
+      )
+    : [];
+  const contactInfo = a.contactInfo as RichContactInfo | undefined;
+  const quantifiedImpact = a.quantifiedImpact as RichQuantifiedImpact | undefined;
+  const sections = Array.isArray(a.sections)
+    ? (a.sections as unknown[]).filter(
+        (s): s is RichSectionCheck =>
+          !!s && typeof (s as { name?: unknown }).name === "string" && typeof (s as { present?: unknown }).present === "boolean"
+      )
+    : [];
+  const jobMatch = a.jobMatch as RichJobMatch | undefined;
+  return {
+    atsScore: num(a.atsScore),
+    verdict: typeof a.verdict === "string" ? a.verdict : undefined,
+    breakdown: {
+      impactAndMetrics: num(b.impactAndMetrics),
+      skillsRelevance: num(b.skillsRelevance),
+      actionVerbs: num(b.actionVerbs),
+      formattingAndClarity: num(b.formattingAndClarity),
+      experienceDepth: num(b.experienceDepth),
+    },
+    executiveSummary: typeof a.executiveSummary === "string" ? a.executiveSummary : "",
+    strengths: strList(a.strengths),
+    criticalNegatives: strList(a.criticalNegatives),
+    atsKeywordsFound: strList(a.atsKeywordsFound),
+    missingRecommendedKeywords: strList(a.missingRecommendedKeywords),
+    bulletImprovements: bullets,
+    actionPlan: strList(a.actionPlan),
+    ...(contactInfo && typeof contactInfo === "object" ? { contactInfo } : {}),
+    ...(quantifiedImpact && typeof quantifiedImpact === "object" ? { quantifiedImpact } : {}),
+    ...(sections.length > 0 ? { sections } : {}),
+    ...(Array.isArray(a.talentGaps) ? { talentGaps: strList(a.talentGaps) } : {}),
+    ...(Array.isArray(a.interviewQuestions) ? { interviewQuestions: strList(a.interviewQuestions) } : {}),
+    ...(jobMatch && typeof jobMatch === "object" ? { jobMatch } : {}),
+    ...(typeof a.readabilityScore !== "undefined" ? { readabilityScore: num(a.readabilityScore) } : {}),
+  };
+}
+
+function bytesLabel(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+const BREAKDOWN_LABELS: { key: keyof RichBreakdown; label: string }[] = [
+  { key: "impactAndMetrics", label: "Impact & Metrics" },
+  { key: "skillsRelevance", label: "Skills Relevance" },
+  { key: "actionVerbs", label: "Action Verbs" },
+  { key: "formattingAndClarity", label: "Formatting & Clarity" },
+  { key: "experienceDepth", label: "Experience Depth" },
+];
 
 
 
@@ -601,9 +731,10 @@ function ResumeTab() {
   const { currentUser } = useAuth();
   const [resumeText, setResumeText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ResumeAnalysisResult | null>(null);
+  const [result, setResult] = useState<RichAudit | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [uploadedFileName, setUploadedFileName] = useState("");
+  const [targetJob, setTargetJob] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState("");
   const [analysisError, setAnalysisError] = useState("");
@@ -660,16 +791,27 @@ function ResumeTab() {
     }
   };
 
+  const flatToRich = (a: ResumeAnalysisResult): RichAudit =>
+    richAudit({
+      atsScore: a.atsScore,
+      executiveSummary: a.formattingFeedback,
+      strengths: a.strengths,
+      criticalNegatives: a.weaknesses,
+      missingRecommendedKeywords: a.missingSkills,
+      actionPlan: a.improvementSuggestions,
+    });
+
   const analyzeResume = async () => {
     if (!resumeText.trim() && !selectedFile) return;
     setLoading(true);
     setAnalysisError("");
     try {
-      let analysis: ResumeAnalysisResult;
+      let audit: RichAudit;
 
       if (selectedFile) {
         const formData = new FormData();
         formData.append("file", selectedFile);
+        if (targetJob.trim()) formData.append("targetJobDescription", targetJob.trim());
         const res = await authedFetch("/api/resume/analyze", {
           method: "POST",
           body: formData,
@@ -679,53 +821,37 @@ function ResumeTab() {
           throw new Error(errData?.error || `Analysis failed with status ${res.status}`);
         }
         const data = await res.json();
-        const a = data.audit;
-        analysis = {
-          atsScore: a.atsScore ?? 0,
-          strengths: a.strengths || [],
-          weaknesses: a.criticalNegatives || a.weaknesses || [],
-          missingSkills: a.missingRecommendedKeywords || a.missingSkills || [],
-          formattingFeedback: a.executiveSummary || a.formattingFeedback || "",
-          improvementSuggestions: (a.actionPlan && a.actionPlan.length > 0)
-            ? a.actionPlan
-            : (a.bulletImprovements || []).map((b: any) => `${b.original} -> ${b.improved}`),
-        };
+        audit = richAudit(data.audit);
       } else {
+        const body: Record<string, string> = { resumeText };
+        if (targetJob.trim()) body.targetJobDescription = targetJob.trim();
         const res = await authedFetch("/api/resume/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resumeText }),
+          body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          // Fallback to legacy action if /api/resume/analyze is rejected
-          analysis = await AIServiceClient.analyzeResume(resumeText);
-        } else {
+        if (res.ok) {
           const data = await res.json();
-          const a = data.audit;
-          analysis = {
-            atsScore: a.atsScore ?? 0,
-            strengths: a.strengths || [],
-            weaknesses: a.criticalNegatives || a.weaknesses || [],
-            missingSkills: a.missingRecommendedKeywords || a.missingSkills || [],
-            formattingFeedback: a.executiveSummary || a.formattingFeedback || "",
-            improvementSuggestions: (a.actionPlan && a.actionPlan.length > 0)
-              ? a.actionPlan
-              : (a.bulletImprovements || []).map((b: any) => `${b.original} -> ${b.improved}`),
-          };
+          audit = richAudit(data.audit);
+        } else {
+          // Fallback to the legacy action when the server analyser is unavailable.
+          const legacy = await AIServiceClient.analyzeResume(resumeText);
+          audit = flatToRich(legacy);
         }
       }
 
-      setResult(analysis);
+      setResult(audit);
 
       if (currentUser) {
         await addDoc(collection(db, "resume_analyses"), {
           uid: currentUser.uid,
-          atsScore: analysis.atsScore,
-          strengths: analysis.strengths,
-          weaknesses: analysis.weaknesses,
-          missingSkills: analysis.missingSkills,
-          formattingFeedback: analysis.formattingFeedback,
-          improvementSuggestions: analysis.improvementSuggestions,
+          atsScore: audit.atsScore,
+          weaknesses: audit.criticalNegatives,
+          missingSkills: audit.missingRecommendedKeywords,
+          formattingFeedback: audit.executiveSummary,
+          improvementSuggestions: audit.actionPlan,
+          strengths: audit.strengths,
+          audit,
           timestamp: new Date().toISOString(),
         });
         await fetchHistory();
@@ -738,6 +864,33 @@ function ResumeTab() {
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadPdf = async () => {
+    if (!result) return;
+    setAnalysisError("");
+    try {
+      const res = await authedFetch("/api/resume/download-audit-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audit: result, fileName: uploadedFileName || "Resume" }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.error || `PDF export failed with status ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${(uploadedFileName || "Resume").replace(/\.[^.]+$/, "")}_ATS_Report.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setAnalysisError(err?.message || "Could not generate the PDF report.");
     }
   };
 
@@ -818,6 +971,14 @@ function ResumeTab() {
           onChange={(e) => setResumeText(e.target.value)}
         />
 
+        <Textarea
+          label="Target job description (optional — enables Job Match %)"
+          rows={3}
+          placeholder="Paste the job posting you're targeting. Adds matched/missing keyword analysis and a match score…"
+          value={targetJob}
+          onChange={(e) => setTargetJob(e.target.value)}
+        />
+
         <Button
           block
           onClick={analyzeResume}
@@ -832,20 +993,172 @@ function ResumeTab() {
 
       {result && (
         <Reveal className="space-y-6 border-t border-border pt-8">
-          <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-raised px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface-raised px-5 py-4">
             <div>
               <span className="eyebrow">ATS Score Estimation</span>
               <span className="mt-2 block font-display text-4xl leading-none text-foreground">
                 {result.atsScore}
                 <span className="text-lg text-foreground-subtle">/100</span>
               </span>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {result.verdict && (
+                  <Chip tone={result.atsScore >= 85 ? "success" : result.atsScore >= 70 ? "warning" : "danger"}>
+                    {result.verdict}
+                  </Chip>
+                )}
+                {typeof result.readabilityScore === "number" && (
+                  <Chip tone="info">Readability {result.readabilityScore}/100</Chip>
+                )}
+                {result.atsScore >= 75 ? (
+                  <Chip tone="success">Ready to Apply</Chip>
+                ) : (
+                  <Chip tone="warning">Needs Revision</Chip>
+                )}
+              </div>
             </div>
-            {result.atsScore >= 75 ? (
-              <Chip tone="success">Ready to Apply</Chip>
-            ) : (
-              <Chip tone="warning">Needs Revision</Chip>
-            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={<Download className="h-4 w-4" />}
+              onClick={downloadPdf}
+            >
+              Download PDF Report
+            </Button>
           </div>
+
+          {result.jobMatch && (
+            <Card tone="raised" className="p-5">
+              <div className="flex items-center justify-between gap-4">
+                <span className="eyebrow">Job match</span>
+                <span className="font-display text-2xl text-foreground">{result.jobMatch.score}%</span>
+              </div>
+              {result.jobMatch.summary && (
+                <p className="mt-2 text-sm leading-relaxed text-foreground">{result.jobMatch.summary}</p>
+              )}
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                {result.jobMatch.matchedKeywords.length > 0 && (
+                  <div>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-success">Matched keywords</span>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {result.jobMatch.matchedKeywords.map((k, i) => (
+                        <Chip key={i} tone="success">{k}</Chip>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {result.jobMatch.missingKeywords.length > 0 && (
+                  <div>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-danger">Missing from resume</span>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {result.jobMatch.missingKeywords.map((k, i) => (
+                        <Chip key={i} tone="danger">{k}</Chip>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <Card tone="raised" className="p-5">
+            <span className="eyebrow">Score breakdown</span>
+            <div className="mt-4 space-y-3">
+              {BREAKDOWN_LABELS.map(({ key, label }) => {
+                const v = result.breakdown[key];
+                return (
+                  <div key={key}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-foreground-muted">{label}</span>
+                      <span className="font-display text-foreground">{v}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-ink/10">
+                      <div className="h-full rounded-full bg-secondary" style={{ width: `${v}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {result.executiveSummary && (
+            <Card tone="inset" className="p-5">
+              <span className="eyebrow">Executive summary</span>
+              <p className="mt-2 text-sm leading-relaxed text-foreground">{result.executiveSummary}</p>
+            </Card>
+          )}
+
+          {(result.contactInfo || result.quantifiedImpact) && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {result.contactInfo && (
+                <Card tone="raised" className="p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="eyebrow">Contact info</span>
+                    <Chip tone={result.contactInfo.complete ? "success" : "warning"}>
+                      {result.contactInfo.complete ? "Complete" : "Incomplete"}
+                    </Chip>
+                  </div>
+                  <ul className="mt-3 space-y-1.5">
+                    {result.contactInfo.present.map((p, i) => (
+                      <li key={i} className="flex gap-2 text-sm text-foreground">
+                        <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                        <span className="text-foreground-muted">{p.label}:</span> {p.value}
+                      </li>
+                    ))}
+                  </ul>
+                  {result.contactInfo.missing.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {result.contactInfo.missing.map((m, i) => (
+                        <Chip key={i} tone="danger">{m}</Chip>
+                      ))}
+                    </div>
+                  )}
+                  {result.contactInfo.suggestion && (
+                    <p className="mt-3 text-sm text-foreground-muted">{result.contactInfo.suggestion}</p>
+                  )}
+                </Card>
+              )}
+
+              {result.quantifiedImpact && (
+                <Card tone="raised" className="p-5">
+                  <span className="eyebrow">Quantified impact</span>
+                  <p className="mt-2 text-sm text-foreground">
+                    <span className="font-display text-2xl">{result.quantifiedImpact.detected}</span>{" "}
+                    <span className="text-foreground-muted">metric-backed bullets</span>
+                  </p>
+                  {result.quantifiedImpact.bulletsWithoutMetrics.length > 0 && (
+                    <div className="mt-3">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-warning">Add numbers to</span>
+                      <ul className="mt-2 space-y-1.5">
+                        {result.quantifiedImpact.bulletsWithoutMetrics.map((b, i) => (
+                          <li key={i} className="flex gap-2 text-sm text-foreground-muted">
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" /> {b}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {result.quantifiedImpact.suggestion && (
+                    <p className="mt-3 text-sm text-foreground-muted">{result.quantifiedImpact.suggestion}</p>
+                  )}
+                </Card>
+              )}
+            </div>
+          )}
+
+          {result.sections && result.sections.length > 0 && (
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">Sections detected</span>
+              <ul className="mt-3 flex flex-wrap gap-2">
+                {result.sections.map((s, i) => (
+                  <li key={i}>
+                    <Chip tone={s.present ? "success" : "danger"}>
+                      {s.present ? "✓" : "✗"} {s.name}
+                    </Chip>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Card tone="raised" className="p-5">
@@ -862,7 +1175,7 @@ function ResumeTab() {
             <Card tone="raised" className="p-5">
               <span className="eyebrow">Areas of weakness</span>
               <ul className="mt-3 space-y-2">
-                {result.weaknesses.map((w, i) => (
+                {result.criticalNegatives.map((w, i) => (
                   <li key={i} className="flex gap-2.5 text-sm text-foreground">
                     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" /> {w}
                   </li>
@@ -871,29 +1184,90 @@ function ResumeTab() {
             </Card>
           </div>
 
-          <Card tone="raised" className="p-5">
-            <span className="eyebrow">Missing skills from industry</span>
-            <ul className="mt-3 flex flex-wrap gap-2">
-              {result.missingSkills.map((sk, i) => (
-                <li key={i}>
-                  <Chip tone="gold">{sk}</Chip>
-                </li>
-              ))}
-            </ul>
-          </Card>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">ATS keywords found</span>
+              {result.atsKeywordsFound.length > 0 ? (
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {result.atsKeywordsFound.map((k, i) => (
+                    <li key={i}><Chip tone="success">{k}</Chip></li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-foreground-muted">No keywords were detected.</p>
+              )}
+            </Card>
 
-          <div className="space-y-3">
-            <span className="eyebrow">Improvement suggestions</span>
-            <p className="text-sm leading-relaxed text-foreground">{result.formattingFeedback}</p>
-            <ul className="space-y-2 pt-1">
-              {result.improvementSuggestions.map((s, i) => (
-                <li key={i} className="flex gap-2.5 text-sm text-foreground-muted">
-                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-foreground-subtle" />
-                  {s}
-                </li>
-              ))}
-            </ul>
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">Missing recommended keywords</span>
+              {result.missingRecommendedKeywords.length > 0 ? (
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {result.missingRecommendedKeywords.map((k, i) => (
+                    <li key={i}><Chip tone="gold">{k}</Chip></li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-foreground-muted">Nothing obvious is missing.</p>
+              )}
+            </Card>
           </div>
+
+          {result.bulletImprovements.length > 0 && (
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">Bullet rewrites</span>
+              <div className="mt-3 space-y-3">
+                {result.bulletImprovements.map((b, i) => (
+                  <div key={i} className="rounded-lg border border-border bg-surface p-4">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-danger">Original</span>
+                    <p className="mt-1 text-sm text-foreground-muted">{b.original}</p>
+                    <span className="mt-3 block text-xs font-semibold uppercase tracking-wider text-success">Improved</span>
+                    <p className="mt-1 text-sm text-foreground">{b.improved}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {((result.talentGaps && result.talentGaps.length > 0) || (result.interviewQuestions && result.interviewQuestions.length > 0)) && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {result.talentGaps && result.talentGaps.length > 0 && (
+                <Card tone="raised" className="p-5">
+                  <span className="eyebrow">Talent gaps</span>
+                  <ul className="mt-3 flex flex-wrap gap-2">
+                    {result.talentGaps.map((g, i) => (
+                      <li key={i}><Chip tone="warning">{g}</Chip></li>
+                    ))}
+                  </ul>
+                </Card>
+              )}
+              {result.interviewQuestions && result.interviewQuestions.length > 0 && (
+                <Card tone="raised" className="p-5">
+                  <span className="eyebrow">Likely interview questions</span>
+                  <ul className="mt-3 space-y-2">
+                    {result.interviewQuestions.map((q, i) => (
+                      <li key={i} className="flex gap-2.5 text-sm text-foreground">
+                        <span className="font-display text-foreground-subtle">{i + 1}.</span> {q}
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {result.actionPlan.length > 0 && (
+            <Card tone="raised" className="p-5">
+              <span className="eyebrow">Action plan</span>
+              <ul className="mt-3 space-y-2">
+                {result.actionPlan.map((s, i) => (
+                  <li key={i} className="flex gap-2.5 text-sm text-foreground-muted">
+                    <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-foreground-subtle" />
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
         </Reveal>
       )}
 
@@ -906,14 +1280,20 @@ function ResumeTab() {
                 <button
                   type="button"
                   onClick={() => {
-                    setResult({
-                      atsScore: h.atsScore,
-                      strengths: h.strengths || [],
-                      weaknesses: h.weaknesses || [],
-                      missingSkills: h.missingSkills || [],
-                      formattingFeedback: h.formattingFeedback || "",
-                      improvementSuggestions: h.improvementSuggestions || [],
-                    });
+                    if (h.audit) {
+                      setResult(richAudit(h.audit));
+                    } else {
+                      setResult(
+                        richAudit({
+                          atsScore: h.atsScore,
+                          strengths: h.strengths || [],
+                          criticalNegatives: h.weaknesses || [],
+                          missingRecommendedKeywords: h.missingSkills || [],
+                          executiveSummary: h.formattingFeedback || "",
+                          actionPlan: h.improvementSuggestions || [],
+                        })
+                      );
+                    }
                   }}
                   className="flex w-full items-center justify-between gap-4 rounded-md bg-surface-raised px-4 py-3 text-left transition-colors hover:border-secondary hover:bg-surface"
                 >
@@ -943,12 +1323,32 @@ function ResumeTab() {
 /* ==========================================================================
    TAB 4: CAREER CHATBOT
    ========================================================================== */
+interface ChatMessage {
+  role: "user" | "model";
+  text: string;
+  attachments?: { name: string; kind: "doc" | "image" }[];
+}
+
+interface ChatAttachment {
+  id: string;
+  name: string;
+  kind: "doc" | "image";
+  size: number;
+  file: File;
+}
+
 function ChatTab() {
   const { currentUser, profile } = useAuth();
-  const [messages, setMessages] = useState<{ role: "user" | "model"; text: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const MAX_ATTACHMENTS = 5;
+  const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
   const fetchChatHistory = async () => {
     if (!currentUser) return;
@@ -960,7 +1360,7 @@ function ChatTab() {
         setMessages([
           {
             role: "model",
-            text: "Hello! I am your AI career advisor at NEXORA. How can I help you find target opportunities, optimize your resume, or prepare for applications today?",
+            text: "Hello! I am your AI career advisor at NEXORA. How can I help you find target opportunities, optimize your resume, or prepare for applications today? You can also **paste multiple files** (PDF, DOCX, TXT, or images) and I will read them for you.",
           },
         ]);
       }
@@ -973,25 +1373,72 @@ function ChatTab() {
     fetchChatHistory();
   }, [currentUser]);
 
+  const fileKind = (name: string): "doc" | "image" => {
+    const ext = name.split(".").pop()?.toLowerCase() || "";
+    return ["png", "jpg", "jpeg", "webp", "gif", "bmp"].includes(ext) ? "image" : "doc";
+  };
+
+  const attachFiles = (files: Iterable<File>) => {
+    setChatError("");
+    const incoming = Array.from(files).filter((f) => f.size > 0);
+    if (incoming.length === 0) return;
+    const combined = [...attachments];
+    for (const file of incoming) {
+      if (combined.length >= MAX_ATTACHMENTS) {
+        setChatError(`You can attach up to ${MAX_ATTACHMENTS} files at a time.`);
+        break;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setChatError(`"${file.name}" is over 8 MB. Please attach a smaller file.`);
+        continue;
+      }
+      combined.push({
+        id: `${file.name}-${Date.now()}-${combined.length}`,
+        name: file.name,
+        kind: fileKind(file.name),
+        size: file.size,
+        file,
+      });
+    }
+    setAttachments(combined);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+      e.preventDefault();
+      attachFiles(e.clipboardData.files);
+    }
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if ((!input.trim() && attachments.length === 0) || loading) return;
 
     const userMsg = input.trim();
+    const files = attachments.map((a) => a.file);
+    const meta = attachments.map((a) => ({ name: a.name, kind: a.kind }));
     setInput("");
-    const newMessages = [...messages, { role: "user" as const, text: userMsg }];
+    setAttachments([]);
+
+    const userMessage: ChatMessage = { role: "user", text: userMsg };
+    if (meta.length > 0) userMessage.attachments = meta;
+    const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setLoading(true);
     setChatError("");
 
     try {
-      const chatResponse = await AIServiceClient.getChatbotResponse(
+      const chatResponse = await AIServiceClient.chatWithFiles(
         userMsg,
         newMessages,
-        profile || {}
+        profile || {},
+        files
       );
 
-      const finalMessages = [...newMessages, { role: "model" as const, text: chatResponse }];
+      const finalMessages: ChatMessage[] = [
+        ...newMessages,
+        { role: "model", text: chatResponse.reply },
+      ];
       setMessages(finalMessages);
 
       if (currentUser) {
@@ -1013,17 +1460,20 @@ function ChatTab() {
   };
 
   return (
-    <div className="flex h-[36rem] flex-col space-y-6">
+    <div className="flex h-[38rem] flex-col space-y-6">
       <div>
         <span className="eyebrow">Instrument 03</span>
         <h2 className="mt-2 font-display text-2xl text-foreground">AI Career Chatbot</h2>
         <p className="mt-2 max-w-xl text-sm text-foreground-muted">
-          Chat with a context-aware assistant loaded with your profile settings. Unrelated
-          questions are filtered.
+          Chat with a context-aware assistant loaded with your profile settings. Paste or attach
+          PDF, DOCX, TXT, or image files and the advisor will read them and reply in markdown.
         </p>
       </div>
 
-      <div className="card-inset flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        className="card-inset flex min-h-0 flex-1 flex-col overflow-hidden"
+        onPaste={handlePaste}
+      >
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {messages.map((m, idx) => (
             <motion.div
@@ -1040,7 +1490,25 @@ function ChatTab() {
                     : "border border-border bg-surface text-foreground"
                 }`}
               >
-                {m.text}
+                {m.role === "model" && m.text ? (
+                  <MarkdownText text={m.text} />
+                ) : (
+                  m.text
+                )}
+                {m.attachments && m.attachments.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {m.attachments.map((a, ai) => (
+                      <span
+                        key={ai}
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[0.7rem] font-medium ${
+                          m.role === "user" ? "bg-white/15 text-white" : "bg-muted text-foreground-muted"
+                        }`}
+                      >
+                        <FileText className="h-3 w-3" /> {a.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           ))}
@@ -1048,14 +1516,59 @@ function ChatTab() {
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-foreground-muted">
                 <Loader2 className="h-3.5 w-3.5 spin text-secondary" />
-                <span>NEXORA Advisor is formulating advice…</span>
+                <span>NEXORA Advisor is reading your files and formulating advice…</span>
               </div>
             </div>
           )}
           {chatError && <ErrorState description={chatError} className="items-start py-4 text-left" />}
         </div>
 
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 border-t border-border px-4 pt-3">
+            {attachments.map((a) => (
+              <span
+                key={a.id}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 py-1 text-xs text-foreground"
+              >
+                <FileText className="h-3 w-3 text-secondary" />
+                {a.name}
+                <span className="text-foreground-subtle">· {bytesLabel(a.size)}</span>
+                <button
+                  type="button"
+                  onClick={() => setAttachments(attachments.filter((x) => x.id !== a.id))}
+                  className="rounded-sm p-0.5 transition-colors hover:bg-surface hover:text-foreground"
+                  aria-label={`Remove ${a.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={sendMessage} className="flex gap-2 border-t border-border p-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.txt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp"
+            className="sr-only"
+            disabled={loading}
+            onChange={(e) => {
+              if (e.target.files) attachFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Attach files"
+            disabled={loading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <input
             type="text"
             aria-label="Ask the career advisor"
@@ -1069,7 +1582,7 @@ function ChatTab() {
             type="submit"
             size="icon"
             aria-label="Send message"
-            disabled={loading || !input.trim()}
+            disabled={loading || (!input.trim() && attachments.length === 0)}
           >
             <Send className="h-4 w-4" />
           </Button>
