@@ -352,6 +352,19 @@ service cloud.firestore {
       allow delete: if isOwner(resource.data.uid);
     }
 
+    // Full-person performance assessments (wallet + saved items -> AI profile).
+    match /performance_analyses/{docId} {
+      allow read: if isOwner(resource.data.uid);
+      allow create: if isOwner(request.resource.data.uid)
+        && isIsoDate(request.resource.data.createdAt)
+        && subsetOfKeys(request.resource.data, [
+             "uid", "createdAt", "overallScore", "profileTitle", "assessment"
+           ]);
+      allow update: if isOwner(resource.data.uid)
+        && request.resource.data.uid == resource.data.uid;
+      allow delete: if isOwner(resource.data.uid);
+    }
+
     match /interviews/{docId} {
       allow read: if isOwner(resource.data.uid);
       allow create: if isOwner(request.resource.data.uid)

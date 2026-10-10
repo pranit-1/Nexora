@@ -1,4 +1,5 @@
 import { authedFetch } from "@/lib/apiClient";
+import type { PerformanceAssessment } from "@/lib/performanceTypes";
 
 export interface ResumeAnalysisResult {
   atsScore: number;
@@ -149,6 +150,54 @@ export class AIServiceClient {
   }
 
 
+
+  /**
+   * Full-person performance assessment. Sends the wallet documents, saved
+   * opportunities and profile the client has loaded from Firestore; the server
+   * turns them into an evidence-backed profile of the student.
+   */
+  public static async analyzePerformance(context: {
+    profile: unknown;
+    walletDocuments: unknown[];
+    savedOpportunities: unknown[];
+  }): Promise<PerformanceAssessment> {
+    let response: Response;
+    try {
+      response = await authedFetch("/api/performance/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(context),
+      });
+    } catch (e) {
+      console.error("AI Client network error for performance analysis:", e);
+      throw new AIServiceUnavailableError("network", "Could not reach the AI service. Check your connection.");
+    }
+
+    if (!response.ok) {
+      let message = `The AI service returned ${response.status}.`;
+      try {
+        const errData = await response.json();
+        if (errData && typeof errData.error === "string" && errData.error.length > 0) {
+          message = errData.error;
+        }
+      } catch {
+        // non-JSON error body; keep the status-derived message
+      }
+      if (response.status === 401) {
+        throw new AIServiceUnavailableError("unauthenticated", "Please sign in to use AI features.");
+      }
+      if (response.status === 429) {
+        throw new AIServiceUnavailableError("rate_limited", "Too many requests. Wait a moment and try again.");
+      }
+      throw new AIServiceUnavailableError("provider", message);
+    }
+
+    const body = await response.json();
+    if (!body?.assessment || typeof body.assessment !== "object") {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an unreadable assessment.");
+    }
+    return body.assessment as PerformanceAssessment;
+  }
 
   public static async trackConfidence(scores: unknown): Promise<string> {
     const result = await this.postRequest("trackConfidence", { scores });

@@ -35,6 +35,7 @@ import {
   Download,
 } from "lucide-react";
 import type { WalletDocument, ProfileLink } from "@/lib/types";
+import type { PerformanceAssessment } from "@/lib/performanceTypes";
 import { subscribeProfileLinks } from "@/lib/profileLinksClient";
 import { Button, Card, Chip, EmptyState, ErrorState, Textarea } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
@@ -178,6 +179,7 @@ const BREAKDOWN_LABELS: { key: keyof RichBreakdown; label: string }[] = [
 /** Hoisted so the nav does not rebuild the array on every render. */
 const TABS = [
   { id: "recommendations", label: "Opportunity Matcher", icon: Award },
+  { id: "performance", label: "Performance Tracker", icon: TrendingUp },
   { id: "resume", label: "ATS Resume Scan", icon: FileText },
   { id: "chat", label: "Career Chatbot", icon: MessageSquare },
 ] as const;
@@ -195,6 +197,7 @@ export default function AIHub() {
 
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const tabParam = searchParams.get("tab");
+    if (tabParam === "performance") return "performance";
     if (tabParam === "resume") return "resume";
     if (tabParam === "chat") return "chat";
     return "recommendations";
@@ -202,7 +205,9 @@ export default function AIHub() {
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
-    if (tabParam === "resume") {
+    if (tabParam === "performance") {
+      setActiveTab("performance");
+    } else if (tabParam === "resume") {
       setActiveTab("resume");
     } else if (tabParam === "chat") {
       setActiveTab("chat");
@@ -280,6 +285,7 @@ export default function AIHub() {
                 transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
               >
                 {activeTab === "recommendations" && <RecommendationsTab />}
+                {activeTab === "performance" && <PerformanceTab />}
                 {activeTab === "resume" && <ResumeTab />}
                 {activeTab === "chat" && <ChatTab />}
               </motion.div>
@@ -723,6 +729,441 @@ function RecommendationsTab() {
 }
 
 
+
+/* ==========================================================================
+   TAB 2: PERFORMANCE TRACKER
+   Reads every document in the wallet, the opportunities the student saved,
+   and their profile, then builds an evidence-backed profile of the person.
+   ========================================================================== */
+
+function perfTier(score: number): { label: string; tone: "success" | "warning" | "danger" | "info" } {
+  if (score >= 80) return { label: "Elite Potential", tone: "success" };
+  if (score >= 65) return { label: "Strong", tone: "success" };
+  if (score >= 50) return { label: "Developing", tone: "warning" };
+  if (score > 0) return { label: "Early Stage", tone: "danger" };
+  return { label: "Not scored", tone: "info" };
+}
+
+function PerfBar({ label, value, hint }: { label: string; value: number; hint?: string }) {
+  const v = Math.max(0, Math.min(100, Math.round(value)));
+  const color = v >= 75 ? "bg-secondary" : v >= 50 ? "bg-yellow-500" : "bg-rose-500";
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-medium text-foreground">{label}</span>
+        <span className="text-xs font-semibold text-foreground-muted">{v}%</span>
+      </div>
+      <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-ink/10">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${v}%` }} />
+      </div>
+      {hint ? <p className="mt-1 text-xs text-foreground-subtle">{hint}</p> : null}
+    </div>
+  );
+}
+
+function PerformanceTab() {
+  const { currentUser, profile } = useAuth();
+  const [walletDocs, setWalletDocs] = useState<WalletDocument[]>([]);
+  const [savedOpps, setSavedOpps] = useState<any[]>([]);
+  const [result, setResult] = useState<PerformanceAssessment | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Wallet documents — the raw evidence the assessment is built from.
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchWallet = async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, "wallet"), where("uid", "==", currentUser.uid))
+        );
+        const docs: WalletDocument[] = [];
+        snap.forEach((d) => docs.push({ id: d.id, ...d.data() } as WalletDocument));
+        setWalletDocs(docs);
+      } catch (err) {
+        console.error("Failed to load wallet docs for performance tracker:", err);
+      }
+    };
+    fetchWallet();
+  }, [currentUser]);
+
+  // Saved opportunities (bookmarked internships / hackathons / anything).
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchSaved = async () => {
+      try {
+        const snap = await getDoc(doc(db, "bookmarks", currentUser.uid));
+        if (snap.exists()) {
+          const data = snap.data();
+          const items: any[] = Array.isArray(data.items) ? data.items : [];
+          setSavedOpps(items);
+        }
+      } catch (err) {
+        console.error("Failed to load bookmarks for performance tracker:", err);
+      }
+    };
+    fetchSaved();
+  }, [currentUser]);
+
+  // Most recent stored assessment, so the page is not blank on return.
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    const loadLatest = async () => {
+      setLoadingHistory(true);
+      try {
+        const snap = await getDocs(
+          query(collection(db, "performance_analyses"), where("uid", "==", currentUser.uid))
+        );
+        const rows: { createdAt: string; assessment: PerformanceAssessment }[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          if (data?.assessment) rows.push({ createdAt: data.createdAt || "", assessment: data.assessment });
+        });
+        rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        if (!cancelled && rows.length > 0) setResult(rows[0].assessment);
+      } catch (err) {
+        console.error("Failed to load latest performance assessment:", err);
+      } finally {
+        if (!cancelled) setLoadingHistory(false);
+      }
+    };
+    loadLatest();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
+
+  const runAssessment = async () => {
+    if (!currentUser) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const walletPayload = walletDocs.map((d) => ({
+        name: d.name,
+        category: d.category,
+        insights: d.insights,
+        extractedText: d.extractedText,
+      }));
+      const savedPayload = savedOpps.map((o) => ({
+        id: o.id,
+        title: o.title,
+        organization: o.organization || o.orgName,
+        category: o.category,
+        field: o.field,
+        description: o.description,
+        eligibility: o.eligibility,
+        deadline: o.deadline,
+      }));
+      const assessment = await AIServiceClient.analyzePerformance({
+        profile: profile || {},
+        walletDocuments: walletPayload,
+        savedOpportunities: savedPayload,
+      });
+      setResult(assessment);
+      try {
+        await addDoc(collection(db, "performance_analyses"), {
+          uid: currentUser.uid,
+          createdAt: new Date().toISOString(),
+          overallScore: assessment.overallScore,
+          profileTitle: assessment.profileTitle,
+          assessment,
+        });
+      } catch (saveErr) {
+        console.error("Failed to store performance assessment:", saveErr);
+      }
+    } catch (err: any) {
+      setError(
+        err instanceof AIServiceUnavailableError
+          ? err.message
+          : err?.message || "The assessment could not be completed. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const evidenceCount = walletDocs.length + savedOpps.length;
+  const canRun = evidenceCount > 0 || (profile?.skills?.length || 0) > 0 || !!profile?.education;
+  const tier = result ? perfTier(result.overallScore) : null;
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-xl">
+            <span className="eyebrow text-secondary">Performance Tracker</span>
+            <h2 className="mt-2 font-display text-xl text-foreground">
+              Full profile from your real records
+            </h2>
+            <p className="mt-2 text-sm text-foreground-muted">
+              We read everything in your wallet — resumes, certificates, awards, projects, results — plus the
+              opportunities you saved and your profile, then measure your honed skills, plus points, gaps, the
+              career lines that fit you best, and your role fit for each saved opportunity.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Chip tone="neutral" icon={<FolderGit2 className="h-3 w-3" />}>{walletDocs.length} wallet documents</Chip>
+              <Chip tone="neutral" icon={<Bookmark className="h-3 w-3" />}>{savedOpps.length} saved opportunities</Chip>
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            onClick={runAssessment}
+            loading={loading}
+            leadingIcon={!loading ? <Sparkles className="h-4 w-4" /> : undefined}
+            disabled={!canRun || loading}
+          >
+            {result ? "Re-run assessment" : "Run full assessment"}
+          </Button>
+        </div>
+        {!canRun ? (
+          <p className="mt-4 text-sm text-foreground-subtle">
+            Upload documents to your wallet or complete your profile to enable the assessment.
+          </p>
+        ) : null}
+      </Card>
+
+      {error ? (
+        <ErrorState
+          title="Assessment failed"
+          description={error}
+          action={
+            <Button variant="outline" size="sm" onClick={runAssessment}>
+              Try again
+            </Button>
+          }
+        />
+      ) : null}
+
+      {loading ? (
+        <Card className="p-10">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <Loader2 className="h-7 w-7 spin text-secondary" />
+            <p className="text-sm text-foreground-muted">
+              Studying your wallet, saved opportunities and profile…
+            </p>
+          </div>
+        </Card>
+      ) : null}
+
+      {!loading && !result && !loadingHistory ? (
+        <EmptyState
+          icon={<TrendingUp className="h-5 w-5" />}
+          title="No assessment yet"
+          description="Run your first assessment to see your skills, plus points and best-fit career lines."
+        />
+      ) : null}
+
+      {!loading && result ? (
+        <div className="space-y-6">
+          {/* Headline score */}
+          <Card className="p-6">
+            <div className="flex flex-wrap items-center gap-6">
+              <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
+                <svg viewBox="0 0 120 120" className="h-28 w-28 -rotate-90">
+                  <circle cx="60" cy="60" r="52" fill="none" strokeWidth="10" className="stroke-surface-ink/10" />
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="52"
+                    fill="none"
+                    strokeWidth="10"
+                    strokeLinecap="round"
+                    className="stroke-secondary"
+                    strokeDasharray={2 * Math.PI * 52}
+                    strokeDashoffset={2 * Math.PI * 52 * (1 - Math.max(0, Math.min(100, result.overallScore)) / 100)}
+                  />
+                </svg>
+                <div className="absolute flex flex-col items-center">
+                  <span className="text-3xl font-bold text-foreground">{result.overallScore}</span>
+                  <span className="text-[0.65rem] uppercase tracking-wide text-foreground-subtle">score</span>
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-display text-lg text-foreground">
+                    {result.profileTitle || "Your Profile"}
+                  </h3>
+                  {tier ? <Chip tone={tier.tone}>{tier.label}</Chip> : null}
+                </div>
+                {result.summary ? (
+                  <p className="mt-2 text-sm leading-relaxed text-foreground-muted">{result.summary}</p>
+                ) : null}
+              </div>
+            </div>
+          </Card>
+
+          {/* Traits + Skills */}
+          <div className="grid gap-6 md:grid-cols-2">
+            {result.traits.length > 0 ? (
+              <Card className="p-6">
+                <h3 className="font-display text-base text-foreground">Traits</h3>
+                <div className="mt-4 space-y-4">
+                  {result.traits.map((t, i) => (
+                    <PerfBar key={`${t.name}-${i}`} label={t.name} value={t.score} hint={t.evidence} />
+                  ))}
+                </div>
+              </Card>
+            ) : null}
+            {result.skills.length > 0 ? (
+              <Card className="p-6">
+                <h3 className="font-display text-base text-foreground">Skills (hunars)</h3>
+                <div className="mt-4 space-y-4">
+                  {result.skills.map((s, i) => (
+                    <PerfBar key={`${s.name}-${i}`} label={s.name} value={s.level} hint={s.evidence} />
+                  ))}
+                </div>
+              </Card>
+            ) : null}
+          </div>
+
+          {/* Plus points + Gaps */}
+          <div className="grid gap-6 md:grid-cols-2">
+            {result.plusPoints.length > 0 ? (
+              <Card className="p-6">
+                <h3 className="flex items-center gap-2 font-display text-base text-foreground">
+                  <CheckCircle2 className="h-4 w-4 text-secondary" /> Plus points
+                </h3>
+                <ul className="mt-3 space-y-2">
+                  {result.plusPoints.map((p, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-foreground-muted">
+                      <span className="text-secondary">+</span>
+                      <span>{p}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            ) : null}
+            {result.gaps.length > 0 ? (
+              <Card className="p-6">
+                <h3 className="flex items-center gap-2 font-display text-base text-foreground">
+                  <AlertCircle className="h-4 w-4 text-rose-500" /> Gaps to fix
+                </h3>
+                <ul className="mt-3 space-y-2">
+                  {result.gaps.map((g, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-foreground-muted">
+                      <span className="text-rose-500">–</span>
+                      <span>{g}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            ) : null}
+          </div>
+
+          {/* Career paths */}
+          {result.careerPaths.length > 0 ? (
+            <Card className="p-6">
+              <h3 className="font-display text-base text-foreground">Career lines that fit you</h3>
+              <p className="mt-1 text-xs text-foreground-subtle">Which direction you can move into, best fit first.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                {result.careerPaths.map((c, i) => (
+                  <div key={`${c.title}-${i}`} className="card-inset rounded-lg p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-foreground">{c.title}</span>
+                      <Chip tone={c.fit >= 75 ? "success" : c.fit >= 50 ? "warning" : "danger"}>
+                        {c.fit}% fit
+                      </Chip>
+                    </div>
+                    {c.reason ? <p className="mt-2 text-xs text-foreground-muted">{c.reason}</p> : null}
+                    {c.steps.length > 0 ? (
+                      <ul className="mt-3 space-y-1">
+                        {c.steps.map((s, j) => (
+                          <li key={j} className="flex gap-1.5 text-xs text-foreground-subtle">
+                            <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-secondary" />
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
+          {/* Role fit for saved opportunities */}
+          {result.roleFit.length > 0 ? (
+            <Card className="p-6">
+              <h3 className="font-display text-base text-foreground">Role fit for your saved opportunities</h3>
+              <p className="mt-1 text-xs text-foreground-subtle">
+                How you slot into each internship, hackathon or program you saved — and the role that suits you.
+              </p>
+              <div className="mt-4 space-y-4">
+                {result.roleFit.map((r, i) => (
+                  <div key={`${r.title}-${i}`} className="card-inset rounded-lg p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{r.title}</p>
+                        <p className="text-xs text-foreground-subtle">
+                          {[r.organization, r.category].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
+                      <Chip tone={r.fit >= 75 ? "success" : r.fit >= 50 ? "warning" : "danger"}>{r.fit}% fit</Chip>
+                    </div>
+                    {r.bestRole ? (
+                      <p className="mt-2 text-sm text-foreground">
+                        <span className="text-foreground-subtle">Best role: </span>
+                        {r.bestRole}
+                      </p>
+                    ) : null}
+                    {r.reason ? <p className="mt-1 text-xs text-foreground-muted">{r.reason}</p> : null}
+                    {(r.matchedSkills.length > 0 || r.missingSkills.length > 0) ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {r.matchedSkills.map((s, j) => (
+                          <Chip key={`m-${j}`} tone="success">{s}</Chip>
+                        ))}
+                        {r.missingSkills.map((s, j) => (
+                          <Chip key={`x-${j}`} tone="danger">{s}</Chip>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
+          {/* Evidence highlights */}
+          {result.evidenceHighlights.length > 0 ? (
+            <Card className="p-6">
+              <h3 className="font-display text-base text-foreground">Evidence from your wallet</h3>
+              <div className="mt-4 space-y-3">
+                {result.evidenceHighlights.map((e, i) => (
+                  <div key={i} className="flex gap-3">
+                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-secondary" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{e.document}</p>
+                      {e.highlight ? <p className="text-xs text-foreground-muted">{e.highlight}</p> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
+          {/* Next actions */}
+          {result.nextActions.length > 0 ? (
+            <Card className="p-6">
+              <h3 className="font-display text-base text-foreground">Next actions</h3>
+              <ol className="mt-4 space-y-2">
+                {result.nextActions.map((a, i) => (
+                  <li key={i} className="flex gap-3 text-sm text-foreground-muted">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-ink text-[0.7rem] font-semibold text-background">
+                      {i + 1}
+                    </span>
+                    <span>{a}</span>
+                  </li>
+                ))}
+              </ol>
+            </Card>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /* ==========================================================================
    TAB 3: RESUME ANALYZER (Scan)
