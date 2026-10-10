@@ -22,8 +22,8 @@ export class GeminiRotatorService {
   }
 
   // Make request with rotation and fallbacks
-  public static async requestGemini(prompt: string, jsonMode: boolean = false): Promise<any> {
-    return this.send(prompt, jsonMode);
+  public static async requestGemini(prompt: string, jsonMode: boolean = false, deadline?: number): Promise<any> {
+    return this.send(prompt, jsonMode, undefined, deadline);
   }
 
   // Vision variant: same rotation logic, but the prompt is paired with an image.
@@ -31,9 +31,19 @@ export class GeminiRotatorService {
     prompt: string,
     imageBase64: string,
     mimeType: string = "image/jpeg",
-    jsonMode: boolean = false
+    jsonMode: boolean = false,
+    deadline?: number
   ): Promise<any> {
-    return this.send(prompt, jsonMode, { imageBase64, mimeType });
+    return this.send(prompt, jsonMode, { imageBase64, mimeType }, deadline);
+  }
+
+  /**
+   * Shared upper bound for the whole request across every key, so the caller
+   * returns before the platform's function timeout instead of a 504.
+   */
+  private static get totalBudgetMs(): number {
+    const raw = Number(process.env.AI_TOTAL_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 5_000 ? raw : 120_000;
   }
 
   private static getModel(): string {
@@ -53,7 +63,8 @@ export class GeminiRotatorService {
   private static async send(
     prompt: string,
     jsonMode: boolean = false,
-    image?: { imageBase64: string; mimeType: string }
+    image?: { imageBase64: string; mimeType: string },
+    deadline: number = Date.now() + GeminiRotatorService.totalBudgetMs
   ): Promise<any> {
     const keys = this.getKeys();
     if (keys.length === 0) {
@@ -66,6 +77,10 @@ export class GeminiRotatorService {
     let lastError = "";
 
     while (attempts < maxAttempts) {
+      if (Date.now() >= deadline) {
+        throw new Error(`Gemini request exceeded the ${GeminiRotatorService.totalBudgetMs}ms time budget. Last error: ${lastError || "unknown"}`);
+      }
+
       const activeKey = keys[this.currentKeyIndex];
       const maskedKey = this.maskKey(activeKey);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
@@ -90,7 +105,7 @@ export class GeminiRotatorService {
           };
         }
 
-        const timeoutMs = this.timeoutMs;
+        const timeoutMs = Math.max(1_000, Math.min(this.timeoutMs, deadline - Date.now()));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 

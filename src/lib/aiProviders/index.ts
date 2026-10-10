@@ -14,13 +14,40 @@ export class AIRouterService {
   /** Which provider actually served the most recent request. */
   public static lastRequestProvider: string | null = null;
 
+  /**
+   * Hard ceiling for a single routing attempt across every provider. Vercel
+   * kills the function at its own limit (a 504 with no body); this keeps the
+   * whole cascade inside the platform budget and returns a readable error.
+   */
+  private static get totalBudgetMs(): number {
+    const raw = Number(process.env.AI_TOTAL_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 5_000 ? raw : 120_000;
+  }
+
+  /** Rejects with a labelled error if `promise` has not settled by the deadline. */
+  private static withBudget<T>(promise: Promise<T>, budgetMs: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`AI request exceeded the ${budgetMs}ms time budget`)),
+        budgetMs
+      );
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   public static async requestAI(prompt: string, jsonMode: boolean = false): Promise<any> {
     AIRouterService.lastRequestUsedVision = false;
+    const budgetMs = this.totalBudgetMs;
+    const deadline = Date.now() + budgetMs;
+    return this.withBudget(this.runAI(prompt, jsonMode, deadline), budgetMs);
+  }
 
+  private static async runAI(prompt: string, jsonMode: boolean, deadline: number): Promise<any> {
     // 1. Try Gemini first if keys exist
     if (process.env.GEMINI_API_KEYS || process.env.NEXT_PUBLIC_GEMINI_API_KEYS) {
       try {
-        const geminiResult = await GeminiRotatorService.requestGemini(prompt, jsonMode);
+        const geminiResult = await GeminiRotatorService.requestGemini(prompt, jsonMode, deadline);
         AIRouterService.lastRequestProvider = "gemini";
         return geminiResult;
       } catch (geminiErr: any) {
@@ -30,7 +57,7 @@ export class AIRouterService {
 
     // 2. Try OpenRouter
     try {
-      const result = await OpenRouterService.request(prompt, jsonMode);
+      const result = await OpenRouterService.request(prompt, jsonMode, deadline);
       AIRouterService.lastRequestProvider = "openrouter";
       return result;
     } catch (openRouterErr: any) {
@@ -39,7 +66,7 @@ export class AIRouterService {
       // 3. Try Groq if keys configured
       if (process.env.GROQ_API_KEYS && process.env.GROQ_API_KEYS.trim().length > 0 && !process.env.GROQ_API_KEYS.includes("your_groq_api_key")) {
         try {
-          const result = await GroqService.request(prompt, jsonMode);
+          const result = await GroqService.request(prompt, jsonMode, deadline);
           AIRouterService.lastRequestProvider = "groq";
           return result;
         } catch (groqErr: any) {
@@ -65,10 +92,21 @@ export class AIRouterService {
     jsonMode: boolean = false
   ): Promise<any> {
     AIRouterService.lastRequestUsedVision = false;
+    const budgetMs = this.totalBudgetMs;
+    const deadline = Date.now() + budgetMs;
+    return this.withBudget(this.runVision(prompt, imageBase64, mimeType, jsonMode, deadline), budgetMs);
+  }
 
+  private static async runVision(
+    prompt: string,
+    imageBase64: string,
+    mimeType: string,
+    jsonMode: boolean,
+    deadline: number
+  ): Promise<any> {
     // 1. Try Gemini Vision first if keys exist
     try {
-      const geminiResult = await GeminiRotatorService.requestGeminiVision(prompt, imageBase64, mimeType, jsonMode);
+      const geminiResult = await GeminiRotatorService.requestGeminiVision(prompt, imageBase64, mimeType, jsonMode, deadline);
       AIRouterService.lastRequestProvider = "gemini-vision";
       AIRouterService.lastRequestUsedVision = true;
       return geminiResult;
@@ -78,7 +116,7 @@ export class AIRouterService {
 
     // 2. Try OpenRouter Vision
     try {
-      const result = await OpenRouterService.requestVision(prompt, imageBase64, mimeType, jsonMode);
+      const result = await OpenRouterService.requestVision(prompt, imageBase64, mimeType, jsonMode, deadline);
       AIRouterService.lastRequestProvider = "openrouter-vision";
       AIRouterService.lastRequestUsedVision = true;
       return result;

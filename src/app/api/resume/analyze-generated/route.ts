@@ -4,6 +4,7 @@ import { enforceRateLimit, LIMITS } from '@/lib/rateLimit';
 import { auditResume } from '@/lib/services/resumeAnalyzerService';
 
 export const runtime = 'nodejs';
+export const maxDuration = 180;
 
 export async function POST(request: Request) {
   const auth = await requireUser(request);

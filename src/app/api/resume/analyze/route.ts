@@ -4,6 +4,7 @@ import { enforceRateLimit, LIMITS } from '@/lib/rateLimit';
 import { auditResume, auditResumeBuffer } from '@/lib/services/resumeAnalyzerService';
 
 export const runtime = 'nodejs';
+export const maxDuration = 180;
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 

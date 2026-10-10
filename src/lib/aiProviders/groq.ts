@@ -36,7 +36,16 @@ export class GroqService {
     return `${key.slice(0, 8)}...${key.slice(-6)}`;
   }
 
-  public static async request(prompt: string, jsonMode: boolean = false): Promise<any> {
+  /**
+   * Shared upper bound for the whole request across every key, so the caller
+   * returns before the platform's function timeout instead of a 504.
+   */
+  private static get totalBudgetMs(): number {
+    const raw = Number(process.env.AI_TOTAL_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 5_000 ? raw : 120_000;
+  }
+
+  public static async request(prompt: string, jsonMode: boolean = false, deadline: number = Date.now() + GroqService.totalBudgetMs): Promise<any> {
     const keys = this.getKeys();
     if (keys.length === 0) {
       throw new Error("No Groq API keys found. Please set GROQ_API_KEYS in your environment.");
@@ -48,6 +57,10 @@ export class GroqService {
     let lastError = "";
 
     while (attempts < maxAttempts) {
+      if (Date.now() >= deadline) {
+        throw new Error(`Groq request exceeded the ${GroqService.totalBudgetMs}ms time budget. Last error: ${lastError || "unknown"}`);
+      }
+
       const activeKey = keys[this.currentKeyIndex];
       const maskedKey = this.maskKey(activeKey);
       const url = "https://api.groq.com/openai/v1/chat/completions";
@@ -64,7 +77,7 @@ export class GroqService {
           body.response_format = { type: "json_object" };
         }
 
-        const timeoutMs = this.timeoutMs;
+        const timeoutMs = Math.max(1_000, Math.min(this.timeoutMs, deadline - Date.now()));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 

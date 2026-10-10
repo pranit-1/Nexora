@@ -104,6 +104,38 @@ export class OpenRouterService {
     return process.env.OPENROUTER_MODEL || "openrouter/free";
   }
 
+  /**
+   * Ordered list of models to try. A configured paid router (e.g.
+   * `openrouter/auto`) can answer 402 Payment Required for every key when the
+   * account is out of credits — a model/account fault, not a key fault. Retrying
+   * the same key against a free router keeps the request alive instead of
+   * burning all credentials on a 504. Override the tail with
+   * OPENROUTER_FALLBACK_MODELS (comma-separated).
+   */
+  private static getModelChain(): string[] {
+    const primary = this.getModel().trim();
+    const chain = [primary];
+    const seen = new Set(chain);
+    const fallback = process.env.OPENROUTER_FALLBACK_MODELS || "openrouter/free";
+    for (const model of fallback.split(",").map((m) => m.trim()).filter(Boolean)) {
+      if (!seen.has(model)) {
+        chain.push(model);
+        seen.add(model);
+      }
+    }
+    return chain;
+  }
+
+  /**
+   * Shared upper bound for a whole request across every key. Guarantees the
+   * caller returns before the platform's function timeout, unlike per-key
+   * limits which multiply by the number of configured keys.
+   */
+  private static get totalBudgetMs(): number {
+    const raw = Number(process.env.AI_TOTAL_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw >= 5_000 ? raw : 120_000;
+  }
+
   private static getVisionModel(): string {
     const model = process.env.OPENROUTER_VISION_MODEL;
     if (!model || model.trim().length === 0) {
@@ -293,8 +325,8 @@ export class OpenRouterService {
     };
   }
 
-  public static async request(prompt: string, jsonMode: boolean = false): Promise<any> {
-    return this.send(prompt, jsonMode);
+  public static async request(prompt: string, jsonMode: boolean = false, deadline?: number): Promise<any> {
+    return this.send(prompt, jsonMode, undefined, deadline);
   }
 
   /** Vision variant. Requires OPENROUTER_VISION_MODEL to be set. */
@@ -302,15 +334,17 @@ export class OpenRouterService {
     prompt: string,
     imageBase64: string,
     mimeType: string = "image/jpeg",
-    jsonMode: boolean = false
+    jsonMode: boolean = false,
+    deadline?: number
   ): Promise<any> {
-    return this.send(prompt, jsonMode, { imageBase64, mimeType });
+    return this.send(prompt, jsonMode, { imageBase64, mimeType }, deadline);
   }
 
   private static async send(
     prompt: string,
     jsonMode: boolean = false,
-    image?: { imageBase64: string; mimeType: string }
+    image?: { imageBase64: string; mimeType: string },
+    deadline: number = Date.now() + OpenRouterService.totalBudgetMs
   ): Promise<any> {
     const keys = this.getAllKeys();
     if (keys.length === 0) {
@@ -318,7 +352,9 @@ export class OpenRouterService {
     }
 
     this.initQueues();
-    const model = image ? this.getVisionModel() : this.getModel();
+    const models = image ? [this.getVisionModel()] : this.getModelChain();
+    let modelIndex = 0;
+    let model = models[modelIndex];
     let attempts = 0;
     // One pass over every key plus one retry pass, since a key can fail
     // transiently without being exhausted.
@@ -326,6 +362,10 @@ export class OpenRouterService {
     let lastError = "";
 
     while (attempts < maxAttempts) {
+      if (Date.now() >= deadline) {
+        throw new Error(`OpenRouter request exceeded the ${OpenRouterService.totalBudgetMs}ms time budget. Last error: ${lastError || "unknown"}`);
+      }
+
       const hasAvailable = this.ensureActiveBucket();
       if (!hasAvailable) {
         const waitMs = this.shortestCooldownMs();
@@ -403,7 +443,7 @@ export class OpenRouterService {
           headers["X-Title"] = process.env.NEXT_PUBLIC_APP_NAME;
         }
 
-        const timeoutMs = this.timeoutMs;
+        const timeoutMs = Math.max(1_000, Math.min(this.timeoutMs, deadline - Date.now()));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -421,6 +461,31 @@ export class OpenRouterService {
 
         const promptTokens = Math.ceil(prompt.length / 4);
 
+        // 400 (invalid/bad model), 402 (out of credits) and 404 (model removed)
+        // are model/request faults: every key fails identically, so advance to
+        // the next model in the chain WITHOUT ejecting the key or burning an
+        // attempt.
+        if (response.status === 400 || response.status === 402 || response.status === 404) {
+          const errText = await response.text();
+          tel.status = "idle";
+          const nextModel = models[modelIndex + 1];
+          if (nextModel) {
+            console.warn(
+              `[OpenRouterService] Model "${model}" unavailable (${response.status}). Falling back to "${nextModel}". Response: ${errText.slice(0, 200)}`
+            );
+            lastError = `Model "${model}" ${response.status}: ${errText.slice(0, 200)}`;
+            modelIndex++;
+            model = nextModel;
+            continue;
+          }
+          console.error(
+            `[OpenRouterService] Model "${model}" ${response.status} and no fallback models remain. Response: ${errText.slice(0, 300)}`
+          );
+          throw new OpenRouterModelError(
+            `OpenRouter model "${model}" failed (${response.status}). Set OPENROUTER_MODEL to a working model such as "openrouter/free".`
+          );
+        }
+
         if (response.status === 429) {
           lastError = `Rate limit (429) hit on key #${keyIndex + 1}`;
           console.warn(`[OpenRouterService] Key #${keyIndex + 1} (${maskedKey}) rate limited (429). Ejecting to fallback bucket.`);
@@ -428,19 +493,6 @@ export class OpenRouterService {
           this.ejectKeyToFallback(keyIndex, 30);
           attempts++;
           continue;
-        }
-
-        if (response.status === 404) {
-          // Model removed/renamed (e.g. OPENROUTER_MODEL points to a dead model).
-          // Every key would fail identically, so fail fast and keep keys healthy.
-          const errText = await response.text();
-          tel.status = "idle";
-          console.error(
-            `[OpenRouterService] Model "${model}" not found (404). Fix OPENROUTER_MODEL (or unset it to use "openrouter/free"). Response: ${errText.slice(0, 300)}`
-          );
-          throw new OpenRouterModelError(
-            `OpenRouter model "${model}" not found (404). Check OPENROUTER_MODEL env var.`
-          );
         }
 
         if (!response.ok) {
