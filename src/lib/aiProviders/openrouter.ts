@@ -136,6 +136,20 @@ export class OpenRouterService {
     return Number.isFinite(raw) && raw >= 5_000 ? raw : 120_000;
   }
 
+  /**
+   * Cap on generated output tokens. OpenRouter otherwise defaults max_tokens to
+   * the model's full ceiling (e.g. 131072); a budget account then answers 402
+   * "You requested up to 131072 tokens, but can only afford ..." even when the
+   * actual output is tiny. Capping keeps paid routers affordable AND bounds
+   * latency on slow fallback models. Undefined via OPENROUTER_MAX_TOKENS="".
+   */
+  private static get maxTokens(): number | undefined {
+    const raw = process.env.OPENROUTER_MAX_TOKENS;
+    if (raw === undefined || raw === "") return 8192;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 256 ? Math.round(n) : 8192;
+  }
+
   private static getVisionModel(): string {
     const model = process.env.OPENROUTER_VISION_MODEL;
     if (!model || model.trim().length === 0) {
@@ -355,6 +369,7 @@ export class OpenRouterService {
     const models = image ? [this.getVisionModel()] : this.getModelChain();
     let modelIndex = 0;
     let model = models[modelIndex];
+    let maxTokens: number | undefined = this.maxTokens;
     let attempts = 0;
     // One pass over every key plus one retry pass, since a key can fail
     // transiently without being exhausted.
@@ -430,6 +445,9 @@ export class OpenRouterService {
         if (jsonMode) {
           body.response_format = { type: "json_object" };
         }
+        if (maxTokens !== undefined) {
+          body.max_tokens = maxTokens;
+        }
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -468,6 +486,14 @@ export class OpenRouterService {
         if (response.status === 400 || response.status === 402 || response.status === 404) {
           const errText = await response.text();
           tel.status = "idle";
+          // A cheap fallback model may cap output below our max_tokens. Drop the
+          // cap and retry the same model/key instead of rejecting the whole chain.
+          if (response.status === 400 && maxTokens !== undefined && /max[_ ]tokens|maximum|context length|too long/i.test(errText)) {
+            console.warn(`[OpenRouterService] Model "${model}" rejected max_tokens=${maxTokens}. Retrying without the cap.`);
+            lastError = `Model "${model}" 400 max_tokens: ${errText.slice(0, 200)}`;
+            maxTokens = undefined;
+            continue;
+          }
           const nextModel = models[modelIndex + 1];
           if (nextModel) {
             console.warn(
