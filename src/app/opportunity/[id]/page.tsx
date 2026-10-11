@@ -12,11 +12,9 @@ import { db } from "@/lib/firebase";
 import {
   doc,
   getDoc,
-  setDoc,
-  updateDoc,
-  arrayUnion,
-  arrayRemove
+  setDoc
 } from "firebase/firestore";
+import { trimSavedOpportunities } from "@/lib/savedOpportunities";
 import {
   Calendar,
   MapPin,
@@ -129,13 +127,14 @@ export default function OpportunityDetail({ params }: { params: Promise<{ id: st
 
     try {
       const snap = await getDoc(docRef);
-      if (!snap.exists()) {
-        await setDoc(docRef, { opportunityIds: [id] });
-      } else {
-        await updateDoc(docRef, {
-          opportunityIds: isSaved ? arrayRemove(id) : arrayUnion(id),
-        });
-      }
+      const existing = snap.exists() ? snap.data() : { opportunityIds: [], items: [] };
+      const ids: string[] = Array.isArray(existing.opportunityIds) ? existing.opportunityIds : [];
+      const items: any[] = Array.isArray(existing.items) ? existing.items : [];
+      const nextIds = isSaved ? ids.filter((i) => i !== id) : [...ids.filter((i) => i !== id), id];
+      const nextItems = isSaved ? items.filter((it: any) => it?.id !== id) : items;
+      // Keep the saved section within its limit: drop the oldest entries.
+      const trimmed = trimSavedOpportunities(nextIds, nextItems);
+      await setDoc(docRef, { opportunityIds: trimmed.opportunityIds, items: trimmed.items });
       const nowSaved = !isSaved;
       setIsSaved(nowSaved);
 

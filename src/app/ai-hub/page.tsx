@@ -47,6 +47,7 @@ import type { PerformanceAssessment, SavedOpportunityMatch } from "@/lib/perform
 import type { ProfileEnrichment } from "@/lib/enrichmentTypes";
 import { normalizeProfileEnrichment } from "@/lib/enrichmentTypes";
 import { subscribeProfileLinks } from "@/lib/profileLinksClient";
+import { trimSavedOpportunities, MAX_SAVED_OPPORTUNITIES } from "@/lib/savedOpportunities";
 import { Button, Card, Chip, EmptyState, ErrorState, Textarea } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 import { motion } from "framer-motion";
@@ -359,13 +360,19 @@ function RecommendationsTab() {
         }
         const data = snap.data();
         const items: any[] = Array.isArray(data.items) ? data.items : [];
-        if (items.length > 0) {
-          setSavedOpps(items);
+        const ids: string[] = Array.isArray(data.opportunityIds) ? data.opportunityIds : [];
+        // Auto-remove the oldest saves once the limit is exceeded.
+        const trimmed = trimSavedOpportunities(ids, items);
+        if (trimmed.removedIds.length > 0) {
+          console.warn(`[Saved] Removed ${trimmed.removedIds.length} oldest saved item(s) to stay within the ${MAX_SAVED_OPPORTUNITIES} limit.`);
+          await setDoc(doc(db, "bookmarks", currentUser.uid), { opportunityIds: trimmed.opportunityIds, items: trimmed.items });
+        }
+        if (trimmed.items.length > 0) {
+          setSavedOpps(trimmed.items);
           return;
         }
         // Fallback for older bookmark docs: resolve the id list against the feed.
-        const ids: string[] = Array.isArray(data.opportunityIds) ? data.opportunityIds : [];
-        setSavedOpps(opportunities.filter((o) => ids.includes(o.id)));
+        setSavedOpps(opportunities.filter((o) => trimmed.opportunityIds.includes(o.id)));
       } catch (err) {
         console.error("Failed to load saved opportunities:", err);
       }
@@ -680,7 +687,14 @@ function PerformanceTab() {
         if (snap.exists()) {
           const data = snap.data();
           const items: any[] = Array.isArray(data.items) ? data.items : [];
-          setSavedOpps(items);
+          const ids: string[] = Array.isArray(data.opportunityIds) ? data.opportunityIds : [];
+          // Auto-remove the oldest saves once the limit is exceeded.
+          const trimmed = trimSavedOpportunities(ids, items);
+          if (trimmed.removedIds.length > 0) {
+            console.warn(`[Saved] Removed ${trimmed.removedIds.length} oldest saved item(s) to stay within the ${MAX_SAVED_OPPORTUNITIES} limit.`);
+            await setDoc(doc(db, "bookmarks", currentUser.uid), { opportunityIds: trimmed.opportunityIds, items: trimmed.items });
+          }
+          setSavedOpps(trimmed.items);
         }
       } catch (err) {
         console.error("Failed to load bookmarks for performance tracker:", err);

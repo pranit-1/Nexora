@@ -7,6 +7,7 @@ import Footer from "@/components/Footer";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { trimSavedOpportunities } from "@/lib/savedOpportunities";
 import { useOpportunities, formatDeadline } from "@/hooks/useOpportunities";
 import {
   Search,
@@ -410,8 +411,10 @@ function ExploreContent() {
           ).catch((e) => console.warn("Notification seed failed:", e));
         }
       }
-      await setDoc(docRef, { opportunityIds: nextIds, items: nextItems });
-      setSavedIds(nextIds);
+      // Keep the saved section within its limit: drop the oldest entries.
+      const trimmed = trimSavedOpportunities(nextIds, nextItems);
+      await setDoc(docRef, { opportunityIds: trimmed.opportunityIds, items: trimmed.items });
+      setSavedIds(trimmed.opportunityIds);
     } catch (error) {
       console.error("Bookmarking error:", error);
     }
