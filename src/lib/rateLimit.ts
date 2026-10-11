@@ -101,6 +101,8 @@ export const LIMITS = {
   resumeAnalyze: { scope: "resume-analyze", limit: 10, windowMs: 60_000 },
   /** Full-person performance assessment (wallet + saved items + LLM) — heavy, kept tight. */
   performance: { scope: "performance", limit: 8, windowMs: 60_000 },
+  /** Outbound link crawling (GitHub + coding platforms) — network-heavy, kept tight. */
+  profileEnrich: { scope: "profile-enrich", limit: 6, windowMs: 60_000 },
   /** Cloudinary storage + bandwidth. */
   upload: { scope: "wallet-upload", limit: 20, windowMs: 60_000 },
   walletDelete: { scope: "wallet-delete", limit: 30, windowMs: 60_000 },

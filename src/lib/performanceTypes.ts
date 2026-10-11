@@ -2,32 +2,28 @@
 // Performance Tracker — shared shapes.
 //
 // The tracker reads everything a student has stored (wallet documents, saved
-// opportunities, profile) and asks the AI to produce a full, evidence-backed
-// profile of the person: their honed skills, plus points, the gaps to close,
-// which career lines fit them best, and how they would slot into each of the
-// opportunities they have saved. These types are shared by the API route and
-// the AI-hub UI so both agree on the payload.
+// opportunities, profile, and enriched GitHub/coding links) and asks the AI to
+// produce a full, evidence-backed *qualitative* profile of the person: their
+// honed skills, plus points, the gaps to close, and which career lines fit them
+// best. There are deliberately NO invented scores here — stars, commits,
+// platform ratings and the resume ATS score are real facts shown elsewhere; the
+// AI only contributes words.
 // ---------------------------------------------------------------------------
 
 export interface PerformanceTrait {
   name: string;
-  /** 0-100 strength of this personality/work trait. */
-  score: number;
-  /** The wallet/profile evidence this judgement is based on. */
+  /** The wallet/profile/repo evidence this judgement is based on. */
   evidence: string;
 }
 
 export interface PerformanceSkill {
   name: string;
-  /** 0-100 demonstrated proficiency. */
-  level: number;
   evidence: string;
 }
 
 export interface CareerPathFit {
   title: string;
-  /** 0-100 fit for this career line. */
-  fit: number;
+  /** Why this career line suits the person. */
   reason: string;
   steps: string[];
 }
@@ -37,8 +33,6 @@ export interface RoleFit {
   title: string;
   organization: string;
   category: string;
-  /** 0-100 fit between the student and this saved opportunity. */
-  fit: number;
   /** The specific role inside this opportunity that suits them best. */
   bestRole: string;
   reason: string;
@@ -52,8 +46,6 @@ export interface PerformanceEvidenceDoc {
 }
 
 export interface PerformanceAssessment {
-  /** 0-100 overall readiness/performance score. */
-  overallScore: number;
   /** Short persona label, e.g. "Emerging Full-Stack Builder". */
   profileTitle: string;
   /** 2-3 sentence holistic summary of the person. */
@@ -73,20 +65,21 @@ export interface PerformanceAssessment {
   generatedAt?: string;
 }
 
-const SCORE_CAP = 100;
-
-function num(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const m = v.match(/-?\d+(\.\d+)?/);
-    if (m) return Number(m[0]);
-  }
-  return NaN;
-}
-
-function clampScore(v: unknown): number {
-  const n = num(v);
-  return Number.isFinite(n) ? Math.max(0, Math.min(SCORE_CAP, Math.round(n))) : 0;
+/**
+ * Per-saved-opportunity qualitative match (Opportunity Matcher). No scores: the
+ * model states which of the student's real traits are plus points, what is
+ * missing, what to do about it, and the role that fits best.
+ */
+export interface SavedOpportunityMatch {
+  opportunityId?: string;
+  title: string;
+  organization: string;
+  category: string;
+  summary: string;
+  plusPoints: string[];
+  gaps: string[];
+  actions: string[];
+  bestRole: string;
 }
 
 function str(v: unknown): string {
@@ -105,8 +98,7 @@ function asArray(v: unknown): unknown[] {
 
 /**
  * Coerces whatever the model returned into a well-formed assessment. Anything
- * missing becomes an empty list rather than a crash, and every score is bounded
- * so the UI never has to defend against it.
+ * missing becomes an empty list rather than a crash.
  */
 export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessment {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -116,7 +108,6 @@ export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessm
       const o = (t ?? {}) as Record<string, unknown>;
       return {
         name: str(o.name) || str(o.trait) || str(o.label),
-        score: clampScore(o.score ?? o.level ?? o.value),
         evidence: str(o.evidence) || str(o.reason),
       };
     })
@@ -128,7 +119,6 @@ export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessm
       const o = (s ?? {}) as Record<string, unknown>;
       return {
         name: str(o.name) || str(o.skill),
-        level: clampScore(o.level ?? o.score ?? o.value),
         evidence: str(o.evidence) || str(o.reason),
       };
     })
@@ -140,7 +130,6 @@ export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessm
       const o = (c ?? {}) as Record<string, unknown>;
       return {
         title: str(o.title) || str(o.field) || str(o.path),
-        fit: clampScore(o.fit ?? o.score),
         reason: str(o.reason) || str(o.why),
         steps: strList(o.steps, 6),
       };
@@ -156,7 +145,6 @@ export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessm
         title: str(o.title),
         organization: str(o.organization) || str(o.orgName),
         category: str(o.category),
-        fit: clampScore(o.fit ?? o.score),
         bestRole: str(o.bestRole) || str(o.role),
         reason: str(o.reason),
         matchedSkills: strList(o.matchedSkills, 10),
@@ -178,7 +166,6 @@ export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessm
     .slice(0, 10);
 
   return {
-    overallScore: clampScore(r.overallScore ?? r.score),
     profileTitle: str(r.profileTitle) || str(r.persona) || str(r.title),
     summary: str(r.summary) || str(r.executiveSummary),
     traits,
@@ -191,4 +178,30 @@ export function normalizePerformanceAssessment(raw: unknown): PerformanceAssessm
     nextActions: strList(r.nextActions ?? r.actionPlan, 10),
     generatedAt: new Date().toISOString(),
   };
+}
+
+/** Coerces the matcher response into well-formed per-opportunity matches. */
+export function normalizeSavedOpportunityMatches(raw: unknown): SavedOpportunityMatch[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as Record<string, unknown>)?.matches)
+      ? ((raw as Record<string, unknown>).matches as unknown[])
+      : [];
+
+  return list
+    .map((m) => {
+      const o = (m ?? {}) as Record<string, unknown>;
+      return {
+        opportunityId: str(o.opportunityId) || undefined,
+        title: str(o.title),
+        organization: str(o.organization) || str(o.orgName),
+        category: str(o.category),
+        summary: str(o.summary),
+        plusPoints: strList(o.plusPoints ?? o.strengths, 10),
+        gaps: strList(o.gaps ?? o.missingSkills ?? o.weaknesses, 10),
+        actions: strList(o.actions ?? o.nextActions ?? o.actionPlan, 10),
+        bestRole: str(o.bestRole) || str(o.role),
+      };
+    })
+    .filter((m) => m.title);
 }

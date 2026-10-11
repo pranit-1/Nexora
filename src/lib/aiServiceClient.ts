@@ -1,5 +1,6 @@
 import { authedFetch } from "@/lib/apiClient";
-import type { PerformanceAssessment } from "@/lib/performanceTypes";
+import type { PerformanceAssessment, SavedOpportunityMatch } from "@/lib/performanceTypes";
+import type { ProfileEnrichment } from "@/lib/enrichmentTypes";
 
 export interface ResumeAnalysisResult {
   atsScore: number;
@@ -160,6 +161,7 @@ export class AIServiceClient {
     profile: unknown;
     walletDocuments: unknown[];
     savedOpportunities: unknown[];
+    enrichment?: ProfileEnrichment | null;
   }): Promise<PerformanceAssessment> {
     let response: Response;
     try {
@@ -197,6 +199,104 @@ export class AIServiceClient {
       throw new AIServiceUnavailableError("malformed", "The AI returned an unreadable assessment.");
     }
     return body.assessment as PerformanceAssessment;
+  }
+
+  /**
+   * Visits the student's saved links (GitHub + coding platforms) and returns
+   * factual enrichment (repos, stars, commits, platform stats) plus improved
+   * platform labels to write back onto the link documents.
+   */
+  public static async enrichProfile(
+    links: { url: string; kind?: string; id?: string }[]
+  ): Promise<{ enrichment: ProfileEnrichment; labels: { url: string; kind: string; platform: string; label: string }[] }> {
+    let response: Response;
+    try {
+      response = await authedFetch("/api/profile/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ links }),
+      });
+    } catch (e) {
+      console.error("AI Client network error for profile enrichment:", e);
+      throw new AIServiceUnavailableError("network", "Could not reach the enrichment service. Check your connection.");
+    }
+
+    if (!response.ok) {
+      let message = `The enrichment service returned ${response.status}.`;
+      try {
+        const errData = await response.json();
+        if (errData && typeof errData.error === "string" && errData.error.length > 0) {
+          message = errData.error;
+        }
+      } catch {
+        // non-JSON error body; keep the status-derived message
+      }
+      if (response.status === 401) {
+        throw new AIServiceUnavailableError("unauthenticated", "Please sign in to use AI features.");
+      }
+      if (response.status === 429) {
+        throw new AIServiceUnavailableError("rate_limited", "Too many enrichment requests. Wait a moment and try again.");
+      }
+      throw new AIServiceUnavailableError("provider", message);
+    }
+
+    const body = await response.json();
+    if (!body?.enrichment || typeof body.enrichment !== "object") {
+      throw new AIServiceUnavailableError("malformed", "The enrichment service returned an unreadable response.");
+    }
+    return {
+      enrichment: body.enrichment as ProfileEnrichment,
+      labels: Array.isArray(body.labels) ? body.labels : [],
+    };
+  }
+
+  /**
+   * Qualitative role-fit analysis for the opportunities the student has saved.
+   * Returns, per saved opportunity, plus points drawn from their real profile and
+   * gaps/actions to improve their odds. No scores.
+   */
+  public static async analyzeSavedOpportunities(context: {
+    profile: unknown;
+    walletDocuments: unknown[];
+    savedOpportunities: unknown[];
+    enrichment?: ProfileEnrichment | null;
+  }): Promise<SavedOpportunityMatch[]> {
+    let response: Response;
+    try {
+      response = await authedFetch("/api/opportunities/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(context),
+      });
+    } catch (e) {
+      console.error("AI Client network error for saved-opportunity matching:", e);
+      throw new AIServiceUnavailableError("network", "Could not reach the AI service. Check your connection.");
+    }
+
+    if (!response.ok) {
+      let message = `The AI service returned ${response.status}.`;
+      try {
+        const errData = await response.json();
+        if (errData && typeof errData.error === "string" && errData.error.length > 0) {
+          message = errData.error;
+        }
+      } catch {
+        // non-JSON error body; keep the status-derived message
+      }
+      if (response.status === 401) {
+        throw new AIServiceUnavailableError("unauthenticated", "Please sign in to use AI features.");
+      }
+      if (response.status === 429) {
+        throw new AIServiceUnavailableError("rate_limited", "Too many requests. Wait a moment and try again.");
+      }
+      throw new AIServiceUnavailableError("provider", message);
+    }
+
+    const body = await response.json();
+    if (!Array.isArray(body?.matches)) {
+      throw new AIServiceUnavailableError("malformed", "The AI returned an unreadable match analysis.");
+    }
+    return body.matches as SavedOpportunityMatch[];
   }
 
   public static async trackConfidence(scores: unknown): Promise<string> {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -33,9 +33,19 @@ import {
   ChevronUp,
   Paperclip,
   Download,
+  Github,
+  Star,
+  GitFork,
+  GitCommit,
+  Trophy,
+  GraduationCap,
+  RefreshCw,
+  Code2,
 } from "lucide-react";
 import type { WalletDocument, ProfileLink } from "@/lib/types";
-import type { PerformanceAssessment } from "@/lib/performanceTypes";
+import type { PerformanceAssessment, SavedOpportunityMatch } from "@/lib/performanceTypes";
+import type { ProfileEnrichment } from "@/lib/enrichmentTypes";
+import { normalizeProfileEnrichment } from "@/lib/enrichmentTypes";
 import { subscribeProfileLinks } from "@/lib/profileLinksClient";
 import { Button, Card, Chip, EmptyState, ErrorState, Textarea } from "@/components/ui";
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
@@ -305,14 +315,15 @@ export default function AIHub() {
 function RecommendationsTab() {
   const { currentUser, profile } = useAuth();
   const { opportunities } = useOpportunities();
-  const [showCount, setShowCount] = useState(8);
   const [walletDocs, setWalletDocs] = useState<WalletDocument[]>([]);
   const [profileLinks, setProfileLinks] = useState<ProfileLink[]>([]);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
-  const [filterMode, setFilterMode] = useState<"all" | "saved">("all");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [savedOpps, setSavedOpps] = useState<any[]>([]);
+  const [enrichment, setEnrichment] = useState<ProfileEnrichment | null>(null);
+  const [matches, setMatches] = useState<SavedOpportunityMatch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // 1. Fetch wallet documents (PDFs, projects, certificates, resume texts)
+  // 1. Wallet documents (resumes, projects, certificates, marksheets)
   useEffect(() => {
     if (!currentUser) return;
     const fetchWallet = async () => {
@@ -330,189 +341,114 @@ function RecommendationsTab() {
     fetchWallet();
   }, [currentUser]);
 
-  // 2. Fetch public profile links (GitHub, LinkedIn, LeetCode, portfolio)
+  // 2. Public profile links (GitHub, LinkedIn, LeetCode, portfolio)
   useEffect(() => {
     if (!currentUser) return;
     return subscribeProfileLinks(currentUser.uid, setProfileLinks);
   }, [currentUser]);
 
-  // 3. Fetch saved bookmarks
+  // 3. Saved (bookmarked) opportunities — the ONLY ones the matcher analyses.
   useEffect(() => {
     if (!currentUser) return;
     const fetchSaved = async () => {
       try {
         const snap = await getDoc(doc(db, "bookmarks", currentUser.uid));
-        if (snap.exists()) {
-          const data = snap.data();
-          const ids: string[] = data.opportunityIds || [];
-          const itemIds: string[] = Array.isArray(data.items) ? data.items.map((i: any) => i.id) : [];
-          setSavedIds(new Set([...ids, ...itemIds]));
+        if (!snap.exists()) {
+          setSavedOpps([]);
+          return;
         }
+        const data = snap.data();
+        const items: any[] = Array.isArray(data.items) ? data.items : [];
+        if (items.length > 0) {
+          setSavedOpps(items);
+          return;
+        }
+        // Fallback for older bookmark docs: resolve the id list against the feed.
+        const ids: string[] = Array.isArray(data.opportunityIds) ? data.opportunityIds : [];
+        setSavedOpps(opportunities.filter((o) => ids.includes(o.id)));
       } catch (err) {
-        console.error("Failed to load bookmarks:", err);
+        console.error("Failed to load saved opportunities:", err);
       }
     };
     fetchSaved();
+  }, [currentUser, opportunities]);
+
+  // 4. Enriched link data (GitHub repos + coding stats) for deeper evidence.
+  useEffect(() => {
+    if (!currentUser) return;
+    const loadEnrichment = async () => {
+      try {
+        const snap = await getDoc(doc(db, "profile_enrichment", currentUser.uid));
+        if (snap.exists()) setEnrichment(normalizeProfileEnrichment(snap.data()));
+      } catch (err) {
+        console.error("Failed to load profile enrichment:", err);
+      }
+    };
+    loadEnrichment();
   }, [currentUser]);
 
-  // Extract all searchable keywords, skills, and evidence from user's assets
-  const userSkills = (profile?.skills || []).map((s) => s.toLowerCase());
-  const userInterests = (profile?.interests || []).map((i) => i.toLowerCase());
-  const userEducation = (profile?.education || "").toLowerCase();
-
-  // Aggregate insights & text from wallet documents
-  const walletSkills = new Set<string>();
-  const walletTech = new Set<string>();
-  const docNames: string[] = [];
-
-  walletDocs.forEach((doc) => {
-    docNames.push(doc.name);
-    if (doc.insights) {
-      (doc.insights.skills || []).forEach((s) => walletSkills.add(s.toLowerCase()));
-      (doc.insights.technologies || []).forEach((t) => walletTech.add(t.toLowerCase()));
-    }
-  });
-
-  // Check linked coding/professional profiles
   const hasGithub = profileLinks.some((l) => l.kind === "github" || l.url.includes("github.com"));
-  const hasLinkedIn = profileLinks.some((l) => l.kind === "linkedin" || l.url.includes("linkedin.com"));
-  const hasLeetcode = profileLinks.some((l) => l.kind === "leetcode" || l.url.includes("leetcode.com"));
-  const hasPortfolio = profileLinks.some((l) => l.kind === "website" || l.url.includes("portfolio") || l.url.includes(".dev") || l.url.includes(".me"));
 
-  // Calculate detailed opportunity match audit
-  const scoredOpportunities = opportunities.map((opp) => {
-    let score = 40; // baseline
-    const matchesFound: string[] = [];
-    const missingExpected: string[] = [];
-    const evidenceEvidence: string[] = [];
+  const matchFor = (oppId: string | undefined) =>
+    oppId ? matches.find((m) => m.opportunityId === oppId) : undefined;
 
-    const oppCategory = (opp.category || "").toLowerCase();
-    const oppField = (opp.field || "").toLowerCase();
-    const textToMatch = `${opp.title} ${opp.description || ""} ${opp.field || ""} ${opp.category || ""}`.toLowerCase();
-
-    // 1. Skill check (Profile & Wallet)
-    userSkills.forEach((skill) => {
-      if (textToMatch.includes(skill)) {
-        score += 10;
-        matchesFound.push(`Profile Skill: ${skill}`);
-      }
-    });
-
-    walletSkills.forEach((skill) => {
-      if (textToMatch.includes(skill) && !matchesFound.includes(`Wallet Skill: ${skill}`)) {
-        score += 8;
-        evidenceEvidence.push(`Wallet Document verified skill: ${skill}`);
-      }
-    });
-
-    walletTech.forEach((tech) => {
-      if (textToMatch.includes(tech)) {
-        score += 6;
-        evidenceEvidence.push(`Tech match from wallet: ${tech}`);
-      }
-    });
-
-    // 2. Category specific evidence
-    if (oppCategory.includes("hackathon") || oppCategory.includes("internship") || oppCategory.includes("research") || oppField.includes("computer") || oppField.includes("tech") || oppField.includes("software")) {
-      if (hasGithub) {
-        score += 12;
-        evidenceEvidence.push("Verified GitHub Profile linked in Wallet");
-      } else {
-        missingExpected.push("GitHub Profile link recommended for technical proof");
-      }
-
-      const hasProjectsInWallet = walletDocs.some((d) => d.category === "Projects");
-      if (hasProjectsInWallet) {
-        score += 10;
-        evidenceEvidence.push("Project documentation found in Wallet");
-      } else {
-        missingExpected.push("Project report or code artifacts in Wallet");
-      }
+  const runMatch = async () => {
+    if (!currentUser || savedOpps.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const walletPayload = walletDocs.map((d) => ({
+        name: d.name,
+        category: d.category,
+        insights: d.insights,
+        extractedText: d.extractedText,
+      }));
+      const savedPayload = savedOpps.map((o) => ({
+        id: o.id,
+        title: o.title,
+        organization: o.organization || o.orgName,
+        category: o.category,
+        field: o.field,
+        description: o.description,
+        eligibility: o.eligibility,
+        deadline: o.deadline,
+      }));
+      const res = await AIServiceClient.analyzeSavedOpportunities({
+        profile: profile || {},
+        walletDocuments: walletPayload,
+        savedOpportunities: savedPayload,
+        enrichment,
+      });
+      setMatches(res);
+    } catch (err: any) {
+      setError(
+        err instanceof AIServiceUnavailableError
+          ? err.message
+          : err?.message || "Could not analyse your saved opportunities. Please try again."
+      );
+    } finally {
+      setLoading(false);
     }
-
-    if (oppCategory.includes("scholarship") || oppCategory.includes("fellowship")) {
-      const hasMarksheet = walletDocs.some((d) => d.category === "Results" || d.name.toLowerCase().includes("marksheet") || d.name.toLowerCase().includes("transcript"));
-      if (hasMarksheet) {
-        score += 15;
-        evidenceEvidence.push("Academic Transcript / Marksheet verified in Wallet");
-      } else {
-        missingExpected.push("Academic transcript / result document required for scholarships");
-      }
-    }
-
-    const hasResumeInWallet = walletDocs.some((d) => d.category === "Resume" || d.name.toLowerCase().includes("resume") || d.name.toLowerCase().includes("cv"));
-    if (hasResumeInWallet) {
-      score += 8;
-      evidenceEvidence.push("Updated Resume / CV available in Wallet");
-    } else {
-      missingExpected.push("Upload your latest Resume in Wallet to boost ATS score");
-    }
-
-    // 3. Education & Interests
-    if (userEducation && textToMatch.includes(userEducation)) {
-      score += 8;
-      matchesFound.push(`Education background: ${userEducation}`);
-    }
-
-    userInterests.forEach((interest) => {
-      if (textToMatch.includes(interest)) {
-        score += 6;
-        matchesFound.push(`Interest: ${interest}`);
-      }
-    });
-
-    // Check if this opportunity was bookmarked
-    const isSaved = savedIds.has(opp.id);
-    if (isSaved) {
-      score += 5;
-    }
-
-    const matchPercent = Math.min(99, Math.max(38, Math.round(score)));
-
-    // Rating tier
-    let ratingTier = "Needs Improvement";
-    let tierColor: "success" | "warning" | "danger" | "neutral" = "danger";
-    if (matchPercent >= 80) {
-      ratingTier = "Strong Fit";
-      tierColor = "success";
-    } else if (matchPercent >= 65) {
-      ratingTier = "Moderate Fit";
-      tierColor = "warning";
-    }
-
-    return {
-      ...opp,
-      matchPercent,
-      ratingTier,
-      tierColor,
-      isSaved,
-      matchesFound,
-      evidenceEvidence,
-      missingExpected,
-    };
-  });
-
-  // Filter and sort
-  const filtered = scoredOpportunities.filter((opp) => {
-    if (filterMode === "saved") return opp.isSaved;
-    return true;
-  });
-
-  const sortedOpportunities = [...filtered].sort((a, b) => b.matchPercent - a.matchPercent);
-  const displayed = sortedOpportunities.slice(0, showCount);
+  };
 
   return (
     <div className="space-y-8">
       <div>
         <span className="eyebrow">Instrument 01</span>
-        <h2 className="mt-2 font-display text-2xl text-foreground">Deep Opportunity Matcher</h2>
+        <h2 className="mt-2 font-display text-2xl text-foreground">Saved Opportunity Matcher</h2>
         <p className="mt-2 max-w-2xl text-sm text-foreground-muted">
-          Cross-examines each opportunity against all assets in your <strong>Digital Wallet</strong> (resumes, project repos, marksheets) and <strong>Profile Links</strong> (GitHub, LinkedIn, LeetCode) to provide an evidence-backed rating and gap audit.
+          This matcher only looks at the opportunities you have <strong>saved</strong>. For each one it reads your
+          wallet documents, enriched GitHub / coding links and profile — then tells you which of your real strengths are
+          a <strong>plus point</strong>, what is still missing, and exactly what to do to strengthen your case. No scores.
         </p>
       </div>
 
-      {/* Wallet Asset Snapshot summary pill */}
+      {/* Evidence snapshot */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">Saved Items</span>
+          <p className="mt-1 font-display text-xl text-foreground">{savedOpps.length}</p>
+        </div>
         <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
           <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">Wallet Docs</span>
           <p className="mt-1 font-display text-xl text-foreground">{walletDocs.length}</p>
@@ -522,208 +458,163 @@ function RecommendationsTab() {
           <p className="mt-1 font-display text-xl text-foreground">{profileLinks.length}</p>
         </div>
         <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
-          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">GitHub Connected</span>
+          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">GitHub Linked</span>
           <p className="mt-1 font-display text-xl text-foreground">{hasGithub ? "Yes" : "No"}</p>
         </div>
-        <div className="rounded-lg border border-border bg-surface-raised p-3 text-center">
-          <span className="text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">Bookmarked</span>
-          <p className="mt-1 font-display text-xl text-foreground">{savedIds.size}</p>
-        </div>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-2 border-b border-border pb-3">
-        <button
-          type="button"
-          onClick={() => setFilterMode("all")}
-          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-            filterMode === "all"
-              ? "bg-surface-ink text-background"
-              : "text-foreground-muted hover:bg-surface-raised hover:text-foreground"
-          }`}
-        >
-          All Opportunities ({opportunities.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilterMode("saved")}
-          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-            filterMode === "saved"
-              ? "bg-surface-ink text-background"
-              : "text-foreground-muted hover:bg-surface-raised hover:text-foreground"
-          }`}
-        >
-          <Bookmark className="h-3.5 w-3.5" />
-          Saved Only ({savedIds.size})
-        </button>
-      </div>
-
-      <div className="space-y-6">
-        {displayed.length === 0 ? (
-          <EmptyState
-            icon={<TrendingUp className="h-5 w-5" />}
-            title="No opportunities found"
-            description={
-              filterMode === "saved"
-                ? "You haven't bookmarked any opportunities yet. Save some to see them ranked here!"
-                : "Check back once opportunities are available in the database."
-            }
-          />
-        ) : (
-          <>
+      {savedOpps.length === 0 ? (
+        <EmptyState
+          icon={<Bookmark className="h-5 w-5" />}
+          title="No saved opportunities yet"
+          description="Bookmark a few opportunities and they will appear here for an evidence-backed plus-points and gaps analysis."
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-foreground-subtle">
-              Showing <span className="font-semibold text-foreground">{displayed.length}</span>{" "}
-              of <span className="font-semibold text-foreground">{filtered.length}</span>{" "}
-              opportunities evaluated with Wallet evidence
+              Analysing <span className="font-semibold text-foreground">{savedOpps.length}</span> saved{" "}
+              {savedOpps.length === 1 ? "opportunity" : "opportunities"}
+              {matches.length > 0 ? " · analysed below" : ""}
             </p>
-            <Stagger as="ul" className="grid grid-cols-1 gap-4">
-              {displayed.map((opportunity) => {
-                const isExpanded = expandedId === opportunity.id;
-                return (
-                  <StaggerItem as="li" key={opportunity.id}>
-                    <Card className="overflow-hidden p-5 transition-shadow hover:shadow-md sm:p-6">
-                      <div className="flex items-start justify-between gap-5">
-                        <div className="min-w-0 flex-1">
-                          <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <Chip tone="gold">{opportunity.category}</Chip>
-                            <span className="text-2xs text-foreground-subtle">{opportunity.field}</span>
-                            {opportunity.isSaved && (
-                              <span className="inline-flex items-center gap-1 rounded bg-secondary/10 px-2 py-0.5 text-2xs font-semibold text-secondary">
-                                <Bookmark className="h-3 w-3 fill-current" />
-                                Saved Item
-                              </span>
-                            )}
-                            <div className="ml-auto flex items-center gap-2">
-                              <Chip tone={opportunity.tierColor}>{opportunity.ratingTier}</Chip>
-                              <span className="inline-flex items-center gap-1 rounded-full bg-secondary/15 px-3 py-1 text-xs font-bold text-secondary">
-                                <Sparkles className="h-3.5 w-3.5" />
-                                {opportunity.matchPercent}% Match
-                              </span>
-                            </div>
-                          </div>
+            <Button
+              variant="primary"
+              onClick={runMatch}
+              loading={loading}
+              leadingIcon={!loading ? <Sparkles className="h-4 w-4" /> : undefined}
+              disabled={loading}
+            >
+              {matches.length > 0 ? "Re-run analysis" : "Analyse my saved opportunities"}
+            </Button>
+          </div>
 
-                          <h3 className="font-display text-lg leading-snug text-foreground">
-                            <Link
-                              href={`/opportunity/${opportunity.id}`}
-                              className="transition-colors duration-base hover:text-secondary"
-                            >
-                              {opportunity.title}
-                            </Link>
-                          </h3>
-                          <p className="mt-1 text-sm text-foreground-muted">
-                            {opportunity.organization} · {opportunity.country}
-                          </p>
+          {error ? (
+            <ErrorState
+              title="Analysis failed"
+              description={error}
+              action={
+                <Button variant="outline" size="sm" onClick={runMatch}>
+                  Try again
+                </Button>
+              }
+            />
+          ) : null}
+
+          <div className="space-y-6">
+            {savedOpps.map((opp) => {
+              const match = matchFor(opp.id);
+              return (
+                <Card key={opp.id} className="overflow-hidden p-5 sm:p-6">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Chip tone="gold">{opp.category || "Opportunity"}</Chip>
+                    {opp.field ? <span className="text-2xs text-foreground-subtle">{opp.field}</span> : null}
+                    <span className="inline-flex items-center gap-1 rounded bg-secondary/10 px-2 py-0.5 text-2xs font-semibold text-secondary">
+                      <Bookmark className="h-3 w-3 fill-current" />
+                      Saved Item
+                    </span>
+                  </div>
+
+                  <h3 className="mt-2 font-display text-lg leading-snug text-foreground">
+                    <Link href={`/opportunity/${opp.id}`} className="transition-colors duration-base hover:text-secondary">
+                      {opp.title}
+                    </Link>
+                  </h3>
+                  <p className="mt-1 text-sm text-foreground-muted">
+                    {[opp.organization || opp.orgName, opp.country].filter(Boolean).join(" · ")}
+                  </p>
+
+                  {match ? (
+                    <div className="mt-4 space-y-4 border-t border-border/80 pt-4">
+                      {match.summary ? (
+                        <p className="text-sm leading-relaxed text-foreground-muted">{match.summary}</p>
+                      ) : null}
+                      {match.bestRole ? (
+                        <p className="text-sm text-foreground">
+                          <span className="text-foreground-subtle">Suggested role: </span>
+                          <span className="font-medium">{match.bestRole}</span>
+                        </p>
+                      ) : null}
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {match.plusPoints.length > 0 ? (
+                          <div>
+                            <span className="flex items-center gap-1.5 text-xs font-semibold text-success">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Your plus points
+                            </span>
+                            <ul className="mt-2 space-y-1.5">
+                              {match.plusPoints.map((p, i) => (
+                                <li key={i} className="flex gap-2 text-xs text-foreground-muted">
+                                  <span className="text-success">+</span>
+                                  <span>{p}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {match.gaps.length > 0 ? (
+                          <div>
+                            <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-600">
+                              <AlertCircle className="h-3.5 w-3.5" /> Gaps to close
+                            </span>
+                            <ul className="mt-2 space-y-1.5">
+                              {match.gaps.map((g, i) => (
+                                <li key={i} className="flex gap-2 text-xs text-foreground-muted">
+                                  <span className="text-amber-600">–</span>
+                                  <span>{g}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {match.actions.length > 0 ? (
+                        <div>
+                          <span className="text-xs font-semibold text-foreground">What to do next</span>
+                          <ul className="mt-2 space-y-1.5">
+                            {match.actions.map((a, i) => (
+                              <li key={i} className="flex gap-1.5 text-xs text-foreground-subtle">
+                                <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-secondary" />
+                                <span>{a}</span>
+                              </li>
+                            ))}
+                          </ul>
                         </div>
-                      </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-4 border-t border-border/80 pt-4 text-xs italic text-foreground-subtle">
+                      Run the analysis to see your plus points, gaps and the role that fits you.
+                    </p>
+                  )}
 
-                      {/* Match Analysis Toggle Button */}
-                      <div className="mt-4 border-t border-border/80 pt-3">
-                        <button
-                          type="button"
-                          onClick={() => setExpandedId(isExpanded ? null : opportunity.id)}
-                          className="flex w-full items-center justify-between text-xs font-medium text-foreground-muted hover:text-foreground"
-                        >
-                          <span className="inline-flex items-center gap-1.5 text-secondary">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            {isExpanded ? "Hide Match Audit & Wallet Evidence" : "View Match Basis (Why this rating?)"}
-                          </span>
-                          {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        </button>
-
-                        {/* Expanded Audit Card */}
-                        {isExpanded && (
-                          <div className="mt-3 space-y-3 rounded-lg border border-border bg-surface-subtle p-4 text-xs">
-                            {/* Evidence Found in Wallet & Profile */}
-                            <div>
-                              <span className="font-semibold text-foreground">✅ Strong Evidence Found in Wallet & Links:</span>
-                              {opportunity.evidenceEvidence.length > 0 || opportunity.matchesFound.length > 0 ? (
-                                <ul className="mt-1.5 space-y-1 text-foreground-muted">
-                                  {opportunity.evidenceEvidence.map((e, idx) => (
-                                    <li key={`ev-${idx}`} className="flex items-center gap-1.5 text-success">
-                                      <span className="h-1.5 w-1.5 rounded-full bg-success shrink-0" />
-                                      {e}
-                                    </li>
-                                  ))}
-                                  {opportunity.matchesFound.map((m, idx) => (
-                                    <li key={`mf-${idx}`} className="flex items-center gap-1.5">
-                                      <span className="h-1.5 w-1.5 rounded-full bg-secondary shrink-0" />
-                                      {m}
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <p className="mt-1 text-foreground-subtle italic">No direct keyword overlap found with uploaded documents.</p>
-                              )}
-                            </div>
-
-                            {/* Missing / Expected Proof */}
-                            <div>
-                              <span className="font-semibold text-danger">⚠️ What is Missing / Recommended to Boost Fit:</span>
-                              {opportunity.missingExpected.length > 0 ? (
-                                <ul className="mt-1.5 space-y-1 text-danger">
-                                  {opportunity.missingExpected.map((miss, idx) => (
-                                    <li key={`miss-${idx}`} className="flex items-center gap-1.5">
-                                      <span className="h-1.5 w-1.5 rounded-full bg-danger shrink-0" />
-                                      {miss}
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <p className="mt-1 text-success">Your wallet and profile fulfill all primary expected qualifications!</p>
-                              )}
-                            </div>
-
-                            <div className="pt-2 border-t border-border flex items-center justify-between text-2xs text-foreground-subtle">
-                              <span>Field context: {opportunity.field || "General"}</span>
-                              <Link href="/dashboard/wallet" className="text-secondary hover:underline inline-flex items-center gap-1 font-medium">
-                                Manage Wallet Documents
-                                <ExternalLink className="h-3 w-3" />
-                              </Link>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
-                        <span className="text-xs text-foreground-subtle">
-                          Deadline{" "}
-                          <span className="font-medium text-foreground">
-                            {opportunity.deadline
-                              ? new Date(opportunity.deadline).toLocaleDateString("en-IN", {
-                                  day: "numeric",
-                                  month: "short",
-                                  year: "numeric",
-                                })
-                              : "Open"}
-                          </span>
-                        </span>
-                        <Link
-                          href={`/opportunity/${opportunity.id}`}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
-                        >
-                          View Details
-                          <ArrowRight className="h-3.5 w-3.5" />
-                        </Link>
-                      </div>
-                    </Card>
-                  </StaggerItem>
-                );
-              })}
-            </Stagger>
-
-            {filtered.length > showCount && (
-              <Button
-                variant="quiet"
-                block
-                onClick={() => setShowCount((c) => c + 8)}
-                className="border border-border"
-              >
-                Load {Math.min(8, filtered.length - showCount)} more opportunities
-              </Button>
-            )}
-          </>
-        )}
-      </div>
+                  <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
+                    <span className="text-xs text-foreground-subtle">
+                      Deadline{" "}
+                      <span className="font-medium text-foreground">
+                        {opp.deadline
+                          ? new Date(opp.deadline).toLocaleDateString("en-IN", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                            })
+                          : "Open"}
+                      </span>
+                    </span>
+                    <Link
+                      href={`/opportunity/${opp.id}`}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary transition-colors duration-base hover:text-secondary-hover"
+                    >
+                      View Details
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -736,27 +627,14 @@ function RecommendationsTab() {
    and their profile, then builds an evidence-backed profile of the person.
    ========================================================================== */
 
-function perfTier(score: number): { label: string; tone: "success" | "warning" | "danger" | "info" } {
-  if (score >= 80) return { label: "Elite Potential", tone: "success" };
-  if (score >= 65) return { label: "Strong", tone: "success" };
-  if (score >= 50) return { label: "Developing", tone: "warning" };
-  if (score > 0) return { label: "Early Stage", tone: "danger" };
-  return { label: "Not scored", tone: "info" };
-}
-
-function PerfBar({ label, value, hint }: { label: string; value: number; hint?: string }) {
-  const v = Math.max(0, Math.min(100, Math.round(value)));
-  const color = v >= 75 ? "bg-secondary" : v >= 50 ? "bg-yellow-500" : "bg-rose-500";
+function StatPill({ label, value, icon }: { label: string; value: string | number; icon?: ReactNode }) {
   return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        <span className="text-xs font-semibold text-foreground-muted">{v}%</span>
-      </div>
-      <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-ink/10">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${v}%` }} />
-      </div>
-      {hint ? <p className="mt-1 text-xs text-foreground-subtle">{hint}</p> : null}
+    <div className="rounded-lg border border-border bg-surface-raised p-3">
+      <span className="flex items-center gap-1 text-2xs font-semibold uppercase tracking-wider text-foreground-subtle">
+        {icon}
+        {label}
+      </span>
+      <p className="mt-1 font-display text-lg text-foreground">{value}</p>
     </div>
   );
 }
@@ -765,10 +643,15 @@ function PerformanceTab() {
   const { currentUser, profile } = useAuth();
   const [walletDocs, setWalletDocs] = useState<WalletDocument[]>([]);
   const [savedOpps, setSavedOpps] = useState<any[]>([]);
+  const [profileLinks, setProfileLinks] = useState<ProfileLink[]>([]);
+  const [enrichment, setEnrichment] = useState<ProfileEnrichment | null>(null);
+  const [resumeScore, setResumeScore] = useState<number | null>(null);
   const [result, setResult] = useState<PerformanceAssessment | null>(null);
   const [loading, setLoading] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
 
   // Wallet documents — the raw evidence the assessment is built from.
   useEffect(() => {
@@ -806,6 +689,48 @@ function PerformanceTab() {
     fetchSaved();
   }, [currentUser]);
 
+  // Public profile links (GitHub, coding platforms, portfolio).
+  useEffect(() => {
+    if (!currentUser) return;
+    return subscribeProfileLinks(currentUser.uid, setProfileLinks);
+  }, [currentUser]);
+
+  // Enriched link data (GitHub repos + coding stats), if it was fetched before.
+  useEffect(() => {
+    if (!currentUser) return;
+    const loadEnrichment = async () => {
+      try {
+        const snap = await getDoc(doc(db, "profile_enrichment", currentUser.uid));
+        if (snap.exists()) setEnrichment(normalizeProfileEnrichment(snap.data()));
+      } catch (err) {
+        console.error("Failed to load profile enrichment:", err);
+      }
+    };
+    loadEnrichment();
+  }, [currentUser]);
+
+  // Latest resume ATS score (a real fact, not an invented rating).
+  useEffect(() => {
+    if (!currentUser) return;
+    const loadResume = async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, "resume_analyses"), where("uid", "==", currentUser.uid))
+        );
+        const rows: { ts: string; score: number }[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          if (typeof data?.atsScore === "number") rows.push({ ts: data.timestamp || "", score: data.atsScore });
+        });
+        rows.sort((a, b) => (a.ts < b.ts ? 1 : -1));
+        if (rows.length > 0) setResumeScore(rows[0].score);
+      } catch (err) {
+        console.error("Failed to load resume score:", err);
+      }
+    };
+    loadResume();
+  }, [currentUser]);
+
   // Most recent stored assessment, so the page is not blank on return.
   useEffect(() => {
     if (!currentUser) return;
@@ -835,6 +760,49 @@ function PerformanceTab() {
     };
   }, [currentUser]);
 
+  const runEnrichment = async () => {
+    if (!currentUser) return;
+    const links = profileLinks.map((l) => ({ url: l.url, kind: l.kind, id: l.id }));
+    if (links.length === 0) {
+      setEnrichError("Add a GitHub or coding-platform link to your profile first.");
+      return;
+    }
+    setEnriching(true);
+    setEnrichError(null);
+    try {
+      const res = await AIServiceClient.enrichProfile(links);
+      setEnrichment(res.enrichment);
+      try {
+        await setDoc(doc(db, "profile_enrichment", currentUser.uid), { ...res.enrichment });
+      } catch (saveErr) {
+        console.error("Failed to store enrichment:", saveErr);
+      }
+      // Write the detected platform labels back onto the link documents.
+      for (const label of res.labels) {
+        const link = profileLinks.find((l) => l.url === label.url);
+        if (link?.id) {
+          try {
+            await setDoc(
+              doc(db, "users", currentUser.uid, "profileLinks", link.id),
+              { label: label.label },
+              { merge: true }
+            );
+          } catch (labelErr) {
+            console.error("Failed to update link label:", labelErr);
+          }
+        }
+      }
+    } catch (err: any) {
+      setEnrichError(
+        err instanceof AIServiceUnavailableError
+          ? err.message
+          : err?.message || "Could not analyse your links. Please try again."
+      );
+    } finally {
+      setEnriching(false);
+    }
+  };
+
   const runAssessment = async () => {
     if (!currentUser) return;
     setLoading(true);
@@ -860,13 +828,13 @@ function PerformanceTab() {
         profile: profile || {},
         walletDocuments: walletPayload,
         savedOpportunities: savedPayload,
+        enrichment,
       });
       setResult(assessment);
       try {
         await addDoc(collection(db, "performance_analyses"), {
           uid: currentUser.uid,
           createdAt: new Date().toISOString(),
-          overallScore: assessment.overallScore,
           profileTitle: assessment.profileTitle,
           assessment,
         });
@@ -884,9 +852,20 @@ function PerformanceTab() {
     }
   };
 
-  const evidenceCount = walletDocs.length + savedOpps.length;
+  // Factual tallies, read straight from the records — no invented scores.
+  const certs = walletDocs.filter((d) => d.category === "Certificates");
+  const awards = walletDocs.filter((d) => d.category === "Awards");
+  const hackathonDocs = walletDocs.filter((d) =>
+    `${d.name} ${d.category} ${(d as any).extractedText || ""}`.toLowerCase().includes("hackathon")
+  );
+  const hackWins = hackathonDocs.filter((d) =>
+    /winner|won|1st|first place|rank 1|prize|awarded|champion/i.test(`${d.name} ${(d as any).extractedText || ""}`)
+  );
+  const gh = enrichment?.github || null;
+  const coding = enrichment?.coding || [];
+
+  const evidenceCount = walletDocs.length + savedOpps.length + (gh ? 1 : 0) + coding.length;
   const canRun = evidenceCount > 0 || (profile?.skills?.length || 0) > 0 || !!profile?.education;
-  const tier = result ? perfTier(result.overallScore) : null;
 
   return (
     <div className="space-y-6">
@@ -895,34 +874,58 @@ function PerformanceTab() {
           <div className="max-w-xl">
             <span className="eyebrow text-secondary">Performance Tracker</span>
             <h2 className="mt-2 font-display text-xl text-foreground">
-              Full profile from your real records
+              Your performance, personality &amp; proof
             </h2>
             <p className="mt-2 text-sm text-foreground-muted">
-              We read everything in your wallet — resumes, certificates, awards, projects, results — plus the
-              opportunities you saved and your profile, then measure your honed skills, plus points, gaps, the
-              career lines that fit you best, and your role fit for each saved opportunity.
+              We gather your real proof — wallet documents, every GitHub repository (stars, commits, a review each),
+              coding-platform stats, your latest resume score, certificates and hackathons — then describe your
+              personality, plus points, gaps and the career lines that fit you. We don&apos;t invent ratings.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <Chip tone="neutral" icon={<FolderGit2 className="h-3 w-3" />}>{walletDocs.length} wallet documents</Chip>
               <Chip tone="neutral" icon={<Bookmark className="h-3 w-3" />}>{savedOpps.length} saved opportunities</Chip>
+              <Chip tone="neutral" icon={<Github className="h-3 w-3" />}>{gh ? `${gh.publicRepos} repos` : "GitHub not analysed"}</Chip>
             </div>
           </div>
-          <Button
-            variant="primary"
-            onClick={runAssessment}
-            loading={loading}
-            leadingIcon={!loading ? <Sparkles className="h-4 w-4" /> : undefined}
-            disabled={!canRun || loading}
-          >
-            {result ? "Re-run assessment" : "Run full assessment"}
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="outline"
+              onClick={runEnrichment}
+              loading={enriching}
+              leadingIcon={!enriching ? <RefreshCw className="h-4 w-4" /> : undefined}
+              disabled={enriching}
+            >
+              {enrichment ? "Refresh my links" : "Analyse my links"}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={runAssessment}
+              loading={loading}
+              leadingIcon={!loading ? <Sparkles className="h-4 w-4" /> : undefined}
+              disabled={!canRun || loading}
+            >
+              {result ? "Re-run personality" : "Run personality assessment"}
+            </Button>
+          </div>
         </div>
         {!canRun ? (
           <p className="mt-4 text-sm text-foreground-subtle">
-            Upload documents to your wallet or complete your profile to enable the assessment.
+            Upload documents to your wallet, save opportunities, or add a GitHub/coding link to enable the assessment.
           </p>
         ) : null}
       </Card>
+
+      {enrichError ? (
+        <ErrorState
+          title="Link analysis failed"
+          description={enrichError}
+          action={
+            <Button variant="outline" size="sm" onClick={runEnrichment}>
+              Try again
+            </Button>
+          }
+        />
+      ) : null}
 
       {error ? (
         <ErrorState
@@ -941,84 +944,198 @@ function PerformanceTab() {
           <div className="flex flex-col items-center gap-3 text-center">
             <Loader2 className="h-7 w-7 spin text-secondary" />
             <p className="text-sm text-foreground-muted">
-              Studying your wallet, saved opportunities and profile…
+              Studying your wallet, links, saved opportunities and profile…
             </p>
           </div>
         </Card>
       ) : null}
 
+      {/* GitHub facts — every repo with stars, commits and a review. */}
+      {gh ? (
+        <Card className="p-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <Github className="h-5 w-5 text-foreground" />
+            <h3 className="font-display text-base text-foreground">GitHub — {gh.name || gh.username}</h3>
+            <a
+              href={gh.profileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-medium text-secondary hover:underline"
+            >
+              @{gh.username}
+            </a>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <StatPill label="Public Repos" value={gh.publicRepos} />
+            <StatPill label="Total Stars" value={gh.totalStars} icon={<Star className="h-3 w-3" />} />
+            <StatPill label="Total Forks" value={gh.totalForks} icon={<GitFork className="h-3 w-3" />} />
+            <StatPill label="Commits (sampled)" value={gh.totalCommits ?? "—"} icon={<GitCommit className="h-3 w-3" />} />
+            <StatPill label="Followers" value={gh.followers} />
+          </div>
+          {gh.topLanguages.length > 0 ? (
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {gh.topLanguages.map((lang) => (
+                <Chip key={lang} tone="info">{lang}</Chip>
+              ))}
+            </div>
+          ) : null}
+          {gh.repos.length > 0 ? (
+            <div className="mt-4 space-y-2">
+              {gh.repos.map((repo) => (
+                <div key={repo.fullName} className="card-inset rounded-lg p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={repo.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm font-semibold text-foreground hover:text-secondary"
+                    >
+                      {repo.name}
+                    </a>
+                    {repo.language ? <Chip tone="neutral">{repo.language}</Chip> : null}
+                    {repo.isFork ? <Chip tone="neutral">fork</Chip> : null}
+                    <span className="ml-auto flex items-center gap-3 text-xs text-foreground-subtle">
+                      <span className="inline-flex items-center gap-1"><Star className="h-3 w-3" />{repo.stars}</span>
+                      <span className="inline-flex items-center gap-1"><GitFork className="h-3 w-3" />{repo.forks}</span>
+                      {repo.commits != null ? (
+                        <span className="inline-flex items-center gap-1"><GitCommit className="h-3 w-3" />{repo.commits}</span>
+                      ) : null}
+                    </span>
+                  </div>
+                  {repo.description ? (
+                    <p className="mt-1 text-xs text-foreground-muted">{repo.description}</p>
+                  ) : null}
+                  {repo.review ? (
+                    <p className="mt-1.5 text-xs italic text-foreground-subtle">{repo.review}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {/* Coding platforms — real ratings and solved counts. */}
+      {coding.length > 0 ? (
+        <Card className="p-6">
+          <div className="flex items-center gap-3">
+            <Code2 className="h-5 w-5 text-foreground" />
+            <h3 className="font-display text-base text-foreground">Coding platforms</h3>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {coding.map((c, i) => (
+              <div key={`${c.platform}-${i}`} className="card-inset rounded-lg p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold capitalize text-foreground">{c.platform}</span>
+                  {c.handle ? <span className="text-xs text-foreground-subtle">@{c.handle}</span> : null}
+                </div>
+                {c.available ? (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-muted">
+                    {c.rating != null ? <span>Rating: <span className="font-semibold text-foreground">{c.rating}</span>{c.maxRating != null ? ` (max ${c.maxRating})` : ""}</span> : null}
+                    {c.rank ? <span>Rank: <span className="font-semibold text-foreground">{c.rank}</span></span> : null}
+                    {c.problemsSolved != null ? <span>Solved: <span className="font-semibold text-foreground">{c.problemsSolved}</span></span> : null}
+                    {c.contests != null ? <span>Contests: <span className="font-semibold text-foreground">{c.contests}</span></span> : null}
+                    {c.stars != null ? <span>Stars: <span className="font-semibold text-foreground">{c.stars}</span></span> : null}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs italic text-foreground-subtle">{c.note || "No public stats available."}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {/* Latest resume ATS score (a real, computed fact). */}
+      {resumeScore != null ? (
+        <Card className="flex flex-wrap items-center justify-between gap-4 p-6">
+          <div className="flex items-center gap-3">
+            <FileText className="h-5 w-5 text-foreground" />
+            <div>
+              <h3 className="font-display text-base text-foreground">Latest resume ATS score</h3>
+              <p className="text-xs text-foreground-subtle">From your most recent ATS Resume Scan.</p>
+            </div>
+          </div>
+          <span className="font-display text-3xl text-foreground">{resumeScore}%</span>
+        </Card>
+      ) : null}
+
+      {/* Certificates & achievements. */}
+      <Card className="p-6">
+        <div className="flex items-center gap-3">
+          <Trophy className="h-5 w-5 text-foreground" />
+          <h3 className="font-display text-base text-foreground">Certificates &amp; achievements</h3>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatPill label="Certificates" value={certs.length} icon={<GraduationCap className="h-3 w-3" />} />
+          <StatPill label="Awards" value={awards.length} icon={<Trophy className="h-3 w-3" />} />
+          <StatPill label="Hackathons" value={hackathonDocs.length} />
+          <StatPill label="Hackathon wins" value={hackWins.length} />
+        </div>
+        {certs.length + awards.length > 0 ? (
+          <ul className="mt-4 space-y-1.5">
+            {[...certs, ...awards].slice(0, 12).map((d) => (
+              <li key={d.id} className="flex items-center gap-2 text-sm text-foreground-muted">
+                <GraduationCap className="h-3.5 w-3.5 shrink-0 text-secondary" />
+                <span className="truncate">{d.name}</span>
+                <span className="ml-auto text-2xs text-foreground-subtle">{d.category}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-sm text-foreground-subtle">
+            Add certificates, awards and hackathon proofs to your wallet to build this list.
+          </p>
+        )}
+      </Card>
+
       {!loading && !result && !loadingHistory ? (
         <EmptyState
           icon={<TrendingUp className="h-5 w-5" />}
-          title="No assessment yet"
-          description="Run your first assessment to see your skills, plus points and best-fit career lines."
+          title="No personality assessment yet"
+          description="Run your first assessment to see your traits, honed skills, plus points and best-fit career lines."
         />
       ) : null}
 
+      {/* Qualitative assessment (no invented scores). */}
       {!loading && result ? (
         <div className="space-y-6">
-          {/* Headline score */}
           <Card className="p-6">
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
-                <svg viewBox="0 0 120 120" className="h-28 w-28 -rotate-90">
-                  <circle cx="60" cy="60" r="52" fill="none" strokeWidth="10" className="stroke-surface-ink/10" />
-                  <circle
-                    cx="60"
-                    cy="60"
-                    r="52"
-                    fill="none"
-                    strokeWidth="10"
-                    strokeLinecap="round"
-                    className="stroke-secondary"
-                    strokeDasharray={2 * Math.PI * 52}
-                    strokeDashoffset={2 * Math.PI * 52 * (1 - Math.max(0, Math.min(100, result.overallScore)) / 100)}
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center">
-                  <span className="text-3xl font-bold text-foreground">{result.overallScore}</span>
-                  <span className="text-[0.65rem] uppercase tracking-wide text-foreground-subtle">score</span>
-                </div>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-display text-lg text-foreground">
-                    {result.profileTitle || "Your Profile"}
-                  </h3>
-                  {tier ? <Chip tone={tier.tone}>{tier.label}</Chip> : null}
-                </div>
-                {result.summary ? (
-                  <p className="mt-2 text-sm leading-relaxed text-foreground-muted">{result.summary}</p>
-                ) : null}
-              </div>
-            </div>
+            <h3 className="font-display text-lg text-foreground">{result.profileTitle || "Your Profile"}</h3>
+            {result.summary ? (
+              <p className="mt-2 text-sm leading-relaxed text-foreground-muted">{result.summary}</p>
+            ) : null}
           </Card>
 
-          {/* Traits + Skills */}
           <div className="grid gap-6 md:grid-cols-2">
             {result.traits.length > 0 ? (
               <Card className="p-6">
-                <h3 className="font-display text-base text-foreground">Traits</h3>
-                <div className="mt-4 space-y-4">
+                <h3 className="font-display text-base text-foreground">Personality traits</h3>
+                <ul className="mt-4 space-y-4">
                   {result.traits.map((t, i) => (
-                    <PerfBar key={`${t.name}-${i}`} label={t.name} value={t.score} hint={t.evidence} />
+                    <li key={`${t.name}-${i}`}>
+                      <p className="text-sm font-semibold text-foreground">{t.name}</p>
+                      {t.evidence ? <p className="mt-0.5 text-xs text-foreground-muted">{t.evidence}</p> : null}
+                    </li>
                   ))}
-                </div>
+                </ul>
               </Card>
             ) : null}
             {result.skills.length > 0 ? (
               <Card className="p-6">
                 <h3 className="font-display text-base text-foreground">Skills (hunars)</h3>
-                <div className="mt-4 space-y-4">
+                <ul className="mt-4 space-y-4">
                   {result.skills.map((s, i) => (
-                    <PerfBar key={`${s.name}-${i}`} label={s.name} value={s.level} hint={s.evidence} />
+                    <li key={`${s.name}-${i}`}>
+                      <p className="text-sm font-semibold text-foreground">{s.name}</p>
+                      {s.evidence ? <p className="mt-0.5 text-xs text-foreground-muted">{s.evidence}</p> : null}
+                    </li>
                   ))}
-                </div>
+                </ul>
               </Card>
             ) : null}
           </div>
 
-          {/* Plus points + Gaps */}
           <div className="grid gap-6 md:grid-cols-2">
             {result.plusPoints.length > 0 ? (
               <Card className="p-6">
@@ -1052,7 +1169,6 @@ function PerformanceTab() {
             ) : null}
           </div>
 
-          {/* Career paths */}
           {result.careerPaths.length > 0 ? (
             <Card className="p-6">
               <h3 className="font-display text-base text-foreground">Career lines that fit you</h3>
@@ -1060,12 +1176,7 @@ function PerformanceTab() {
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 {result.careerPaths.map((c, i) => (
                   <div key={`${c.title}-${i}`} className="card-inset rounded-lg p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-foreground">{c.title}</span>
-                      <Chip tone={c.fit >= 75 ? "success" : c.fit >= 50 ? "warning" : "danger"}>
-                        {c.fit}% fit
-                      </Chip>
-                    </div>
+                    <span className="text-sm font-semibold text-foreground">{c.title}</span>
                     {c.reason ? <p className="mt-2 text-xs text-foreground-muted">{c.reason}</p> : null}
                     {c.steps.length > 0 ? (
                       <ul className="mt-3 space-y-1">
@@ -1083,7 +1194,6 @@ function PerformanceTab() {
             </Card>
           ) : null}
 
-          {/* Role fit for saved opportunities */}
           {result.roleFit.length > 0 ? (
             <Card className="p-6">
               <h3 className="font-display text-base text-foreground">Role fit for your saved opportunities</h3>
@@ -1093,15 +1203,10 @@ function PerformanceTab() {
               <div className="mt-4 space-y-4">
                 {result.roleFit.map((r, i) => (
                   <div key={`${r.title}-${i}`} className="card-inset rounded-lg p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-foreground">{r.title}</p>
-                        <p className="text-xs text-foreground-subtle">
-                          {[r.organization, r.category].filter(Boolean).join(" · ")}
-                        </p>
-                      </div>
-                      <Chip tone={r.fit >= 75 ? "success" : r.fit >= 50 ? "warning" : "danger"}>{r.fit}% fit</Chip>
-                    </div>
+                    <p className="truncate text-sm font-semibold text-foreground">{r.title}</p>
+                    <p className="text-xs text-foreground-subtle">
+                      {[r.organization, r.category].filter(Boolean).join(" · ")}
+                    </p>
                     {r.bestRole ? (
                       <p className="mt-2 text-sm text-foreground">
                         <span className="text-foreground-subtle">Best role: </span>
@@ -1125,7 +1230,6 @@ function PerformanceTab() {
             </Card>
           ) : null}
 
-          {/* Evidence highlights */}
           {result.evidenceHighlights.length > 0 ? (
             <Card className="p-6">
               <h3 className="font-display text-base text-foreground">Evidence from your wallet</h3>
@@ -1143,7 +1247,6 @@ function PerformanceTab() {
             </Card>
           ) : null}
 
-          {/* Next actions */}
           {result.nextActions.length > 0 ? (
             <Card className="p-6">
               <h3 className="font-display text-base text-foreground">Next actions</h3>

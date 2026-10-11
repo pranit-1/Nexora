@@ -365,6 +365,16 @@ service cloud.firestore {
       allow delete: if isOwner(resource.data.uid);
     }
 
+    // Enriched profile links (GitHub repos + coding-platform stats), one doc per
+    // uid, written by the client after POST /api/profile/enrich.
+    match /profile_enrichment/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && subsetOfKeys(request.resource.data, ["github", "githubError", "coding", "updatedAt"])
+        && isIsoDate(request.resource.data.updatedAt);
+      allow delete: if isOwner(uid);
+    }
+
     match /interviews/{docId} {
       allow read: if isOwner(resource.data.uid);
       allow create: if isOwner(request.resource.data.uid)

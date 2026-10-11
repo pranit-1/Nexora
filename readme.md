@@ -197,6 +197,11 @@ AI_REQUEST_TIMEOUT_MS=45000
 GITHUB_FETCH_TIMEOUT_MS=10000
 CODING_FETCH_TIMEOUT_MS=10000
 
+# Optional: GitHub token for Performance Tracker profile enrichment
+# (raises the API limit from 60 to 5000 requests/hour). Create one at
+# https://github.com/settings/tokens and leave blank to run unauthenticated.
+GITHUB_TOKEN=
+
 # Cloudinary (wallet uploads)
 NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=
 NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET=
