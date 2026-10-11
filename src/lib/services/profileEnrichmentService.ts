@@ -251,6 +251,79 @@ export async function fetchGithubProfile(username: string, deadline: number): Pr
   };
 }
 
+/**
+ * Turn whatever the model returned into a `{ repoName: review }` map. The
+ * response is accepted as a parsed object (JSON mode), a raw string (plain
+ * mode), or an embedded JSON blob inside prose. `name :: review` lines are the
+ * last resort, because a well-behaved model in plain mode emits exactly that.
+ */
+function coerceReviews(res: unknown, candidates: GithubRepo[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const push = (name: unknown, review: unknown) => {
+    if (typeof name !== 'string' || typeof review !== 'string') return;
+    const n = name.trim();
+    const r = review.trim();
+    if (n && r) out[n] = r.slice(0, 500);
+  };
+  const readArray = (value: unknown) => {
+    if (Array.isArray((value as { reviews?: unknown })?.reviews)) {
+      return (value as { reviews: unknown[] }).reviews;
+    }
+    if (Array.isArray((value as { repositories?: unknown })?.repositories)) {
+      return (value as { repositories: unknown[] }).repositories;
+    }
+    return Array.isArray(value) ? (value as unknown[]) : [];
+  };
+
+  if (res && typeof res === 'object') {
+    for (const item of readArray(res)) {
+      if (item && typeof item === 'object') {
+        const it = item as { name?: unknown; review?: unknown; reviewText?: unknown; text?: unknown };
+        push(it.name, it.review ?? it.reviewText ?? it.text);
+      }
+    }
+  }
+  if (Object.keys(out).length > 0) return out;
+
+  const text = typeof res === 'string' ? res : res != null ? JSON.stringify(res) : '';
+  if (!text) return out;
+
+  // 1. Salvage an embedded JSON object/array from surrounding prose.
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first !== -1 && last > first) {
+    try {
+      const parsed = JSON.parse(text.slice(first, last + 1));
+      for (const item of readArray(parsed)) {
+        if (item && typeof item === 'object') {
+          const it = item as { name?: unknown; review?: unknown; reviewText?: unknown; text?: unknown };
+          push(it.name, it.review ?? it.reviewText ?? it.text);
+        }
+      }
+    } catch {
+      // Fall through to line parsing.
+    }
+  }
+  if (Object.keys(out).length > 0) return out;
+
+  // 2. Line format: "<repo name> :: <review>" (also tolerate | - — : separators).
+  for (const line of text.split(/\r?\n/)) {
+    const cleaned = line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
+    if (!cleaned) continue;
+    const lower = cleaned.toLowerCase();
+    for (const r of candidates) {
+      if (out[r.name]) continue;
+      if (!lower.startsWith(r.name.toLowerCase())) continue;
+      const rest = cleaned.slice(r.name.length).replace(/^\s*(?:::|\||[-—:])\s*/, '').trim();
+      if (rest.length >= 8) {
+        push(r.name, rest);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 /** One batched AI call producing a short honest review sentence per repo. */
 export async function reviewRepos(repos: GithubRepo[]): Promise<Record<string, string>> {
   const candidates = repos.filter((r) => !r.isFork && r.name).slice(0, MAX_REVIEW_REPOS);
@@ -264,21 +337,37 @@ export async function reviewRepos(repos: GithubRepo[]): Promise<Record<string, s
     )
     .join('\n');
 
-  const prompt = `You are a senior software engineer reviewing a developer's public GitHub repositories. For EACH repository below, write ONE concise, honest review sentence (max 35 words) describing what the project appears to be and the engineering signal it shows. Do not invent facts that are not implied by the data. Return ONLY valid JSON in this exact shape: {"reviews":[{"name":"<exact repo name>","review":"<one sentence>"}]}.
+  // Reviews are best-effort and time-bounded so the whole enrich route (GitHub
+  // fetch + reviews) stays inside its platform budget. If a slow model drops
+  // them, the factual repo data is still returned.
+  //
+  // Primary call is PLAIN (not json mode): some OpenRouter models ignore
+  // `response_format: json_object`, which made the router throw a format error,
+  // fall back to the (often unconfigured) Groq key, and wipe out every review.
+  // Asking for one `name :: review` line each and parsing tolerantly works
+  // across models and never depends on strict JSON compliance.
+  const linePrompt = `You are a senior software engineer reviewing a developer's public GitHub repositories. For EACH repository below, write ONE concise, honest review sentence (max 35 words) describing what the project appears to be and the engineering signal it shows. Do not invent facts that are not implied by the data. Return ONLY one line per repository, in EXACTLY this format (no JSON, no markdown, no numbering, no extra commentary):
+<exact repo name> :: <one-sentence review>
 
 REPOSITORIES:
 ${list}`;
 
   try {
-    const res = await AIRouterService.requestAI(prompt, true);
-    const arr = Array.isArray(res?.reviews) ? res.reviews : Array.isArray(res) ? res : [];
-    const out: Record<string, string> = {};
-    for (const item of arr) {
-      if (item && typeof item.name === 'string' && typeof item.review === 'string' && item.review.trim()) {
-        out[item.name] = item.review.trim().slice(0, 500);
-      }
-    }
-    return out;
+    const res = await AIRouterService.requestAI(linePrompt, false, { budgetMs: 45_000, requestTimeoutMs: 30_000 });
+    const reviews = coerceReviews(res, candidates);
+    if (Object.keys(reviews).length > 0) return reviews;
+  } catch {
+    // Fall through to the JSON attempt.
+  }
+
+  // Backup: JSON mode, in case the model prefers it. Same tolerant parsing.
+  try {
+    const jsonPrompt = `You are a senior software engineer reviewing a developer's public GitHub repositories. For EACH repository below, write ONE concise, honest review sentence (max 35 words). Do not invent facts that are not implied by the data. Return ONLY valid JSON in this exact shape: {"reviews":[{"name":"<exact repo name>","review":"<one sentence>"}]}.
+
+REPOSITORIES:
+${list}`;
+    const res = await AIRouterService.requestAI(jsonPrompt, true, { budgetMs: 20_000, requestTimeoutMs: 15_000 });
+    return coerceReviews(res, candidates);
   } catch {
     return {};
   }

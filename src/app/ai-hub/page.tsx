@@ -774,12 +774,12 @@ function PerformanceTab() {
     };
   }, [currentUser]);
 
-  const runEnrichment = async () => {
-    if (!currentUser) return;
+  const runEnrichment = async (): Promise<ProfileEnrichment | null> => {
+    if (!currentUser) return null;
     const links = profileLinks.map((l) => ({ url: l.url, kind: l.kind, id: l.id }));
     if (links.length === 0) {
       setEnrichError("Add a GitHub or coding-platform link to your profile first.");
-      return;
+      return null;
     }
     setEnriching(true);
     setEnrichError(null);
@@ -806,12 +806,14 @@ function PerformanceTab() {
           }
         }
       }
+      return res.enrichment;
     } catch (err: any) {
       setEnrichError(
         err instanceof AIServiceUnavailableError
           ? err.message
           : err?.message || "Could not analyse your links. Please try again."
       );
+      return null;
     } finally {
       setEnriching(false);
     }
@@ -822,6 +824,15 @@ function PerformanceTab() {
     setLoading(true);
     setError(null);
     try {
+      // Make the GitHub/coding analysis part of the same run so GitHub facts are
+      // always included, even if the user never pressed "Analyse my links" first.
+      const hasAnalysableLinks = profileLinks.some(
+        (l) => l.kind === "github" || l.kind === "leetcode" || l.kind === "codeforces" || l.kind === "codechef" || l.kind === "hackerrank" || l.url.includes("github.com")
+      );
+      let activeEnrichment = enrichment;
+      if (hasAnalysableLinks && !activeEnrichment) {
+        activeEnrichment = await runEnrichment();
+      }
       const walletPayload = walletDocs.map((d) => ({
         name: d.name,
         category: d.category,
@@ -842,7 +853,7 @@ function PerformanceTab() {
         profile: profile || {},
         walletDocuments: walletPayload,
         savedOpportunities: savedPayload,
-        enrichment,
+        enrichment: activeEnrichment,
       });
       setResult(assessment);
       try {
@@ -961,6 +972,21 @@ function PerformanceTab() {
               Studying your wallet, links, saved opportunities and profile…
             </p>
           </div>
+        </Card>
+      ) : null}
+
+      {/* GitHub analysis failure — shown so the user is never left guessing. */}
+      {enrichment?.githubError ? (
+        <Card className="p-6">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-warning" />
+            <h3 className="font-display text-base text-foreground">GitHub analysis issue</h3>
+          </div>
+          <p className="mt-2 text-sm text-foreground-muted">{enrichment.githubError}</p>
+          <p className="mt-2 text-xs text-foreground-subtle">
+            GitHub allows only 60 requests/hour without a token (shared across everyone), versus 5,000/hour with one.
+            Add <span className="font-mono">GITHUB_TOKEN</span> to your environment to fix rate-limit errors.
+          </p>
         </Card>
       ) : null}
 
