@@ -322,6 +322,7 @@ function RecommendationsTab() {
   const [savedOpps, setSavedOpps] = useState<any[]>([]);
   const [enrichment, setEnrichment] = useState<ProfileEnrichment | null>(null);
   const [matches, setMatches] = useState<SavedOpportunityMatch[]>([]);
+  const [matchRuns, setMatchRuns] = useState<{ createdAt: string; matches: SavedOpportunityMatch[] }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -395,15 +396,25 @@ function RecommendationsTab() {
     loadEnrichment();
   }, [currentUser]);
 
-  // 5. Previously stored matcher results, so the analysis survives a reload.
+  // 5. Previously stored matcher results (every run, newest first), so old
+  // analyses remain viewable after a reload or a re-run.
   useEffect(() => {
     if (!currentUser) return;
     const loadMatches = async () => {
       try {
-        const snap = await getDoc(doc(db, "opportunity_matches", currentUser.uid));
-        if (snap.exists()) {
-          const stored = normalizeSavedOpportunityMatches(snap.data()?.matches);
-          if (stored.length > 0) setMatches(stored);
+        const snap = await getDocs(
+          query(collection(db, "opportunity_matches"), where("uid", "==", currentUser.uid))
+        );
+        const runs: { createdAt: string; matches: SavedOpportunityMatch[] }[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          const stored = normalizeSavedOpportunityMatches(data?.matches);
+          if (stored.length > 0) runs.push({ createdAt: data?.createdAt || "", matches: stored });
+        });
+        runs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        if (runs.length > 0) {
+          setMatchRuns(runs);
+          setMatches(runs[0].matches);
         }
       } catch (err) {
         console.error("Failed to load stored opportunity matches:", err);
@@ -446,11 +457,14 @@ function RecommendationsTab() {
       });
       setMatches(res);
       try {
-        await setDoc(doc(db, "opportunity_matches", currentUser.uid), {
+        const createdAt = new Date().toISOString();
+        await addDoc(collection(db, "opportunity_matches"), {
           uid: currentUser.uid,
-          updatedAt: new Date().toISOString(),
+          createdAt,
+          updatedAt: createdAt,
           matches: res,
         });
+        setMatchRuns((prev) => [{ createdAt, matches: res }, ...prev]);
       } catch (saveErr) {
         console.error("Failed to store opportunity matches:", saveErr);
       }
@@ -647,6 +661,38 @@ function RecommendationsTab() {
               );
             })}
           </div>
+
+          {matchRuns.length > 1 ? (
+            <div className="border-t border-border pt-6">
+              <span className="eyebrow mb-3 block">Previous matcher runs (click to view)</span>
+              <ul className="space-y-2">
+                {matchRuns.map((run, i) => (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      onClick={() => setMatches(run.matches)}
+                      className="flex w-full items-center justify-between gap-4 rounded-md bg-surface-raised px-4 py-3 text-left transition-colors hover:bg-surface"
+                    >
+                      <span className="flex items-center gap-2 text-sm text-foreground">
+                        <Sparkles className="h-3.5 w-3.5 text-secondary" />
+                        {run.matches.length} {run.matches.length === 1 ? "opportunity" : "opportunities"} analysed
+                        {i === 0 ? <Chip tone="success">Latest</Chip> : null}
+                      </span>
+                      <span className="text-xs text-foreground-subtle">
+                        {run.createdAt
+                          ? new Date(run.createdAt).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })
+                          : ""}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </>
       )}
     </div>
@@ -681,6 +727,7 @@ function PerformanceTab() {
   const [enrichment, setEnrichment] = useState<ProfileEnrichment | null>(null);
   const [resumeScore, setResumeScore] = useState<number | null>(null);
   const [result, setResult] = useState<PerformanceAssessment | null>(null);
+  const [assessments, setAssessments] = useState<{ createdAt: string; assessment: PerformanceAssessment }[]>([]);
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
@@ -788,7 +835,10 @@ function PerformanceTab() {
           if (data?.assessment) rows.push({ createdAt: data.createdAt || "", assessment: data.assessment });
         });
         rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-        if (!cancelled && rows.length > 0) setResult(rows[0].assessment);
+        if (!cancelled) {
+          setAssessments(rows);
+          if (rows.length > 0) setResult(rows[0].assessment);
+        }
       } catch (err) {
         console.error("Failed to load latest performance assessment:", err);
       } finally {
@@ -911,14 +961,16 @@ function PerformanceTab() {
           problemsSolved: c.problemsSolved,
         })),
       };
+      const createdAt = new Date().toISOString();
       try {
         await addDoc(collection(db, "performance_analyses"), {
           uid: currentUser.uid,
-          createdAt: new Date().toISOString(),
+          createdAt,
           profileTitle: assessment.profileTitle,
           assessment,
           facts,
         });
+        setAssessments((prev) => [{ createdAt, assessment }, ...prev]);
       } catch (saveErr) {
         console.error("Failed to store performance assessment:", saveErr);
       }
@@ -1360,6 +1412,38 @@ function PerformanceTab() {
           ) : null}
         </div>
       ) : null}
+
+      {assessments.length > 1 ? (
+        <div className="border-t border-border pt-6">
+          <span className="eyebrow mb-3 block">Previous assessments (click to view)</span>
+          <ul className="space-y-2">
+            {assessments.map((a, i) => (
+              <li key={i}>
+                <button
+                  type="button"
+                  onClick={() => setResult(a.assessment)}
+                  className="flex w-full items-center justify-between gap-4 rounded-md bg-surface-raised px-4 py-3 text-left transition-colors hover:bg-surface"
+                >
+                  <span className="flex items-center gap-2 text-sm text-foreground">
+                    <TrendingUp className="h-3.5 w-3.5 text-secondary" />
+                    {a.assessment.profileTitle || "Assessment"}
+                    {i === 0 ? <Chip tone="success">Latest</Chip> : null}
+                  </span>
+                  <span className="text-xs text-foreground-subtle">
+                    {a.createdAt
+                      ? new Date(a.createdAt).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })
+                      : ""}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1391,7 +1475,7 @@ function ResumeTab() {
       const list: any[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
       list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
-      setHistory(list.slice(0, 3));
+      setHistory(list.slice(0, 10));
     } catch (e) {
       console.error(e);
     }
@@ -1913,7 +1997,7 @@ function ResumeTab() {
 
       {history.length > 0 && (
         <div className="border-t border-border pt-8">
-          <span className="eyebrow mb-4">Recent analysis history (Click to view)</span>
+          <span className="eyebrow mb-4">Previous resume scans (click to view)</span>
           <ul className="space-y-2">
             {history.map((h, i) => (
               <li key={i}>
