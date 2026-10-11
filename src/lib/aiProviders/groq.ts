@@ -45,7 +45,7 @@ export class GroqService {
     return Number.isFinite(raw) && raw >= 5_000 ? raw : 120_000;
   }
 
-  public static async request(prompt: string, jsonMode: boolean = false, deadline: number = Date.now() + GroqService.totalBudgetMs): Promise<any> {
+  public static async request(prompt: string, jsonMode: boolean = false, deadline: number = Date.now() + GroqService.totalBudgetMs, requestTimeoutMs?: number): Promise<any> {
     const keys = this.getKeys();
     if (keys.length === 0) {
       throw new Error("No Groq API keys found. Please set GROQ_API_KEYS in your environment.");
@@ -55,6 +55,7 @@ export class GroqService {
     let attempts = 0;
     const maxAttempts = keys.length;
     let lastError = "";
+    const baseTimeout = requestTimeoutMs && requestTimeoutMs >= 1_000 ? requestTimeoutMs : this.timeoutMs;
 
     while (attempts < maxAttempts) {
       if (Date.now() >= deadline) {
@@ -77,7 +78,7 @@ export class GroqService {
           body.response_format = { type: "json_object" };
         }
 
-        const timeoutMs = Math.max(1_000, Math.min(this.timeoutMs, deadline - Date.now()));
+        const timeoutMs = Math.max(1_000, Math.min(baseTimeout, deadline - Date.now()));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -150,7 +151,7 @@ export class GroqService {
           throw err;
         }
         const isTimeout = err?.name === "AbortError";
-        const reason = isTimeout ? `timed out after ${this.timeoutMs}ms` : err?.message || String(err);
+        const reason = isTimeout ? `timed out after ${baseTimeout}ms` : err?.message || String(err);
         console.error(
           `[GroqService] ${isTimeout ? "Timeout" : "Connection/parsing error"} with key index ${this.currentKeyIndex} (${maskedKey}):`,
           reason

@@ -22,8 +22,8 @@ export class GeminiRotatorService {
   }
 
   // Make request with rotation and fallbacks
-  public static async requestGemini(prompt: string, jsonMode: boolean = false, deadline?: number): Promise<any> {
-    return this.send(prompt, jsonMode, undefined, deadline);
+  public static async requestGemini(prompt: string, jsonMode: boolean = false, deadline?: number, requestTimeoutMs?: number): Promise<any> {
+    return this.send(prompt, jsonMode, undefined, deadline, requestTimeoutMs);
   }
 
   // Vision variant: same rotation logic, but the prompt is paired with an image.
@@ -32,9 +32,10 @@ export class GeminiRotatorService {
     imageBase64: string,
     mimeType: string = "image/jpeg",
     jsonMode: boolean = false,
-    deadline?: number
+    deadline?: number,
+    requestTimeoutMs?: number
   ): Promise<any> {
-    return this.send(prompt, jsonMode, { imageBase64, mimeType }, deadline);
+    return this.send(prompt, jsonMode, { imageBase64, mimeType }, deadline, requestTimeoutMs);
   }
 
   /**
@@ -64,7 +65,8 @@ export class GeminiRotatorService {
     prompt: string,
     jsonMode: boolean = false,
     image?: { imageBase64: string; mimeType: string },
-    deadline: number = Date.now() + GeminiRotatorService.totalBudgetMs
+    deadline: number = Date.now() + GeminiRotatorService.totalBudgetMs,
+    requestTimeoutMs?: number
   ): Promise<any> {
     const keys = this.getKeys();
     if (keys.length === 0) {
@@ -75,6 +77,7 @@ export class GeminiRotatorService {
     let attempts = 0;
     const maxAttempts = keys.length;
     let lastError = "";
+    const baseTimeout = requestTimeoutMs && requestTimeoutMs >= 1_000 ? requestTimeoutMs : this.timeoutMs;
 
     while (attempts < maxAttempts) {
       if (Date.now() >= deadline) {
@@ -105,7 +108,7 @@ export class GeminiRotatorService {
           };
         }
 
-        const timeoutMs = Math.max(1_000, Math.min(this.timeoutMs, deadline - Date.now()));
+        const timeoutMs = Math.max(1_000, Math.min(baseTimeout, deadline - Date.now()));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -176,7 +179,7 @@ export class GeminiRotatorService {
           throw err;
         }
         const isTimeout = err?.name === "AbortError";
-        const reason = isTimeout ? `timed out after ${this.timeoutMs}ms` : err?.message || String(err);
+        const reason = isTimeout ? `timed out after ${baseTimeout}ms` : err?.message || String(err);
         console.error(
           `[GeminiRotator] ${isTimeout ? "Timeout" : "Connection/Parsing error"} with key index ${this.currentKeyIndex} (${maskedKey}):`,
           reason

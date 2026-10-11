@@ -192,19 +192,27 @@ Return ONLY a valid JSON object with EXACTLY this structure:
 
 Rules:
 - NO numbers, scores, ratings or percentages anywhere in your output.
-- "traits": 4-7 entries. "skills": 5-12 entries, strongest first.
-- "plusPoints" and "gaps": 3-7 each.
+- "traits": 4-6 entries. "skills": 5-10 entries, strongest first.
+- "plusPoints" and "gaps": 3-6 each.
 - "careerPaths": exactly 3, best fit first.
 - "roleFit": one entry for EVERY saved opportunity listed below (use the exact id and title). If none are saved, return [].
-- "evidenceHighlights": 3-8 entries naming real wallet documents or repos.
-- "nextActions": 4-6 ordered steps.
+- "evidenceHighlights": 3-6 entries naming real wallet documents or repos.
+- "nextActions": 4-5 ordered steps.
 - When the TECH PORTFOLIO shows real repos/platform stats, use them as concrete evidence of skills.
 
 <DATA>
 ${portfolio}
 </DATA>`;
 
-    const response = await AIRouterService.requestAI(prompt, true);
+    const response = await AIRouterService.requestAI(prompt, true, {
+      // This is the heaviest AI call in the app (wallet + GitHub + coding +
+      // saved opportunities in, a full qualitative profile out). Give it a
+      // larger budget than a chat reply, and a long per-attempt timeout so a
+      // slow-but-working model is allowed to finish instead of being aborted
+      // and retried until the budget runs out. Kept under maxDuration (180s).
+      budgetMs: 170_000,
+      requestTimeoutMs: 120_000,
+    });
     const assessment = normalizePerformanceAssessment(response);
 
     if (

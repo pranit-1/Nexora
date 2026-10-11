@@ -8,7 +8,9 @@ import { extractText } from './documentReaderService';
 import PDFDocument from 'pdfkit';
 
 function callAI(prompt: string): Promise<any> {
-  return AIRouterService.requestAI(prompt, true);
+  // ATS audits are document-heavy. Give them the same headroom as the other
+  // heavy routes so a slow-but-working model is not aborted mid-generation.
+  return AIRouterService.requestAI(prompt, true, { budgetMs: 170_000, requestTimeoutMs: 120_000 });
 }
 
 export interface Breakdown {

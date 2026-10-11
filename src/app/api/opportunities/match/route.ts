@@ -186,7 +186,10 @@ Rules:
 ${context}
 </DATA>`;
 
-    const response = await AIRouterService.requestAI(prompt, true);
+    const response = await AIRouterService.requestAI(prompt, true, {
+      budgetMs: 170_000,
+      requestTimeoutMs: 120_000,
+    });
     const matches = normalizeSavedOpportunityMatches(response);
 
     if (matches.length === 0) {

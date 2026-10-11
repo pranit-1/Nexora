@@ -339,8 +339,8 @@ export class OpenRouterService {
     };
   }
 
-  public static async request(prompt: string, jsonMode: boolean = false, deadline?: number): Promise<any> {
-    return this.send(prompt, jsonMode, undefined, deadline);
+  public static async request(prompt: string, jsonMode: boolean = false, deadline?: number, requestTimeoutMs?: number): Promise<any> {
+    return this.send(prompt, jsonMode, undefined, deadline, requestTimeoutMs);
   }
 
   /** Vision variant. Requires OPENROUTER_VISION_MODEL to be set. */
@@ -349,16 +349,18 @@ export class OpenRouterService {
     imageBase64: string,
     mimeType: string = "image/jpeg",
     jsonMode: boolean = false,
-    deadline?: number
+    deadline?: number,
+    requestTimeoutMs?: number
   ): Promise<any> {
-    return this.send(prompt, jsonMode, { imageBase64, mimeType }, deadline);
+    return this.send(prompt, jsonMode, { imageBase64, mimeType }, deadline, requestTimeoutMs);
   }
 
   private static async send(
     prompt: string,
     jsonMode: boolean = false,
     image?: { imageBase64: string; mimeType: string },
-    deadline: number = Date.now() + OpenRouterService.totalBudgetMs
+    deadline: number = Date.now() + OpenRouterService.totalBudgetMs,
+    requestTimeoutMs?: number
   ): Promise<any> {
     const keys = this.getAllKeys();
     if (keys.length === 0) {
@@ -375,6 +377,11 @@ export class OpenRouterService {
     // transiently without being exhausted.
     const maxAttempts = keys.length * 2;
     let lastError = "";
+    // A caller may grant a slow-but-working model more headroom per attempt.
+    // Without this, a model that legitimately needs ~60s is aborted at the 45s
+    // default, the key is ejected, and the retry repeats the same slow model
+    // until the whole-time budget is gone.
+    const baseTimeout = requestTimeoutMs && requestTimeoutMs >= 1_000 ? requestTimeoutMs : this.timeoutMs;
 
     while (attempts < maxAttempts) {
       if (Date.now() >= deadline) {
@@ -461,7 +468,7 @@ export class OpenRouterService {
           headers["X-Title"] = process.env.NEXT_PUBLIC_APP_NAME;
         }
 
-        const timeoutMs = Math.max(1_000, Math.min(this.timeoutMs, deadline - Date.now()));
+        const timeoutMs = Math.max(1_000, Math.min(baseTimeout, deadline - Date.now()));
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -576,7 +583,7 @@ export class OpenRouterService {
         }
         const isTimeout = err?.name === "AbortError";
         lastError = isTimeout
-          ? `timed out after ${this.timeoutMs}ms`
+          ? `timed out after ${baseTimeout}ms`
           : err?.message || String(err);
         console.error(
           `[OpenRouterService] ${isTimeout ? "Timeout" : "Connection error"} with key #${keyIndex + 1}:`,
