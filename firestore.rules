@@ -358,11 +358,22 @@ service cloud.firestore {
       allow create: if isOwner(request.resource.data.uid)
         && isIsoDate(request.resource.data.createdAt)
         && subsetOfKeys(request.resource.data, [
-             "uid", "createdAt", "overallScore", "profileTitle", "assessment"
+             "uid", "createdAt", "overallScore", "profileTitle", "assessment", "facts"
            ]);
       allow update: if isOwner(resource.data.uid)
         && request.resource.data.uid == resource.data.uid;
       allow delete: if isOwner(resource.data.uid);
+    }
+
+    // Saved-opportunity matcher results (plus points / gaps per saved item),
+    // one doc per uid, written by the client after POST /api/opportunities/match.
+    match /opportunity_matches/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && isIsoDate(request.resource.data.updatedAt)
+        && subsetOfKeys(request.resource.data, ["uid", "updatedAt", "matches"]);
+      allow delete: if isOwner(uid);
     }
 
     // Enriched profile links (GitHub repos + coding-platform stats), one doc per

@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import type { WalletDocument, ProfileLink } from "@/lib/types";
 import type { PerformanceAssessment, SavedOpportunityMatch } from "@/lib/performanceTypes";
+import { normalizeSavedOpportunityMatches } from "@/lib/performanceTypes";
 import type { ProfileEnrichment } from "@/lib/enrichmentTypes";
 import { normalizeProfileEnrichment } from "@/lib/enrichmentTypes";
 import { subscribeProfileLinks } from "@/lib/profileLinksClient";
@@ -394,6 +395,23 @@ function RecommendationsTab() {
     loadEnrichment();
   }, [currentUser]);
 
+  // 5. Previously stored matcher results, so the analysis survives a reload.
+  useEffect(() => {
+    if (!currentUser) return;
+    const loadMatches = async () => {
+      try {
+        const snap = await getDoc(doc(db, "opportunity_matches", currentUser.uid));
+        if (snap.exists()) {
+          const stored = normalizeSavedOpportunityMatches(snap.data()?.matches);
+          if (stored.length > 0) setMatches(stored);
+        }
+      } catch (err) {
+        console.error("Failed to load stored opportunity matches:", err);
+      }
+    };
+    loadMatches();
+  }, [currentUser]);
+
   const hasGithub = profileLinks.some((l) => l.kind === "github" || l.url.includes("github.com"));
 
   const matchFor = (oppId: string | undefined) =>
@@ -427,6 +445,15 @@ function RecommendationsTab() {
         enrichment,
       });
       setMatches(res);
+      try {
+        await setDoc(doc(db, "opportunity_matches", currentUser.uid), {
+          uid: currentUser.uid,
+          updatedAt: new Date().toISOString(),
+          matches: res,
+        });
+      } catch (saveErr) {
+        console.error("Failed to store opportunity matches:", saveErr);
+      }
     } catch (err: any) {
       setError(
         err instanceof AIServiceUnavailableError
@@ -856,12 +883,41 @@ function PerformanceTab() {
         enrichment: activeEnrichment,
       });
       setResult(assessment);
+      // Store the full picture: the AI assessment plus a factual snapshot of
+      // every extracted data point, so nothing we derived is ever lost.
+      const ghSnapshot = activeEnrichment?.github || null;
+      const codingSnapshot = activeEnrichment?.coding || [];
+      const facts = {
+        walletDocCount: walletDocs.length,
+        savedCount: savedOpps.length,
+        certificates: walletDocs.filter((d) => d.category === "Certificates").length,
+        awards: walletDocs.filter((d) => d.category === "Awards").length,
+        hackathons: walletDocs.filter((d) =>
+          `${d.name} ${d.category} ${(d as any).extractedText || ""}`.toLowerCase().includes("hackathon")
+        ).length,
+        resumeScore,
+        github: ghSnapshot
+          ? {
+              username: ghSnapshot.username,
+              publicRepos: ghSnapshot.publicRepos,
+              followers: ghSnapshot.followers,
+              totalStars: ghSnapshot.totalStars,
+              totalCommits: ghSnapshot.totalCommits,
+            }
+          : null,
+        coding: codingSnapshot.map((c) => ({
+          platform: c.platform,
+          rating: c.rating,
+          problemsSolved: c.problemsSolved,
+        })),
+      };
       try {
         await addDoc(collection(db, "performance_analyses"), {
           uid: currentUser.uid,
           createdAt: new Date().toISOString(),
           profileTitle: assessment.profileTitle,
           assessment,
+          facts,
         });
       } catch (saveErr) {
         console.error("Failed to store performance assessment:", saveErr);
