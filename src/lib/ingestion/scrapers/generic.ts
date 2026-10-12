@@ -17,6 +17,32 @@ interface PageConfig {
   linkSelector: string;
 }
 
+/**
+ * True when a card's resolved link points back at the listing/category page
+ * itself rather than a distinct per-item page.
+ *
+ * Loose card selectors (e.g. `a[href*='/hackathons/']`) match a listing page's
+ * own navigation and hero links, and cards with no inner anchor used to fall
+ * back to `page.url`. Emitting those produced many documents all sharing the
+ * same category URL (e.g. 21 docs pointing at devfolio.co/hackathons), which
+ * then collided in the capped feed. Such cards are skipped.
+ */
+export function isListingPageLink(link: string, pageUrl: string): boolean {
+  const norm = (u: string) => u.trim().toLowerCase().replace(/\/+$/, "");
+  const a = norm(link);
+  const b = norm(pageUrl);
+  if (!a) return true;
+  if (a === b) return true;
+  try {
+    const la = new URL(a);
+    const lb = new URL(b);
+    // Same origin and identical path (ignoring trailing slash) => the listing page.
+    return la.host === lb.host && norm(la.pathname) === norm(lb.pathname);
+  } catch {
+    return a === b;
+  }
+}
+
 const GENERIC_PAGES: PageConfig[] = [
   {
     name: "MLH Events",
@@ -118,6 +144,9 @@ export async function scrapeGenericPages(): Promise<ScrapedOpportunity[]> {
         seen.add(key);
         const href = $el.attr("href") || $el.find(page.linkSelector).first().attr("href") || "";
         const link = href ? absoluteUrl(href, page.url) : page.url;
+        // Skip cards whose only resolvable link is the listing/category page
+        // itself (no distinct per-item URL) — see isListingPageLink.
+        if (isListingPageLink(link, page.url)) return;
         const deadlineRaw = cleanText($el.find("[class*='deadline'], [class*='date'], time").first().text());
 
         out.push({

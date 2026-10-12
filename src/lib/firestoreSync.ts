@@ -20,10 +20,53 @@ function adminDb() {
 }
 
 /**
+ * Parses a deadline string into a concrete Date pinned to the END of that day
+ * (23:59:59.999) so "the deadline is today" is never treated as already passed.
+ * Returns null when the string holds no recognisable date (caller treats that
+ * as "never expires").
+ *
+ * Handles, in priority order:
+ * - ISO / year-first: 2026-09-30, 2026/10/15, 2026.10.15, 2026-10-15T00:00:00Z
+ * - Day-first (Indian dd-mm-yyyy): 31-12-2025, 05/10/2026, 1.10.2026
+ * - Human-readable: "Oct 15, 2026", "15 October 2026"
+ *
+ * Day-first is matched explicitly BEFORE `new Date()` because JS parses
+ * "05/10/2026" as May 10 (US mm/dd) and rejects "31-12-2025" entirely; both
+ * are wrong for this product's audience.
+ */
+function parseDeadlineDate(deadline: string): Date | null {
+  // Year-first numeric (ISO-like): 4-digit year then month then day.
+  const iso = deadline.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (iso) {
+    const dt = new Date(+iso[1], +iso[2] - 1, +iso[3], 23, 59, 59, 999);
+    if (!isNaN(dt.getTime())) return dt;
+  }
+
+  // Day-first numeric (dd-mm-yyyy / dd/mm/yyyy / dd.mm.yyyy).
+  const dmy = deadline.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+  if (dmy) {
+    const day = +dmy[1];
+    const month = +dmy[2];
+    const year = +dmy[3];
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const dt = new Date(year, month - 1, day, 23, 59, 59, 999);
+      if (!isNaN(dt.getTime())) return dt;
+    }
+  }
+
+  // Human-readable and everything else JS can understand.
+  const parsed = new Date(deadline);
+  if (!isNaN(parsed.getTime())) return parsed;
+
+  return null;
+}
+
+/**
  * Checks whether a given deadline string has already passed.
  * Supports:
  * - Rolling / TBD / Ongoing strings (never expires)
  * - ISO dates (2026-09-30, 2026-10-15T00:00:00Z)
+ * - Day-first dates (31-12-2025, 05/10/2026)
  * - Human-readable dates (Oct 15, 2026 / 15 October 2026)
  */
 export function isExpired(deadline: string | null | undefined): boolean {
@@ -42,26 +85,9 @@ export function isExpired(deadline: string | null | undefined): boolean {
     return false;
   }
 
-  // Check for standard date formats
-  const parsed = new Date(deadline);
-  if (isNaN(parsed.getTime())) {
-    const match = deadline.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-    if (match) {
-      const year = parseInt(match[1], 10);
-      const month = parseInt(match[2], 10) - 1;
-      const day = parseInt(match[3], 10);
-      const dt = new Date(year, month, day, 23, 59, 59, 999);
-      if (!isNaN(dt.getTime())) {
-        return dt.getTime() < Date.now();
-      }
-    }
-    return false;
-  }
-
-  // End of deadline day (inclusive)
-  const endOfDay = new Date(parsed);
-  endOfDay.setHours(23, 59, 59, 999);
-  return endOfDay.getTime() < Date.now();
+  const dt = parseDeadlineDate(deadline);
+  if (!dt) return false; // no recognisable date -> never expires
+  return dt.getTime() < Date.now();
 }
 
 /**
@@ -74,6 +100,7 @@ export function generateOpportunityDocId(opp: {
   applyLink?: string;
   sourceUrl?: string;
   orgName?: string;
+  organization?: string;
 }): string {
   const url = (opp.applyLink || opp.sourceUrl || "").trim().toLowerCase();
   if (url) {
@@ -96,9 +123,12 @@ export function generateOpportunityDocId(opp: {
     }
   }
 
-  const cleanOrg = (opp.orgName || "org")
-    .trim()
-    .toLowerCase()
+  // URL slug unusable (too short / no link). Fall back to a title+org id. The
+  // digest is computed from the raw title+org pair so two listings by the same
+  // org with a shared long title prefix can never collide; omit the org segment
+  // entirely when absent instead of emitting a literal "org".
+  const rawOrg = (opp.orgName || opp.organization || "").trim().toLowerCase();
+  const cleanOrg = rawOrg
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 25);
@@ -109,11 +139,8 @@ export function generateOpportunityDocId(opp: {
     .replace(/^-+|-+$/g, "")
     .slice(0, 50);
 
-  // Same prefix-collision problem in the title fallback: two listings by the
-  // same org with a long shared title prefix collided. Digest the raw
-  // title+org pair so the id stays unique.
-  const digest = shortHash(`${cleanOrg}|${(opp.title || "").trim().toLowerCase()}`);
-  return `opp-${cleanOrg}-${cleanTitle}-${digest}`;
+  const digest = shortHash(`${rawOrg}|${(opp.title || "").trim().toLowerCase()}`);
+  return cleanOrg ? `opp-${cleanOrg}-${cleanTitle}-${digest}` : `opp-${cleanTitle}-${digest}`;
 }
 
 /**
@@ -138,7 +165,7 @@ function shortHash(input: string): string {
  * Infers income limit from opportunity description/eligibility.
  * Returns INR value (e.g., 800000 for 8 LPA) or undefined if not detectable.
  */
-function inferIncomeLimit(opp: any): number | undefined {
+export function inferIncomeLimit(opp: any): number | undefined {
   const text = `${opp.description || ""} ${opp.eligibility || ""} ${opp.title || ""}`.toLowerCase();
   // Match patterns like "8 LPA", "8 lakh", "800000", "12 lpa", "income below 8 lakh"
   const patterns = [
@@ -170,7 +197,7 @@ function inferIncomeLimit(opp: any): number | undefined {
  * Infers degree level from eligibility/description.
  * Returns string like "bachelor", "master", "phd", "diploma", etc.
  */
-function inferDegreeLevel(opp: any): string | undefined {
+export function inferDegreeLevel(opp: any): string | undefined {
   const text = `${opp.eligibility || ""} ${opp.description || ""} ${opp.title || ""}`.toLowerCase();
   const degreeMap: [RegExp, string][] = [
     [/\b(phd|ph\.d|doctorate|doctoral)\b/, "phd"],
@@ -209,16 +236,21 @@ export interface SyncResult {
 const HUMAN_DECIDED_STATUSES = new Set(["pending", "rejected", "approved"]);
 
 /**
- * Reads the current `status` of the given document IDs.
+ * Reads the current `status` and `createdAt` of the given document IDs.
  *
  * Needed because `batch.set({merge:true})` writes `status` unconditionally, so
  * every cron re-sync used to reset an admin's `pending`/`rejected` decision back
  * to `approved` and quietly republish listings a human had pulled.
  *
+ * `createdAt` is fetched for the same reason: the batch write spreads the
+ * freshly built payload (which has no `createdAt`) and only falls back to
+ * `now`, so without carrying the original value forward every re-sync used to
+ * overwrite the document's true creation timestamp.
+ *
  * Firestore caps an `in` query at 30 values, so callers chunk at 30.
  */
-async function loadExistingStatuses(ids: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+async function loadExistingStatuses(ids: string[]): Promise<Map<string, { status?: string; createdAt?: string }>> {
+  const out = new Map<string, { status?: string; createdAt?: string }>();
   const CHUNK = 30;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
@@ -226,11 +258,15 @@ async function loadExistingStatuses(ids: string[]): Promise<Map<string, string>>
     const snap = await adminDb()
       .collection("org_opportunities")
       .where(FieldPath.documentId(), "in", chunk)
-      .select("status")
+      .select("status", "createdAt")
       .get();
     snap.forEach((d) => {
       const s = d.get("status");
-      if (typeof s === "string") out.set(d.id, s);
+      const c = d.get("createdAt");
+      out.set(d.id, {
+        status: typeof s === "string" ? s : undefined,
+        createdAt: typeof c === "string" ? c : undefined,
+      });
     });
   }
   return out;
@@ -299,7 +335,7 @@ export async function syncOpportunitiesToFirestore(
   }
 
   // Look up what already exists so we never clobber a human moderation decision.
-  let existing = new Map<string, string>();
+  let existing = new Map<string, { status?: string; createdAt?: string }>();
   try {
     existing = await loadExistingStatuses(validOpps.map((o) => o.id));
   } catch (err: any) {
@@ -322,7 +358,12 @@ export async function syncOpportunitiesToFirestore(
       created++;
       continue;
     }
-    if (prior !== item.data.status && HUMAN_DECIDED_STATUSES.has(prior)) {
+    // Preserve the original creation timestamp across re-syncs (both the batch
+    // write and the individual-doc fallback read it from item.data).
+    if (prior.createdAt) {
+      item.data.createdAt = prior.createdAt;
+    }
+    if (prior.status !== item.data.status && prior.status && HUMAN_DECIDED_STATUSES.has(prior.status)) {
       delete item.data.status;
       preservedAdminStatus++;
     }
@@ -384,16 +425,19 @@ export async function syncOpportunitiesToFirestore(
 
 /**
  * Scans Firestore "org_opportunities" collection and deletes any
- * opportunities whose deadline has expired.
+ * opportunities whose deadline has expired — across every status.
+ *
+ * The old query filtered to `status == "approved"` only, which left expired
+ * `pending`/`rejected` listings (the moderation backlog) in the collection
+ * forever. An expired deadline is dead regardless of moderation state, so
+ * pruning now covers all statuses.
  */
 export async function pruneExpiredFromFirestore(): Promise<{ prunedCount: number; errors: string[] }> {
   const errors: string[] = [];
   let prunedCount = 0;
 
   try {
-    const oppQuery = adminDb()
-      .collection("org_opportunities")
-      .where("status", "==", "approved");
+    const oppQuery = adminDb().collection("org_opportunities");
     const snap = await oppQuery.get();
 
     const expiredDocs: Array<{ id: string; urls: string[] }> = [];
@@ -461,17 +505,10 @@ export async function getActiveOpportunitiesFromFirestore(): Promise<DocumentDat
 /** Parses a deadline into a comparable timestamp; Infinity when unparseable. */
 function deadlineTs(deadline: unknown): number {
   if (typeof deadline !== "string" || !deadline.trim()) return Number.POSITIVE_INFINITY;
-  const parsed = new Date(deadline);
-  if (isNaN(parsed.getTime())) {
-    const match = deadline.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-    if (match) {
-      const dt = new Date(+match[1], +match[2] - 1, +match[3], 23, 59, 59, 999);
-      if (!isNaN(dt.getTime())) return dt.getTime();
-    }
-    return Number.POSITIVE_INFINITY;
-  }
-  parsed.setHours(23, 59, 59, 999);
-  return parsed.getTime();
+  // Reuse the same parser as isExpired so day-first (dd-mm-yyyy) deadlines rank
+  // correctly under the caps instead of all collapsing to Infinity.
+  const dt = parseDeadlineDate(deadline);
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
 }
 
 /**

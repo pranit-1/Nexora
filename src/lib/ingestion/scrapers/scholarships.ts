@@ -3,10 +3,10 @@ import { fetchText, loadCheerio, cleanText, absoluteUrl, stripHtml, firstLineOf 
 import type { ScrapedOpportunity } from "./types";
 
 // RSS-based scholarship feeds (trusted — autoApprove logic handled by caller)
+// Dead source removed: Scholarships.com RSS (timeout).
 const RSS_FEEDS = [
   { name: "Grants.gov", url: "https://grants.gov/rss/GG_NewOppByCategory.xml" },
   { name: "ioscholarships", url: "https://ioscholarships.com/feed" },
-  { name: "Scholarships.com", url: "https://www.scholarships.com/rss" },
 ];
 
 function decodeEntities(str: string): string {

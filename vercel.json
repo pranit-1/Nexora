@@ -2,15 +2,15 @@
   "crons": [
     {
       "path": "/api/ingest",
-      "schedule": "0 3 */3 * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/scrape",
-      "schedule": "0 4 */3 * *"
+      "schedule": "0 4 * * *"
     },
     {
       "path": "/api/summarize-all",
-      "schedule": "0 5 */3 * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }

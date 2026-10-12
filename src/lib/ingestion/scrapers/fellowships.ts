@@ -3,6 +3,7 @@
 // is returned and filtered client-side per user choice.
 
 import { fetchText, loadCheerio, cleanText, absoluteUrl, parseDeadline, stripHtml, firstLineOf } from "./utils";
+import { isListingPageLink } from "./generic";
 import type { ScrapedOpportunity } from "./types";
 
 function decodeEntities(str: string): string {
@@ -24,18 +25,16 @@ function parseRss(xml: string) {
 const RSS_FEEDS = [
   { name: "ProFellow RSS", url: "https://www.profellow.com/feed/" },
   { name: "OpportunityDesk Fellowships", url: "https://opportunitydesk.org/category/fellowships/feed/" },
-  { name: "Youth Opportunities Fellowships", url: "https://www.youthop.com/category/fellowships/feed" },
 ];
 
+// Dead sources removed (403/404): YouthOp Fellowships (RSS + HTML),
+// ProFellow HTML page (403), AAUW (403), SWE (403). ProFellow's RSS feed
+// still works, so the listings are kept via the feed above.
 const HTML_PAGES = [
-  { name: "ProFellow", url: "https://www.profellow.com/fellowships/" },
   { name: "OpportunityDesk Fellowships", url: "https://opportunitydesk.org/category/fellowships/" },
-  { name: "YouthOp Fellowships", url: "https://www.youthop.com/category/fellowships" },
   { name: "DAAD Research Fellowships", url: "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database/?status=3&origin=4&subjectGrps=&daad=&q=&page=1&detail=&intention=&degree=&q=&fos=" },
   { name: "Mitacs Globalink", url: "https://www.mitacs.ca/en/programs/globalink" },
   { name: "Outreachy", url: "https://www.outreachy.org/apply/" },
-  { name: "AAUW Fellowships", url: "https://www.aauw.org/resources/programs/fellowships-grants/" },
-  { name: "SWE Scholarships", url: "https://swe.org/scholarships/" },
 ];
 
 export async function scrapeFellowships(): Promise<ScrapedOpportunity[]> {
@@ -48,6 +47,8 @@ export async function scrapeFellowships(): Promise<ScrapedOpportunity[]> {
       const items = parseRss(xml).slice(0, 30);
       for (const item of items) {
         if (!item.title || item.title.length < 8) continue;
+        const link = item.link && !isListingPageLink(item.link, feed.url) ? item.link : "";
+        if (!link) continue;
         out.push({
           title: item.title.slice(0, 140),
           orgName: feed.name,
@@ -57,9 +58,9 @@ export async function scrapeFellowships(): Promise<ScrapedOpportunity[]> {
           country: "Global",
           category: "Fellowships",
           field: "General",
-          applyLink: item.link || feed.url,
+          applyLink: link,
           requiredDocuments: ["Resume", "Research Proposal"],
-          sourceUrl: item.link || feed.url,
+          sourceUrl: link,
           sourceType: "trusted-feed",
           autoApprove: false,
           scraperName: feed.name,
@@ -121,6 +122,7 @@ export async function scrapeFellowships(): Promise<ScrapedOpportunity[]> {
         seen.add(key);
         const href = $el.attr("href") || $el.find("a").first().attr("href") || "";
         const link = href ? absoluteUrl(href, page.url) : page.url;
+        if (isListingPageLink(link, page.url)) return;
         const deadlineRaw = cleanText($el.find("[class*='deadline'], [class*='date'], time").first().text());
         out.push({
           title: title.slice(0, 140),

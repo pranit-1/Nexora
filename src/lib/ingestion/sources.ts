@@ -144,9 +144,9 @@ export async function fetchTrustedSources(): Promise<RawListing[]> {
 
 const SCRAPED_PAGES = [
   // ── Global Student Tech Communities & Orgs ──
+  // Dead source removed: IEEE Students (403).
   { name: "Major League Hacking (MLH)", url: "https://mlh.io/seasons/2026/events" },
   { name: "Google Summer of Code", url: "https://summerofcode.withgoogle.com/" },
-  { name: "IEEE Students", url: "https://students.ieee.org/" },
   { name: "ACM Student Chapter", url: "https://www.acm.org/chapters/students" },
 
   // ── Hackathons & Competitions ──
@@ -156,9 +156,8 @@ const SCRAPED_PAGES = [
   { name: "TechGig", url: "https://www.techgig.com/hackathon" },
 
   // ── Conference Discovery ──
-  { name: "10times", url: "https://10times.com/technology" },
+  // Dead sources removed: 10times, All Conference Alert (403/timeouts).
   { name: "WikiCFP", url: "http://www.wikicfp.com/cfp/" },
-  { name: "All Conference Alert", url: "https://www.allconferencealert.com/" },
 
   // ── International Student Fellowships & Research ──
   { name: "DAAD Scholarships", url: "https://www.daad.de/en/study-and-research-in-germany/scholarships/" },

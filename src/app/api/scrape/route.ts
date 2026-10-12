@@ -72,14 +72,17 @@ export async function GET(request: Request) {
     );
   }
 
-  const limited = enforceRateLimit(request, LIMITS.scrapePreview);
-  if (!limited.ok) return limited.response;
-
   // `requireCron` fails closed in production when CRON_SECRET is missing/blank.
   // The default branch (no preview flag) can also trigger the scrapers, so it is gated too.
   if (wantsWrite || !preview) {
     const auth = await requireCron(request);
     if (!auth.ok) return auth.response;
+  } else {
+    // Rate-limit ONLY the public read-only preview path. The cron/write paths
+    // are authenticated above; applying the shared preview bucket to them let
+    // public preview traffic exhaust the limit and 429 the cron itself.
+    const limited = enforceRateLimit(request, LIMITS.scrapePreview);
+    if (!limited.ok) return limited.response;
   }
 
   try {

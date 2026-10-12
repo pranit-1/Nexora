@@ -18,7 +18,7 @@ export interface NormalizedOpportunity {
   requiredDocuments: string[];
 }
 
-const VALID_CATEGORIES = [
+export const VALID_CATEGORIES = [
   "Scholarships",
   "Fellowships",
   "Internships",
