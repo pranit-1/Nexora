@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runIngestion } from "@/lib/ingestion/run";
 import { requireCron } from "@/lib/serverAuth";
+import { enforceCategoryCaps } from "@/lib/firestoreSync";
 
 // Default Vercel function timeout is 300s (all plans, as of 2026) — plenty
 // for this pipeline given the low per-feed item caps in sources.ts.
@@ -17,6 +18,21 @@ export async function GET(request: Request) {
 
   try {
     const summary = await runIngestion();
+
+    // This pipeline writes into the same org_opportunities collection as
+    // /api/scrape, so the 20-per-category cap has to run here too — otherwise
+    // a cron that only hits /api/ingest could grow the catalogue without bound
+    // until the next scrape day. Expired items are pruned inside runIngestion.
+    let caps: Awaited<ReturnType<typeof enforceCategoryCaps>> | { deletedCount: number; perCategory: Record<string, number> } = {
+      deletedCount: 0,
+      perCategory: {},
+    };
+    try {
+      caps = await enforceCategoryCaps(20);
+    } catch (capErr: any) {
+      console.error("[Ingestion] Category cap failed:", capErr?.message);
+    }
+
     // A run with source-level errors is still a real run — returning 500 would
     // make Vercel Cron retry a pipeline that is only partially broken, adding
     // load and duplicating work. Instead the response says plainly that it was
@@ -30,6 +46,7 @@ export async function GET(request: Request) {
           ? `Run ${summary.runId} completed with ${summary.errors.length} issue(s). See summary.errors and summary.perSource.`
           : `Run ${summary.runId} completed cleanly.`,
         summary,
+        categoryCaps: { deletedCount: caps.deletedCount, perCategory: caps.perCategory },
       },
       { status: 200 }
     );

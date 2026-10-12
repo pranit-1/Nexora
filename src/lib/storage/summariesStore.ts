@@ -171,6 +171,43 @@ export async function getSummaryCount(): Promise<number> {
   return (await ensureLoaded()).order.length;
 }
 
+/**
+ * Deletes the cached summary for a url (memo + Firestore).
+ *
+ * Called when the backing opportunity is pruned (expired or category-cap
+ * overflow): a summary whose opportunity no longer exists is dead weight, and
+ * the 500-entry cache ceiling should be spent on live listings instead.
+ * Best-effort — a failed delete only leaves a stale entry, never breaks the
+ * prune flow.
+ */
+export function deleteSummary(url: string): Promise<void> {
+  const normalizedUrl = normalizeSummaryKey(url);
+
+  writeQueue = writeQueue.then(async () => {
+    if (!hasAdminCredentials()) return;
+    const state = await ensureLoaded();
+
+    const previous = state.byKey.get(normalizedUrl);
+    if (!previous) return;
+    const at = state.order.indexOf(previous);
+    if (at !== -1) state.order.splice(at, 1);
+    state.byKey.delete(normalizedUrl);
+
+    try {
+      await getAdminDb().collection(COLLECTION).doc(docIdFor(normalizedUrl)).delete();
+    } catch (err) {
+      console.warn("[summaries-store] Firestore delete failed:", (err as Error)?.message);
+    }
+  });
+
+  return writeQueue;
+}
+
+/** Best-effort delete of many summaries; resolves once all deletes settle. */
+export async function deleteSummaries(urls: string[]): Promise<void> {
+  await Promise.all(urls.filter(Boolean).map((url) => deleteSummary(url)));
+}
+
 /** Resolves once every queued write has been persisted. */
 export function flushSummaryWrites(): Promise<void> {
   return writeQueue;

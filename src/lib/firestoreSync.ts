@@ -2,6 +2,7 @@ import { getAdminDb } from "@/lib/firebaseAdmin";
 import { FieldPath } from "firebase-admin/firestore";
 import type { DocumentData } from "firebase-admin/firestore";
 import type { ScrapedOpportunity } from "@/lib/ingestion/scrapers/types";
+import { deleteSummaries } from "@/lib/storage/summariesStore";
 
 /**
  * This module is SERVER-ONLY. It is imported by `instrumentation.ts`, the
@@ -395,28 +396,39 @@ export async function pruneExpiredFromFirestore(): Promise<{ prunedCount: number
       .where("status", "==", "approved");
     const snap = await oppQuery.get();
 
-    const expiredDocIds: string[] = [];
+    const expiredDocs: Array<{ id: string; urls: string[] }> = [];
     snap.forEach((d) => {
       const data = d.data();
       if (isExpired(data.deadline)) {
-        expiredDocIds.push(d.id);
+        const urls = [data.applyLink, data.sourceUrl].filter(
+          (u): u is string => typeof u === "string" && u.trim().length > 0
+        );
+        expiredDocs.push({ id: d.id, urls });
       }
     });
 
-    if (expiredDocIds.length === 0) {
+    if (expiredDocs.length === 0) {
       return { prunedCount: 0, errors: [] };
     }
 
     // Delete in batches of 250
     const CHUNK_SIZE = 250;
-    for (let i = 0; i < expiredDocIds.length; i += CHUNK_SIZE) {
-      const chunk = expiredDocIds.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < expiredDocs.length; i += CHUNK_SIZE) {
+      const chunk = expiredDocs.slice(i, i + CHUNK_SIZE);
       const batch = adminDb().batch();
-      for (const docId of chunk) {
-        batch.delete(adminDb().collection("org_opportunities").doc(docId));
+      for (const doc of chunk) {
+        batch.delete(adminDb().collection("org_opportunities").doc(doc.id));
       }
       await batch.commit();
       prunedCount += chunk.length;
+    }
+
+    // An expired opportunity's AI summary is dead weight: delete it too so the
+    // 500-entry summary cache is spent on live listings only. Best-effort.
+    try {
+      await deleteSummaries(expiredDocs.flatMap((d) => d.urls));
+    } catch (sumErr: any) {
+      errors.push(`Summary cleanup failed: ${sumErr.message}`);
     }
 
     console.log(`[firestoreSync] Pruned ${prunedCount} expired opportunities from Firestore.`);
@@ -444,4 +456,96 @@ export async function getActiveOpportunitiesFromFirestore(): Promise<DocumentDat
     }
   });
   return out;
+}
+
+/** Parses a deadline into a comparable timestamp; Infinity when unparseable. */
+function deadlineTs(deadline: unknown): number {
+  if (typeof deadline !== "string" || !deadline.trim()) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(deadline);
+  if (isNaN(parsed.getTime())) {
+    const match = deadline.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (match) {
+      const dt = new Date(+match[1], +match[2] - 1, +match[3], 23, 59, 59, 999);
+      if (!isNaN(dt.getTime())) return dt.getTime();
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+  parsed.setHours(23, 59, 59, 999);
+  return parsed.getTime();
+}
+
+/**
+ * Keeps at most `maxPerCategory` live (approved, non-expired) opportunities per
+ * category and deletes the overflow along with its cached AI summaries.
+ *
+ * Ranking: the nearest upcoming deadline wins the limited slots — those are the
+ * listings students can still act on. Unparseable/"Rolling" deadlines sort
+ * last (they never expire, but a real dated listing is more useful in a capped
+ * feed); ties break on the freshest scrape (`updatedAt` desc).
+ *
+ * Called after every real scrape so the catalogue cannot grow without bound.
+ */
+export async function enforceCategoryCaps(
+  maxPerCategory = 20
+): Promise<{ deletedCount: number; perCategory: Record<string, number>; errors: string[] }> {
+  const errors: string[] = [];
+  const perCategory: Record<string, number> = {};
+  let deletedCount = 0;
+
+  try {
+    const snap = await adminDb()
+      .collection("org_opportunities")
+      .where("status", "==", "approved")
+      .get();
+
+    const byCategory = new Map<string, Array<{ id: string; urls: string[]; ts: number; updated: number }>>();
+    snap.forEach((d) => {
+      const data = d.data();
+      if (isExpired(data.deadline)) return; // expired is prune's job, not the cap's
+      const category = typeof data.category === "string" && data.category.trim() ? data.category : "Other";
+      if (!byCategory.has(category)) byCategory.set(category, []);
+      const urls = [data.applyLink, data.sourceUrl].filter(
+        (u): u is string => typeof u === "string" && u.trim().length > 0
+      );
+      const updated = typeof data.updatedAt === "string" ? Date.parse(data.updatedAt) || 0 : 0;
+      byCategory.get(category)!.push({ id: d.id, urls, ts: deadlineTs(data.deadline), updated });
+    });
+
+    const overflow: Array<{ id: string; urls: string[] }> = [];
+    for (const [category, items] of byCategory) {
+      perCategory[category] = items.length;
+      if (items.length <= maxPerCategory) continue;
+      items.sort((a, b) => a.ts - b.ts || b.updated - a.updated);
+      const dropped = items.slice(maxPerCategory);
+      for (const item of dropped) overflow.push({ id: item.id, urls: item.urls });
+      perCategory[category] = maxPerCategory;
+    }
+
+    if (overflow.length === 0) return { deletedCount: 0, perCategory, errors };
+
+    const CHUNK_SIZE = 250;
+    for (let i = 0; i < overflow.length; i += CHUNK_SIZE) {
+      const chunk = overflow.slice(i, i + CHUNK_SIZE);
+      const batch = adminDb().batch();
+      for (const doc of chunk) {
+        batch.delete(adminDb().collection("org_opportunities").doc(doc.id));
+      }
+      await batch.commit();
+      deletedCount += chunk.length;
+    }
+
+    // Same rule as expiry pruning: a deleted opportunity's summary goes too.
+    try {
+      await deleteSummaries(overflow.flatMap((d) => d.urls));
+    } catch (sumErr: any) {
+      errors.push(`Summary cleanup failed: ${sumErr.message}`);
+    }
+
+    console.log(`[firestoreSync] Category caps (${maxPerCategory}/cat): removed ${deletedCount} overflow opportunities.`);
+  } catch (err: any) {
+    console.warn("[firestoreSync] Category cap error:", err.message);
+    errors.push(err.message);
+  }
+
+  return { deletedCount, perCategory, errors };
 }
