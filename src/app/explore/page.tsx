@@ -30,6 +30,11 @@ import {
   Banknote,
   Users,
   GraduationCap,
+  Trophy,
+  Code2,
+  Briefcase,
+  Award,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -50,31 +55,59 @@ const CATEGORY_TABS = [
   { key: "Fellowships", label: "Fellowships" },
 ];
 
-/* The filter rail rebuilds itself per category, but the underlying option sets are
-   fixed. Hoisting them keeps each <Select> to a single line and stops the same
-   four "Any / Online / In person / Hybrid" options being retyped per category. */
+/* ── Standard filter option sets ── */
 const MODE_OPTIONS = [
   { value: "", label: "Any mode" },
-  { value: "online", label: "Online" },
-  { value: "offline", label: "In person" },
+  { value: "online", label: "Online / Virtual" },
+  { value: "offline", label: "In Person / Onsite" },
   { value: "hybrid", label: "Hybrid" },
 ];
 const COST_OPTIONS = [
-  { value: "", label: "Any" },
-  { value: "free", label: "Free" },
-  { value: "paid", label: "Paid" },
+  { value: "", label: "Any entry" },
+  { value: "free", label: "Free Entry" },
+  { value: "paid", label: "Paid / Registration Fee" },
 ];
+const HACK_THEME_OPTIONS = [
+  { value: "", label: "All Themes" },
+  { value: "ai", label: "AI / Machine Learning" },
+  { value: "web3", label: "Web3 / Blockchain" },
+  { value: "open", label: "Open Ended / General" },
+  { value: "social", label: "Social Good / Impact" },
+  { value: "mobile", label: "Mobile / IoT" },
+];
+const HACK_PRIZE_OPTIONS = [
+  { value: "", label: "Any Prize" },
+  { value: "cash", label: "Cash Prize Pool" },
+  { value: "certificates", label: "Certificates / Swag" },
+];
+
 const WORK_MODE_OPTIONS = [
-  { value: "", label: "Any" },
-  { value: "remote", label: "Work from home" },
-  { value: "onsite", label: "In office" },
+  { value: "", label: "Any work mode" },
+  { value: "remote", label: "Remote / WFH" },
+  { value: "onsite", label: "In Office" },
   { value: "hybrid", label: "Hybrid" },
 ];
 const STIPEND_OPTIONS = [
-  { value: "", label: "Any" },
-  { value: "paid", label: "Paid" },
+  { value: "", label: "Any stipend" },
+  { value: "paid", label: "Paid Stipend" },
   { value: "unpaid", label: "Unpaid" },
 ];
+const INTERN_DOMAIN_OPTIONS = [
+  { value: "", label: "All Domains" },
+  { value: "cs", label: "Software & Web Dev" },
+  { value: "ai", label: "AI & Data Science" },
+  { value: "hr", label: "HR & People Ops" },
+  { value: "marketing", label: "Marketing & Content" },
+  { value: "design", label: "Design & Media" },
+  { value: "business", label: "Business & Management" },
+];
+const INTERN_DURATION_OPTIONS = [
+  { value: "", label: "Any duration" },
+  { value: "short", label: "1-2 Months" },
+  { value: "medium", label: "3-6 Months" },
+  { value: "long", label: "6+ Months" },
+];
+
 const WHOM_OPTIONS = [
   { value: "", label: "Anyone" },
   { value: "girls", label: "Girls / Women" },
@@ -82,11 +115,49 @@ const WHOM_OPTIONS = [
   { value: "all", label: "Open to all" },
 ];
 const FUNDING_OPTIONS = [
-  { value: "", label: "Any" },
+  { value: "", label: "Any funding source" },
   { value: "gov", label: "Government" },
-  { value: "private", label: "Company" },
+  { value: "private", label: "Corporate / Company" },
   { value: "ngo", label: "NGO / Trust" },
-  { value: "university", label: "University" },
+  { value: "university", label: "University / Institute" },
+];
+const SCHOLAR_TYPE_OPTIONS = [
+  { value: "", label: "All Types" },
+  { value: "merit", label: "Merit-Based" },
+  { value: "means", label: "Need / Income-Based" },
+  { value: "special", label: "Special Category / Girl Child" },
+];
+const DEGREE_OPTIONS = [
+  { value: "", label: "Any education level" },
+  { value: "school", label: "School (Class 9-12)" },
+  { value: "bachelor", label: "Undergraduate / B.Tech / B.Sc" },
+  { value: "master", label: "Postgraduate / M.Tech / M.Sc" },
+  { value: "phd", label: "PhD / Research Scholar" },
+];
+
+const FELLOW_LEVEL_OPTIONS = [
+  { value: "", label: "All Career Stages" },
+  { value: "student", label: "Undergraduate / Graduate" },
+  { value: "early_career", label: "Early-Career / Postdoc" },
+  { value: "senior", label: "Senior Researcher / Faculty" },
+];
+const FELLOW_COVERAGE_OPTIONS = [
+  { value: "", label: "Any coverage" },
+  { value: "fully_funded", label: "Fully Funded / Travel & Stay" },
+  { value: "partial", label: "Grant / Stipend Only" },
+];
+
+const CONF_TOPIC_OPTIONS = [
+  { value: "", label: "All Domains" },
+  { value: "tech", label: "Technology & Computing" },
+  { value: "science", label: "Science & Engineering" },
+  { value: "business", label: "Business & Management" },
+  { value: "interdisciplinary", label: "Multidisciplinary / General" },
+];
+const CONF_CFP_OPTIONS = [
+  { value: "", label: "Any status" },
+  { value: "open", label: "Call for Papers (CFP) Open" },
+  { value: "attend", label: "Attendee Registration" },
 ];
 
 /** The rail's field labels are all `Mode` / `Stipend` / `For Whom`-style words, so
@@ -208,6 +279,86 @@ function inferFunding(opp: any): "gov" | "private" | "ngo" | "university" | "unk
   return "unknown";
 }
 
+function inferHackTheme(opp: any): "ai" | "web3" | "social" | "mobile" | "open" {
+  const hay = `${opp.title || ""} ${opp.description || ""} ${opp.field || ""}`.toLowerCase();
+  if (/ai|machine learning|deep learning|llm|agent|gpt|neural/i.test(hay)) return "ai";
+  if (/web3|blockchain|crypto|solana|ethereum|smart contract/i.test(hay)) return "web3";
+  if (/climate|health|education|social good|sustainability|women/i.test(hay)) return "social";
+  if (/mobile|android|ios|flutter|iot|hardware/i.test(hay)) return "mobile";
+  return "open";
+}
+
+function inferHackPrize(opp: any): "cash" | "certificates" {
+  const hay = `${opp.title || ""} ${opp.description || ""}`.toLowerCase();
+  if (/prize pool|\$|₹|inr|usd|cash prize|eur|chf/i.test(hay)) return "cash";
+  return "certificates";
+}
+
+function inferInternDomain(opp: any): "cs" | "ai" | "hr" | "marketing" | "design" | "business" | "general" {
+  const hay = `${opp.title || ""} ${opp.description || ""} ${opp.field || ""}`.toLowerCase();
+  if (/human resources|\bhr\b|talent acquisition|recruitment/i.test(hay)) return "hr";
+  if (/marketing|seo|social media|content writing|pr\b|public relations/i.test(hay)) return "marketing";
+  if (/design|ui\/ux|graphic|video editing|media/i.test(hay)) return "design";
+  if (/ai|machine learning|data science|analytics|deep learning/i.test(hay)) return "ai";
+  if (/software|web dev|frontend|backend|full.?stack|developer|engineer|coding|python|java|react/i.test(hay)) return "cs";
+  if (/business|operations|sales|finance|analyst|management/i.test(hay)) return "business";
+  return "general";
+}
+
+function inferInternDuration(opp: any): "short" | "medium" | "long" | "unknown" {
+  const hay = `${opp.title || ""} ${opp.description || ""}`.toLowerCase();
+  if (/1 month|2 month|4 week|6 week|8 week/i.test(hay)) return "short";
+  if (/3 month|4 month|5 month|6 month|semester/i.test(hay)) return "medium";
+  if (/6\+ month|1 year|12 month|long term/i.test(hay)) return "long";
+  return "unknown";
+}
+
+function inferScholarType(opp: any): "merit" | "means" | "special" | "unknown" {
+  const hay = `${opp.title || ""} ${opp.description || ""} ${opp.eligibility || ""}`.toLowerCase();
+  if (/girl|women|disability|minority|sc\/st|single girl/i.test(hay)) return "special";
+  if (/income|means|below|poverty|economically|family income/i.test(hay)) return "means";
+  if (/merit|rank|score|cgpa|academic excellence|top/i.test(hay)) return "merit";
+  return "unknown";
+}
+
+function inferDegreeLevelClient(opp: any): "school" | "bachelor" | "master" | "phd" | "all" {
+  const hay = `${opp.eligibility || ""} ${opp.description || ""} ${opp.title || ""}`.toLowerCase();
+  if (/ph\.?d|doctorate|postdoctoral|pdf/i.test(hay)) return "phd";
+  if (/master|m\.?tech|m\.?sc|mba|mca|postgraduate|pg/i.test(hay)) return "master";
+  if (/bachelor|b\.?tech|b\.?e|b\.?sc|undergraduate|ug|college/i.test(hay)) return "bachelor";
+  if (/school|class 9|class 10|class 11|class 12|10th|12th|secondary/i.test(hay)) return "school";
+  return "all";
+}
+
+function inferFellowLevel(opp: any): "student" | "early_career" | "senior" | "all" {
+  const hay = `${opp.title || ""} ${opp.eligibility || ""} ${opp.description || ""}`.toLowerCase();
+  if (/faculty|senior scientist|principal investigator|pi\b/i.test(hay)) return "senior";
+  if (/postdoc|post-doc|early.career|phd graduate|young researcher/i.test(hay)) return "early_career";
+  if (/student|undergraduate|graduate|master|phd scholar/i.test(hay)) return "student";
+  return "all";
+}
+
+function inferFellowCoverage(opp: any): "fully_funded" | "partial" | "unknown" {
+  const hay = `${opp.title || ""} ${opp.description || ""}`.toLowerCase();
+  if (/fully funded|travel allowance|airfare|accommodation|stipend.*travel/i.test(hay)) return "fully_funded";
+  if (/grant|stipend|fellowship amount|chf|usd|\$/i.test(hay)) return "partial";
+  return "unknown";
+}
+
+function inferConfTopic(opp: any): "tech" | "science" | "business" | "interdisciplinary" {
+  const hay = `${opp.title || ""} ${opp.description || ""} ${opp.field || ""}`.toLowerCase();
+  if (/ai|computing|software|robotics|data|cyber|iot|tech/i.test(hay)) return "tech";
+  if (/science|physics|chemistry|bio|engineering|agri/i.test(hay)) return "science";
+  if (/business|management|economics|finance|leadership/i.test(hay)) return "business";
+  return "interdisciplinary";
+}
+
+function inferConfCfp(opp: any): "open" | "attend" {
+  const hay = `${opp.title || ""} ${opp.description || ""}`.toLowerCase();
+  if (/call for papers|cfp|abstract submission|paper submission|submit paper/i.test(hay)) return "open";
+  return "attend";
+}
+
 function toSnapshot(opp: any) {
   return {
     id: opp.id,
@@ -243,20 +394,34 @@ function ExploreContent() {
   const [savedIds, setSavedIds] = useState<string[]>([]);
 
   // ── Category-wise dynamic filter state ──
-  // Hackathon
+  // Hackathons
   const [hackMode, setHackMode] = useState(""); // online | offline | hybrid
   const [hackCost, setHackCost] = useState(""); // free | paid
-  // Internship / Jobs
+  const [hackTheme, setHackTheme] = useState(""); // ai | web3 | social | mobile | open
+  const [hackPrize, setHackPrize] = useState(""); // cash | certificates
+
+  // Internships
   const [internWorkMode, setInternWorkMode] = useState(""); // remote | onsite | hybrid
   const [internStipend, setInternStipend] = useState(""); // paid | unpaid
-  // Scholarship
+  const [internDomain, setInternDomain] = useState(""); // cs | ai | hr | marketing | design | business
+  const [internDuration, setInternDuration] = useState(""); // short | medium | long
+
+  // Scholarships
   const [scholarGender, setScholarGender] = useState(""); // girls | boys | all
   const [scholarFunding, setScholarFunding] = useState(""); // gov | private | ngo | university
-  // Fellowship (reuses scholarshipFunding + gender)
+  const [scholarType, setScholarType] = useState(""); // merit | means | special
+  const [scholarDegree, setScholarDegree] = useState(""); // school | bachelor | master | phd
+
+  // Fellowships
   const [fellowFunding, setFellowFunding] = useState("");
   const [fellowGender, setFellowGender] = useState("");
-  // Conference
+  const [fellowLevel, setFellowLevel] = useState(""); // student | early_career | senior
+  const [fellowCoverage, setFellowCoverage] = useState(""); // fully_funded | partial
+
+  // Conferences
   const [confMode, setConfMode] = useState(""); // online | offline | hybrid
+  const [confTopic, setConfTopic] = useState(""); // tech | science | business | interdisciplinary
+  const [confCfp, setConfCfp] = useState(""); // open | attend
 
   // Live scrape
   const [liveOpps, setLiveOpps] = useState<any[]>([]);
@@ -446,15 +611,21 @@ function ExploreContent() {
   // Active filter count for badge
   const activeFilterCount = [
     selectedField, selectedCountry, selectedDegree,
-    hackMode, hackCost, internWorkMode, internStipend,
-    scholarGender, scholarFunding, fellowGender, fellowFunding, confMode,
+    hackMode, hackCost, hackTheme, hackPrize,
+    internWorkMode, internStipend, internDomain, internDuration,
+    scholarGender, scholarFunding, scholarType, scholarDegree,
+    fellowGender, fellowFunding, fellowLevel, fellowCoverage,
+    confMode, confTopic, confCfp,
   ].filter(Boolean).length + (searchQuery.trim() ? 1 : 0);
 
   const resetAll = () => {
     setSearchQuery("");
     setSelectedField(""); setSelectedCountry(""); setSelectedDegree("");
-    setHackMode(""); setHackCost(""); setInternWorkMode(""); setInternStipend("");
-    setScholarGender(""); setScholarFunding(""); setFellowGender(""); setFellowFunding(""); setConfMode("");
+    setHackMode(""); setHackCost(""); setHackTheme(""); setHackPrize("");
+    setInternWorkMode(""); setInternStipend(""); setInternDomain(""); setInternDuration("");
+    setScholarGender(""); setScholarFunding(""); setScholarType(""); setScholarDegree("");
+    setFellowGender(""); setFellowFunding(""); setFellowLevel(""); setFellowCoverage("");
+    setConfMode(""); setConfTopic(""); setConfCfp("");
   };
 
   // Filter logic — NO pre-filtering at scrape time; all filtering is client-side here
@@ -475,13 +646,18 @@ function ExploreContent() {
       if (hackMode) {
         const m = inferMode(opp);
         if (m !== "unknown" && m !== hackMode) return false;
-        if (m === "unknown" && hackMode !== "") {
-          // if unknown, don't hide — let it show (so scraping "all" doesn't hide data)
-        }
       }
       if (hackCost) {
         const c = inferCost(opp);
         if (c !== "unknown" && c !== hackCost) return false;
+      }
+      if (hackTheme) {
+        const t = inferHackTheme(opp);
+        if (t !== hackTheme) return false;
+      }
+      if (hackPrize) {
+        const p = inferHackPrize(opp);
+        if (p !== hackPrize) return false;
       }
     }
     if (opp.category === "Internships") {
@@ -493,19 +669,33 @@ function ExploreContent() {
         const st = inferStipend(opp);
         if (st !== "unknown" && st !== internStipend) return false;
       }
+      if (internDomain) {
+        const dom = inferInternDomain(opp);
+        if (dom !== internDomain) return false;
+      }
+      if (internDuration) {
+        const dur = inferInternDuration(opp);
+        if (dur !== "unknown" && dur !== internDuration) return false;
+      }
     }
     if (opp.category === "Scholarships") {
       if (scholarGender && scholarGender !== "all") {
         const g = inferGender(opp);
-        // "all" tagged opps are visible for any gender filter (since they are open to all)
         if (g !== "all" && g !== scholarGender) return false;
-        // if filter is girls, show only girls + all
         if (scholarGender === "girls" && g === "boys") return false;
         if (scholarGender === "boys" && g === "girls") return false;
       }
       if (scholarFunding) {
         const f = inferFunding(opp);
         if (f !== "unknown" && f !== scholarFunding) return false;
+      }
+      if (scholarType) {
+        const t = inferScholarType(opp);
+        if (t !== "unknown" && t !== scholarType) return false;
+      }
+      if (scholarDegree) {
+        const d = inferDegreeLevelClient(opp);
+        if (d !== "all" && d !== scholarDegree) return false;
       }
     }
     if (opp.category === "Fellowships") {
@@ -519,11 +709,27 @@ function ExploreContent() {
         const f = inferFunding(opp);
         if (f !== "unknown" && f !== fellowFunding) return false;
       }
+      if (fellowLevel) {
+        const lvl = inferFellowLevel(opp);
+        if (lvl !== "all" && lvl !== fellowLevel) return false;
+      }
+      if (fellowCoverage) {
+        const cov = inferFellowCoverage(opp);
+        if (cov !== "unknown" && cov !== fellowCoverage) return false;
+      }
     }
     if (opp.category === "Conferences") {
       if (confMode) {
         const m = inferMode(opp);
         if (m !== "unknown" && m !== confMode) return false;
+      }
+      if (confTopic) {
+        const top = inferConfTopic(opp);
+        if (top !== confTopic) return false;
+      }
+      if (confCfp) {
+        const cfp = inferConfCfp(opp);
+        if (cfp !== confCfp) return false;
       }
     }
     return true;
@@ -687,6 +893,22 @@ function ExploreContent() {
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
                   <Select
+                    label={<FilterLabel icon={Code2}>Theme / Tech</FilterLabel>}
+                    value={hackTheme}
+                    onChange={(e) => setHackTheme(e.target.value)}
+                    options={HACK_THEME_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Trophy}>Prize Pool</FilterLabel>}
+                    value={hackPrize}
+                    onChange={(e) => setHackPrize(e.target.value)}
+                    options={HACK_PRIZE_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
                     label={<FilterLabel icon={Banknote}>Entry Fee</FilterLabel>}
                     value={hackCost}
                     onChange={(e) => setHackCost(e.target.value)}
@@ -699,6 +921,14 @@ function ExploreContent() {
             {/* ── Internship filters ── */}
             {selectedCategory === "Internships" && (
               <>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Briefcase}>Domain / Field</FilterLabel>}
+                    value={internDomain}
+                    onChange={(e) => setInternDomain(e.target.value)}
+                    options={INTERN_DOMAIN_OPTIONS}
+                  />
+                </motion.div>
                 <motion.div variants={filterFieldVariants}>
                   <Select
                     label={<FilterLabel icon={Building2}>Work Mode</FilterLabel>}
@@ -715,6 +945,14 @@ function ExploreContent() {
                     options={STIPEND_OPTIONS}
                   />
                 </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Calendar}>Duration</FilterLabel>}
+                    value={internDuration}
+                    onChange={(e) => setInternDuration(e.target.value)}
+                    options={INTERN_DURATION_OPTIONS}
+                  />
+                </motion.div>
               </>
             )}
 
@@ -723,7 +961,23 @@ function ExploreContent() {
               <>
                 <motion.div variants={filterFieldVariants}>
                   <Select
-                    label={<FilterLabel icon={Users}>For Whom</FilterLabel>}
+                    label={<FilterLabel icon={Award}>Scholarship Type</FilterLabel>}
+                    value={scholarType}
+                    onChange={(e) => setScholarType(e.target.value)}
+                    options={SCHOLAR_TYPE_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={GraduationCap}>Education Level</FilterLabel>}
+                    value={scholarDegree}
+                    onChange={(e) => setScholarDegree(e.target.value)}
+                    options={DEGREE_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Users}>Target Group</FilterLabel>}
                     value={scholarGender}
                     onChange={(e) => setScholarGender(e.target.value)}
                     options={WHOM_OPTIONS}
@@ -731,7 +985,7 @@ function ExploreContent() {
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
                   <Select
-                    label={<FilterLabel icon={GraduationCap}>Funding By</FilterLabel>}
+                    label={<FilterLabel icon={Building2}>Funding Provider</FilterLabel>}
                     value={scholarFunding}
                     onChange={(e) => setScholarFunding(e.target.value)}
                     options={FUNDING_OPTIONS}
@@ -745,7 +999,23 @@ function ExploreContent() {
               <>
                 <motion.div variants={filterFieldVariants}>
                   <Select
-                    label={<FilterLabel icon={Users}>For Whom</FilterLabel>}
+                    label={<FilterLabel icon={GraduationCap}>Career Stage</FilterLabel>}
+                    value={fellowLevel}
+                    onChange={(e) => setFellowLevel(e.target.value)}
+                    options={FELLOW_LEVEL_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Award}>Funding Coverage</FilterLabel>}
+                    value={fellowCoverage}
+                    onChange={(e) => setFellowCoverage(e.target.value)}
+                    options={FELLOW_COVERAGE_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Users}>Eligibility</FilterLabel>}
                     value={fellowGender}
                     onChange={(e) => setFellowGender(e.target.value)}
                     options={WHOM_OPTIONS}
@@ -753,7 +1023,7 @@ function ExploreContent() {
                 </motion.div>
                 <motion.div variants={filterFieldVariants}>
                   <Select
-                    label={<FilterLabel icon={GraduationCap}>Funding By</FilterLabel>}
+                    label={<FilterLabel icon={Building2}>Institution / Sponsor</FilterLabel>}
                     value={fellowFunding}
                     onChange={(e) => setFellowFunding(e.target.value)}
                     options={FUNDING_OPTIONS}
@@ -764,14 +1034,32 @@ function ExploreContent() {
 
             {/* ── Conference filters ── */}
             {selectedCategory === "Conferences" && (
-              <motion.div variants={filterFieldVariants}>
-                <Select
-                  label={<FilterLabel icon={Globe}>Mode</FilterLabel>}
-                  value={confMode}
-                  onChange={(e) => setConfMode(e.target.value)}
-                  options={MODE_OPTIONS}
-                />
-              </motion.div>
+              <>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Globe}>Mode</FilterLabel>}
+                    value={confMode}
+                    onChange={(e) => setConfMode(e.target.value)}
+                    options={MODE_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Layers}>Discipline / Topic</FilterLabel>}
+                    value={confTopic}
+                    onChange={(e) => setConfTopic(e.target.value)}
+                    options={CONF_TOPIC_OPTIONS}
+                  />
+                </motion.div>
+                <motion.div variants={filterFieldVariants}>
+                  <Select
+                    label={<FilterLabel icon={Award}>Participation</FilterLabel>}
+                    value={confCfp}
+                    onChange={(e) => setConfCfp(e.target.value)}
+                    options={CONF_CFP_OPTIONS}
+                  />
+                </motion.div>
+              </>
             )}
 
             <motion.div variants={filterFieldVariants}>
