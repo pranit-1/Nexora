@@ -642,12 +642,20 @@ export default function AdminPage() {
           ) : null}
         </Card>
 
-        <Card className="space-y-6 p-6">
-          <h2 className="flex items-center justify-between gap-3 font-display text-lg text-foreground">
-            <span>Moderate org opportunities</span>
-            <div className="flex items-center gap-2 flex-wrap justify-end">
+        <Card className="space-y-5 p-6">
+          {/* Header */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="font-display text-lg text-foreground">Moderate org opportunities</h2>
+              <p className="mt-0.5 text-xs text-foreground-muted">
+                {pendingCount > 0
+                  ? `${pendingCount} listings pending — new auto-ingested posts go live automatically.`
+                  : "All listings reviewed."}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
               {pendingCount > 0 ? (
-                <Chip tone="warning">{pendingCount} Pending Approval</Chip>
+                <Chip tone="warning">{pendingCount} Pending</Chip>
               ) : null}
               {pendingCount > 0 ? (
                 <Button
@@ -670,40 +678,51 @@ export default function AdminPage() {
                     }
                   }}
                 >
-                  Approve All Auto-Ingested
+                  Approve All
                 </Button>
               ) : null}
             </div>
-          </h2>
+          </div>
 
-          <ul className="max-h-[400px] space-y-4 overflow-y-auto pr-1">
+          {/* List */}
+          <ul className="max-h-[420px] space-y-2 overflow-y-auto overflow-x-hidden pr-1">
             {orgOpps.map((opp) => (
               <li key={opp.id}>
-                <Card tone="raised" className="space-y-3 p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <span className="eyebrow">Posted by {opp.orgName}</span>
-                      {opp.source === "automated" ? (
-                        <Chip tone="info" className="mt-1.5">
-                          Auto-ingested
-                          {opp.sourceType === "scraped" ? " · scraped" : " · trusted feed"}
-                        </Chip>
-                      ) : null}
-                      <h3 className="mt-1 text-sm font-semibold leading-snug text-foreground text-balance">
-                        {opp.title}
-                      </h3>
-                    </div>
-                    <Chip tone={reviewTone(opp.status)} className="shrink-0 uppercase">
+                <Card tone="raised" className="p-3">
+                  {/* Title + status */}
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <h3 className="flex-1 truncate text-sm font-semibold text-foreground">
+                      {opp.title}
+                    </h3>
+                    <Chip tone={reviewTone(opp.status)} className="shrink-0 text-2xs uppercase">
                       {opp.status}
                     </Chip>
                   </div>
 
-                  <p className="text-sm leading-relaxed text-foreground-muted text-pretty line-clamp-2">
-                    {opp.description}
-                  </p>
+                  {/* Org name + source badge — single line */}
+                  <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-2xs font-medium uppercase tracking-wide text-foreground-subtle">
+                      {opp.orgName}
+                    </span>
+                    {opp.source === "automated" ? (
+                      <Chip tone="info" className="shrink-0 text-2xs">
+                        {opp.sourceType === "scraped" ? "🤖 Scraped" : "📡 Feed"}
+                      </Chip>
+                    ) : (
+                      <Chip tone="neutral" className="shrink-0 text-2xs">🏢 Org</Chip>
+                    )}
+                  </div>
 
+                  {/* Description */}
+                  {opp.description ? (
+                    <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-foreground-muted">
+                      {opp.description}
+                    </p>
+                  ) : null}
+
+                  {/* Actions */}
                   {opp.status === "pending" ? (
-                    <div className="flex justify-end gap-2 border-t border-border pt-3">
+                    <div className="mt-2.5 flex items-center justify-end gap-2 border-t border-border pt-2.5">
                       <Button
                         type="button"
                         size="sm"
@@ -737,6 +756,7 @@ export default function AdminPage() {
             />
           ) : null}
         </Card>
+
 
         {/* User permissions moderator */}
         <Card className="space-y-6 p-6">
