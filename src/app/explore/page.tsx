@@ -863,9 +863,7 @@ return (
                         <h3 className="text-base font-semibold leading-snug text-foreground">{opp.title}</h3>
                         <p className="mt-1 text-xs font-medium text-foreground-muted">{opp.organization || opp.orgName}</p>
                         <p className="mt-4 line-clamp-3 text-xs leading-relaxed text-foreground-muted">{opp.description}</p>
-                        <p className="mt-3 flex items-center gap-1 text-2xs font-semibold text-secondary">
-                          <Sparkles className="h-3 w-3" /> Tap for an AI summary
-                        </p>
+
                       </div>
                       <div className="mt-4 space-y-3 border-t border-border pt-4">
                         <div className="flex flex-wrap items-center gap-4 text-2xs text-foreground-muted">

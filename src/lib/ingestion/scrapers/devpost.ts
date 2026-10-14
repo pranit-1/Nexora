@@ -40,8 +40,11 @@ export async function scrapeDevpost(): Promise<ScrapedOpportunity[]> {
             .join(", ")
         : asText(h.themes, 300);
 
-      const prizeAmount = asText(h.prize_amount, 60);
-      const prize = prizeAmount ? `Prize pool: ${prizeAmount}` : "";
+      const prizeRaw = asText(h.prize_amount, 60);
+      // Devpost returns prize_amount as HTML (e.g. "$<span data-currency-value>0</span>")
+      // Strip all tags before using it in plain-text descriptions.
+      const prizeAmount = prizeRaw.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+      const prize = prizeAmount && prizeAmount !== "0" && prizeAmount !== "$0" ? `Prize pool: ${prizeAmount}` : "";
       const tagline = asText(h.tagline, 400);
       const description = asText(h.description, 4000);
 
