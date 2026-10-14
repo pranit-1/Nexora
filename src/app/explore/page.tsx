@@ -326,6 +326,16 @@ function ExploreContent() {
       setSummaryError("Sign in to get an AI summary of this opportunity.");
       return;
     }
+    // Guard: no URL means the API will immediately reject with an SSRF error
+    // that is confusing to users. Surface a clear message instead.
+    if (!targetUrl) {
+      setSelectedOpp(opp);
+      setModalOpen(true);
+      setSummarizing(false);
+      setSummaryText("");
+      setSummaryError("No source URL found for this opportunity. Visit the official page directly.");
+      return;
+    }
     setSelectedOpp(opp);
     setModalOpen(true);
     setSummarizing(true);
@@ -347,7 +357,12 @@ function ExploreContent() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Summarize failed");
+      if (!res.ok) {
+        // 429 = rate limit, 401 = session expired — give friendly messages
+        if (res.status === 429) throw new Error("Too many requests. Please wait a moment and try again.");
+        if (res.status === 401) throw new Error("Session expired. Please refresh the page and sign in again.");
+        throw new Error(data.error || "Summarize failed");
+      }
       if (typeof data.summary !== "string" || !data.summary.trim()) {
         throw new Error("The AI did not return a summary for this opportunity.");
       }
@@ -915,13 +930,13 @@ return (
       <AnimatePresence>
         {modalOpen && selectedOpp && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeModal} className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeModal} className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60]" />
             <motion.div
               initial={{ opacity: 0, y: 20, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 20, scale: 0.97 }}
               transition={{ duration: 0.25, ease: "easeOut" }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+              className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none"
             >
               <Card tone="raised" role="dialog" aria-modal="true" aria-label={`AI summary of ${selectedOpp.title}`} className="pointer-events-auto flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden p-0">
                 <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-6">
