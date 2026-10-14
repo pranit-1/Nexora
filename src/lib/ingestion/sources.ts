@@ -140,7 +140,7 @@ export async function fetchTrustedSources(): Promise<RawListing[]> {
   return results;
 }
 
-// ─── SCRAPED SOURCES — always start as "pending" for admin review ─────────
+// ─── SCRAPED SOURCES — auto-approved, no admin review needed ──────────────
 
 const SCRAPED_PAGES = [
   // ── Global Student Tech Communities & Orgs ──
@@ -193,7 +193,7 @@ export async function fetchScrapedSources(): Promise<RawListing[]> {
         rawText: text,
         sourceUrl: page.url,
         sourceType: "scraped" as const,
-        autoApprove: false,
+        autoApprove: true,
       };
     })
   );

@@ -645,9 +645,35 @@ export default function AdminPage() {
         <Card className="space-y-6 p-6">
           <h2 className="flex items-center justify-between gap-3 font-display text-lg text-foreground">
             <span>Moderate org opportunities</span>
-            {pendingCount > 0 ? (
-              <Chip tone="warning">{pendingCount} Pending Approval</Chip>
-            ) : null}
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {pendingCount > 0 ? (
+                <Chip tone="warning">{pendingCount} Pending Approval</Chip>
+              ) : null}
+              {pendingCount > 0 ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  leadingIcon={<CheckCircle className="h-3.5 w-3.5" />}
+                  onClick={async () => {
+                    if (!confirm(`Approve all ${pendingCount} pending auto-ingested opportunities? They will go live on Explore immediately.`)) return;
+                    try {
+                      const res = await authedFetch("/api/admin/bulk-approve", { method: "POST" });
+                      const data = await res.json();
+                      if (res.ok) {
+                        alert(data.message || "Bulk approve done! 🌸");
+                      } else {
+                        alert(`Error: ${data.error}`);
+                      }
+                    } catch (e) {
+                      alert("Bulk approve failed. Check console.");
+                      console.error(e);
+                    }
+                  }}
+                >
+                  Approve All Auto-Ingested
+                </Button>
+              ) : null}
+            </div>
           </h2>
 
           <ul className="max-h-[400px] space-y-4 overflow-y-auto pr-1">
