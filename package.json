@@ -11,6 +11,8 @@
     "scrape:preview": "node scripts/scrape-local.mjs --preview",
     "scrape:devpost": "node scripts/scrape-local.mjs --preview --source=devpost",
     "scrape:jobs": "node scripts/scrape-local.mjs --preview --source=jobs",
+    "clean-rescrape": "node scripts/clean-and-rescrape.mjs",
+    "clean-only": "node scripts/clean-and-rescrape.mjs --clean-only",
     "emulators": "firebase emulators:start --only firestore,auth,storage",
     "rules:verify": "firebase emulators:exec --only firestore \"echo Rules compiled successfully\"",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage"

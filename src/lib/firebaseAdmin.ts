@@ -76,7 +76,14 @@ function getAdminApp(): App {
 }
 
 export function getAdminDb(): Firestore {
-  if (!cachedDb) cachedDb = getFirestore(getAdminApp());
+  if (!cachedDb) {
+    cachedDb = getFirestore(getAdminApp());
+    try {
+      cachedDb.settings({ ignoreUndefinedProperties: true });
+    } catch {
+      // settings may already be frozen
+    }
+  }
   return cachedDb;
 }
 

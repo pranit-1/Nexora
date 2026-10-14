@@ -327,8 +327,8 @@ export async function syncOpportunitiesToFirestore(
       status: initialStatus,
       postedByUid: "automated-ingestion",
       updatedAt: new Date().toISOString(),
-      incomeLimit: inferredIncomeLimit,
-      degreeLevel: inferredDegreeLevel,
+      incomeLimit: inferredIncomeLimit ?? null,
+      degreeLevel: inferredDegreeLevel ?? null,
     };
 
     validOpps.push({ id: docId, data: payload });
