@@ -563,6 +563,48 @@ export default function AdminPage() {
         </div>
       </Card>
 
+      {/* ── Data Tools ── */}
+      <Card className="space-y-4 p-6">
+        <div className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-surface-raised text-secondary">
+            <RefreshCw className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="font-display text-lg text-foreground">Data Tools</h2>
+            <p className="mt-0.5 text-sm text-foreground-muted">
+              One-shot utilities to fix existing data in Firestore — run once when needed.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3 border-t border-border pt-4">
+          {/* Clean HTML from descriptions */}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            leadingIcon={<Zap className="h-3.5 w-3.5" />}
+            onClick={async () => {
+              if (!confirm("Strip HTML tags from ALL opportunity descriptions in Firestore? This fixes posts like '$<span>0</span>' showing raw HTML.")) return;
+              try {
+                const res = await authedFetch("/api/admin/clean-descriptions", { method: "POST" });
+                const data = await res.json();
+                if (res.ok) {
+                  alert(data.message || "Done! 🌸");
+                } else {
+                  alert(`Error: ${data.error}`);
+                }
+              } catch (e) {
+                alert("Request failed. Check console.");
+                console.error(e);
+              }
+            }}
+          >
+            🧹 Clean HTML from All Descriptions
+          </Button>
+        </div>
+      </Card>
+
       {/* Moderate Opportunities */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Organization access requests */}
