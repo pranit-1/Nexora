@@ -147,7 +147,7 @@ function BucketPanel({
               <div className="min-w-0">
                 <span className="flex items-center gap-1.5 font-semibold text-foreground">
                   <span className="truncate">{k.keyId}</span>
-                  {highlightNewKey && k.keyId === "OPENROUTER_API_KEY_8" ? (
+                  {highlightNewKey && Number(k.keyId.replace(/\D/g, "")) >= 9 ? (
                     <Chip tone="gold">NEW</Chip>
                   ) : null}
                 </span>
@@ -477,8 +477,12 @@ export default function AdminPage() {
             <Stat
               size="sm"
               label="Total Pool Keys"
-              value={`${telemetry?.totalKeys ?? 8} keys`}
-              hint="4 Primary · 4 Standby Fallback"
+              value={telemetry ? `${telemetry.totalKeys} keys` : "—"}
+              hint={
+                telemetry
+                  ? `${telemetry.primaryBucket?.keysRemaining ?? 0} active · ${telemetry.fallbackBucket?.keysCount ?? 0} standby`
+                  : "Loading telemetry…"
+              }
               icon={<Layers className="h-4 w-4" />}
             />
           </StaggerItem>
@@ -524,7 +528,7 @@ export default function AdminPage() {
               <>
                 Active Pool:{" "}
                 <strong className="text-foreground">
-                  {telemetry?.primaryBucket?.keysRemaining ?? 8} keys
+                  {telemetry?.primaryBucket?.keysRemaining ?? 0} keys
                 </strong>{" "}
                 ready. Har rate-limit/error par key eject hokar Standby Bucket me chali
                 jati hai.
