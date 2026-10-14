@@ -104,7 +104,8 @@ export class AIServiceClient {
     message: string,
     history: { role: "user" | "model"; text: string }[],
     profileContext: unknown,
-    files: File[] = []
+    files: File[] = [],
+    options?: { mode?: "advisor" | "interview"; targetJobDescription?: string }
   ): Promise<{ reply: string; files: { name: string; kind: "doc" | "image" }[] }> {
     let response: Response;
     try {
@@ -112,6 +113,12 @@ export class AIServiceClient {
       formData.append("message", message);
       formData.append("history", JSON.stringify(history));
       formData.append("profileContext", JSON.stringify(profileContext ?? {}));
+      if (options?.mode) {
+        formData.append("mode", options.mode);
+      }
+      if (options?.targetJobDescription) {
+        formData.append("targetJobDescription", options.targetJobDescription);
+      }
       for (const file of files) {
         formData.append("files", file, file.name);
       }
