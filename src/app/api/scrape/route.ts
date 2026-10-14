@@ -23,7 +23,7 @@ const SCRAPE_INTERVAL_MS = 72 * 60 * 60 * 1000;
 // Post-scrape summarization is bounded: every summary is a paid AI call inside
 // a 300s function that just spent most of its budget scraping. The dedicated
 // /api/summarize-all cron sweeps up anything this batch has no time for.
-const AUTO_SUMMARIZE_LIMIT = 15;
+const AUTO_SUMMARIZE_LIMIT = 50;
 // Stop starting new phases when fewer than this many seconds remain.
 const TIME_GUARD_MS = 40_000;
 

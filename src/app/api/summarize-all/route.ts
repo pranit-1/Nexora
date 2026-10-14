@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 // Hard ceiling on a single run. Each pending opportunity is one paid LLM call,
 // and the caller-supplied `limit` was previously passed straight through, so
 // ?limit=100000 meant 100k sequential model calls inside a 300s function.
-const MAX_LIMIT_PER_RUN = 40;
+const MAX_LIMIT_PER_RUN = 100;
 
 /**
  * In-flight guard.

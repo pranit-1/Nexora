@@ -952,8 +952,10 @@ return (
                   {summarizing ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <p className="text-sm font-semibold text-foreground">Full scraping page…</p>
-                      <p className="text-center text-xs text-foreground-muted">Fetching full content and summarizing via OpenRouter key 1 into easy format.<br />Main facts will appear at the end.</p>
+                      <p className="text-sm font-semibold text-foreground">Generating AI summary…</p>
+                      <p className="text-center text-xs text-foreground-muted">
+                        Fetching page content and summarising. This takes 5–15 seconds.<br />Main facts will appear at the end.
+                      </p>
                     </div>
                   ) : summaryError ? (
                     <ErrorState
@@ -965,11 +967,18 @@ return (
                         </Button>
                       }
                     />
-                  ) : (
-                    /* The summary renders inside a <pre>, so the `prose`/`prose-*`
-                       classes this wrapper used were dead — @tailwindcss/typography
-                       is not installed, so every one of them resolved to nothing. */
+                  ) : summaryText ? (
                     <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-foreground">{summaryText}</pre>
+                  ) : (
+                    <ErrorState
+                      title="Summary not available"
+                      description="Could not generate a summary for this opportunity. Try clicking Retry."
+                      action={
+                        <Button type="button" size="sm" onClick={() => openSummarize(selectedOpp)}>
+                          Retry
+                        </Button>
+                      }
+                    />
                   )}
                 </div>
 <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface-raised/50 p-4">
