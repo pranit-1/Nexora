@@ -209,6 +209,18 @@ export class AIServiceClient {
   }
 
   /**
+   * Generates a dynamic, structured learning roadmap for any specified career role.
+   */
+  public static async generateRoadmap(role: string): Promise<any> {
+    const raw = await this.postRequest("generateRoadmap", { role });
+    try {
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch {
+      throw new AIServiceUnavailableError("malformed", "Failed to parse roadmap structure from AI.");
+    }
+  }
+
+  /**
    * Visits the student's saved links (GitHub + coding platforms) and returns
    * factual enrichment (repos, stars, commits, platform stats) plus improved
    * platform labels to write back onto the link documents.

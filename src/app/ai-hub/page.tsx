@@ -45,6 +45,11 @@ import {
   Briefcase,
   HelpCircle,
   RotateCcw,
+  Compass,
+  CheckSquare,
+  Square,
+  Layers,
+  Sparkle,
 } from "lucide-react";
 import type { WalletDocument, ProfileLink } from "@/lib/types";
 import type { PerformanceAssessment, SavedOpportunityMatch } from "@/lib/performanceTypes";
@@ -57,6 +62,7 @@ import { Button, Card, Chip, EmptyState, ErrorState, Textarea } from "@/componen
 import { Reveal, Stagger, StaggerItem } from "@/components/motion/Reveal";
 import { motion } from "framer-motion";
 import MarkdownText from "@/components/ai/MarkdownText";
+import { PRESET_ROADMAPS, type RoadmapData, type RoadmapItem } from "@/lib/roadmapData";
 
 
 const EASE_OUT_EXPO = [0.22, 1, 0.36, 1] as const;
@@ -197,6 +203,7 @@ const TABS = [
   { id: "recommendations", label: "Opportunity Matcher", icon: Award },
   { id: "performance", label: "Performance Tracker", icon: TrendingUp },
   { id: "resume", label: "ATS Resume Scan", icon: FileText },
+  { id: "roadmap", label: "Career Roadmap", icon: Compass },
   { id: "interview", label: "AI Interview Coach", icon: Mic },
   { id: "chat", label: "Career Assistant", icon: MessageSquare },
 ] as const;
@@ -212,6 +219,7 @@ export default function AIHub() {
     const tabParam = searchParams.get("tab");
     if (tabParam === "performance") return "performance";
     if (tabParam === "resume") return "resume";
+    if (tabParam === "roadmap") return "roadmap";
     if (tabParam === "interview") return "interview";
     if (tabParam === "chat") return "chat";
     return "recommendations";
@@ -223,6 +231,8 @@ export default function AIHub() {
       setActiveTab("performance");
     } else if (tabParam === "resume") {
       setActiveTab("resume");
+    } else if (tabParam === "roadmap") {
+      setActiveTab("roadmap");
     } else if (tabParam === "interview") {
       setActiveTab("interview");
     } else if (tabParam === "chat") {
@@ -303,6 +313,7 @@ export default function AIHub() {
                 {activeTab === "recommendations" && <RecommendationsTab />}
                 {activeTab === "performance" && <PerformanceTab />}
                 {activeTab === "resume" && <ResumeTab />}
+                {activeTab === "roadmap" && <RoadmapTab />}
                 {activeTab === "interview" && <InterviewCoachTab />}
                 {activeTab === "chat" && <ChatTab />}
               </motion.div>
@@ -2050,7 +2061,370 @@ function ResumeTab() {
 }
 
 /* ==========================================================================
-   TAB 4: AI INTERVIEW COACH (INTERACTIVE MOCK INTERVIEW)
+   TAB 4: CAREER ROADMAP (INSPIRED BY ROADMAP.SH + NEXORA AI ENGINE)
+   ========================================================================== */
+function RoadmapTab() {
+  const { currentUser, profile } = useAuth();
+  const [selectedPreset, setSelectedPreset] = useState<string>("frontend");
+  const [customRole, setCustomRole] = useState("");
+  const [activeRoadmap, setActiveRoadmap] = useState<RoadmapData>(PRESET_ROADMAPS["frontend"]);
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [completedItems, setCompletedItems] = useState<Record<string, boolean>>({});
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  const [scanningProfile, setScanningProfile] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchProgress = async () => {
+      try {
+        const snap = await getDoc(doc(db, "roadmap_progress", `${currentUser.uid}_${activeRoadmap.roleId}`));
+        if (snap.exists() && snap.data().completed) {
+          setCompletedItems(snap.data().completed);
+        } else {
+          setCompletedItems({});
+        }
+      } catch (err) {
+        console.error("Error fetching roadmap progress:", err);
+      }
+    };
+    fetchProgress();
+  }, [currentUser, activeRoadmap.roleId]);
+
+  const toggleItem = async (itemId: string) => {
+    const updated = { ...completedItems, [itemId]: !completedItems[itemId] };
+    setCompletedItems(updated);
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, "roadmap_progress", `${currentUser.uid}_${activeRoadmap.roleId}`), {
+          completed: updated,
+          updatedAt: new Date().toISOString(),
+          roleTitle: activeRoadmap.roleTitle,
+        });
+      } catch (e) {
+        console.error("Error saving progress:", e);
+      }
+    }
+  };
+
+  const toggleExpand = (itemId: string) => {
+    setExpandedItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
+
+  const handleSelectPreset = (key: string) => {
+    setSelectedPreset(key);
+    setActiveRoadmap(PRESET_ROADMAPS[key]);
+    setErrorMsg("");
+    setScanMessage("");
+  };
+
+  const handleGenerateCustom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customRole.trim() || loadingAI) return;
+    setLoadingAI(true);
+    setErrorMsg("");
+    setScanMessage("");
+
+    try {
+      const generated = await AIServiceClient.generateRoadmap(customRole.trim());
+      if (generated && generated.phases && Array.isArray(generated.phases)) {
+        setActiveRoadmap(generated);
+        setSelectedPreset("custom");
+      } else {
+        throw new Error("Invalid roadmap structure generated.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg("Failed to generate custom roadmap. Please try a different title or try again.");
+    } finally {
+      setLoadingAI(false);
+    }
+  };
+
+  const autoCheckFromProfile = async () => {
+    if (!currentUser) return;
+    setScanningProfile(true);
+    setScanMessage("");
+
+    try {
+      const userSkills: string[] = Array.isArray(profile?.skills) ? profile.skills.map((s: string) => s.toLowerCase()) : [];
+
+      const snap = await getDocs(query(collection(db, "wallet"), where("uid", "==", currentUser.uid)));
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.insights?.skills && Array.isArray(data.insights.skills)) {
+          data.insights.skills.forEach((s: string) => userSkills.push(String(s).toLowerCase()));
+        }
+      });
+
+      const newlyCompleted: Record<string, boolean> = { ...completedItems };
+      let matchedCount = 0;
+
+      activeRoadmap.phases.forEach((phase) => {
+        phase.items.forEach((item) => {
+          const reqs = item.requiredSkills.map((r) => r.toLowerCase());
+          const hasSkill = reqs.some((r) => userSkills.some((us) => us.includes(r) || r.includes(us)));
+          if (hasSkill && !newlyCompleted[item.id]) {
+            newlyCompleted[item.id] = true;
+            matchedCount++;
+          }
+        });
+      });
+
+      setCompletedItems(newlyCompleted);
+      if (currentUser) {
+        await setDoc(doc(db, "roadmap_progress", `${currentUser.uid}_${activeRoadmap.roleId}`), {
+          completed: newlyCompleted,
+          updatedAt: new Date().toISOString(),
+          roleTitle: activeRoadmap.roleTitle,
+        });
+      }
+
+      setScanMessage(
+        matchedCount > 0
+          ? `✨ Auto-checked ${matchedCount} milestone(s) based on your verified skills & wallet documents!`
+          : `Checked your profile — no additional milestones matched your current records. Keep learning!`
+      );
+    } catch (e) {
+      console.error("Auto check error:", e);
+      setScanMessage("Could not scan profile records at this moment.");
+    } finally {
+      setScanningProfile(false);
+    }
+  };
+
+  const allItems = activeRoadmap.phases.flatMap((p) => p.items);
+  const totalCount = allItems.length;
+  const completedCount = allItems.filter((i) => completedItems[i.id]).length;
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <span className="eyebrow">Module 04</span>
+          <h2 className="mt-1 font-display text-2xl text-foreground">Interactive Career Roadmaps</h2>
+          <p className="mt-1 max-w-xl text-xs text-foreground-muted">
+            Step-by-step engineering curriculum with project blueprints, topic deep dives, and progress tracking.
+          </p>
+        </div>
+
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={autoCheckFromProfile}
+          disabled={scanningProfile}
+          leadingIcon={scanningProfile ? <Loader2 className="h-3.5 w-3.5 spin" /> : <Sparkles className="h-3.5 w-3.5 text-secondary" />}
+        >
+          {scanningProfile ? "Scanning Records…" : "Auto-Sync with My Profile"}
+        </Button>
+      </div>
+
+      {scanMessage && (
+        <div className="rounded-lg border border-secondary/30 bg-secondary/10 px-4 py-2.5 text-xs text-foreground">
+          {scanMessage}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {Object.entries(PRESET_ROADMAPS).map(([key, data]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => handleSelectPreset(key)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
+              selectedPreset === key
+                ? "bg-secondary text-white shadow-sm"
+                : "border border-border bg-surface text-foreground-muted hover:border-secondary/40 hover:text-foreground"
+            }`}
+          >
+            {data.roleTitle}
+          </button>
+        ))}
+
+        {selectedPreset === "custom" && (
+          <span className="rounded-full bg-secondary/15 px-3 py-1 text-xs font-semibold text-secondary">
+            Custom: {activeRoadmap.roleTitle}
+          </span>
+        )}
+      </div>
+
+      <Card tone="raised" className="p-3.5">
+        <form onSubmit={handleGenerateCustom} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex-1">
+            <input
+              type="text"
+              placeholder="Or type any custom role (e.g. Blockchain Developer, iOS Engineer, Cloud Architect...)"
+              value={customRole}
+              onChange={(e) => setCustomRole(e.target.value)}
+              disabled={loadingAI}
+              className="input w-full text-xs"
+            />
+          </div>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={loadingAI || !customRole.trim()}
+            leadingIcon={loadingAI ? <Loader2 className="h-3.5 w-3.5 spin" /> : <Sparkle className="h-3.5 w-3.5" />}
+          >
+            {loadingAI ? "Designing Roadmap…" : "Generate with AI"}
+          </Button>
+        </form>
+        {errorMsg && <p className="mt-2 text-xs text-danger">{errorMsg}</p>}
+      </Card>
+
+      <Card tone="raised" className="p-5 border-border">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Compass className="h-5 w-5 text-secondary" />
+              <h3 className="font-display text-xl text-foreground">{activeRoadmap.roleTitle}</h3>
+              <Chip tone="info">Target: {activeRoadmap.targetTimeline}</Chip>
+            </div>
+            <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-foreground-muted">
+              {activeRoadmap.overview}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 min-w-[200px]">
+            <div className="flex-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-foreground-muted font-medium">Curriculum Progress</span>
+                <span className="font-display text-sm font-semibold text-foreground">{progressPercent}%</span>
+              </div>
+              <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-ink/10">
+                <div
+                  className="h-full rounded-full bg-secondary transition-all duration-500"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              <span className="mt-1 block text-[0.7rem] text-foreground-subtle">
+                {completedCount} of {totalCount} milestones completed
+              </span>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="space-y-8 pt-2">
+        {activeRoadmap.phases.map((phase, pIdx) => (
+          <div key={pIdx} className="space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-border pb-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-secondary/10 font-display text-xs font-bold text-secondary">
+                {pIdx + 1}
+              </span>
+              <h4 className="font-display text-base font-semibold text-foreground">
+                {phase.phaseTitle}
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {phase.items.map((item) => {
+                const isDone = !!completedItems[item.id];
+                const isExpanded = !!expandedItems[item.id];
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`group relative rounded-xl border p-4 transition-all ${
+                      isDone
+                        ? "border-success/40 bg-success/5"
+                        : "border-border bg-surface-raised hover:border-secondary/40"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleItem(item.id)}
+                        className="mt-0.5 text-foreground-muted transition-colors hover:text-foreground"
+                        title={isDone ? "Mark as incomplete" : "Mark as completed"}
+                      >
+                        {isDone ? (
+                          <CheckSquare className="h-5 w-5 text-success" />
+                        ) : (
+                          <Square className="h-5 w-5 text-foreground-subtle group-hover:text-foreground" />
+                        )}
+                      </button>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <h5
+                            className={`font-display text-sm font-medium ${
+                              isDone ? "text-foreground line-through opacity-80" : "text-foreground"
+                            }`}
+                          >
+                            {item.title}
+                          </h5>
+                          <span className="text-[0.68rem] text-foreground-subtle whitespace-nowrap">
+                            {item.estimatedWeeks}
+                          </span>
+                        </div>
+
+                        <p className="mt-1 text-xs text-foreground-muted leading-relaxed">
+                          {item.description}
+                        </p>
+
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {item.requiredSkills.map((skill, sIdx) => (
+                            <span
+                              key={sIdx}
+                              className="rounded-md bg-surface px-2 py-0.5 text-[0.68rem] font-medium text-foreground-muted border border-border"
+                            >
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="mt-3 border-t border-border/50 pt-2.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(item.id)}
+                            className="flex items-center gap-1 text-[0.72rem] font-semibold text-secondary hover:underline"
+                          >
+                            <span>{isExpanded ? "Hide Details" : "Key Topics & Portfolio Project"}</span>
+                            {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                          </button>
+
+                          {isExpanded && (
+                            <div className="mt-2 space-y-2 rounded-lg bg-surface p-3 text-xs border border-border/70">
+                              <div>
+                                <span className="font-semibold text-foreground text-[0.72rem] uppercase tracking-wider">
+                                  Core Concepts:
+                                </span>
+                                <ul className="mt-1 list-disc pl-4 space-y-0.5 text-foreground-muted text-[0.72rem]">
+                                  {item.keyTopics.map((t, tIdx) => (
+                                    <li key={tIdx}>{t}</li>
+                                  ))}
+                                </ul>
+                              </div>
+
+                              <div className="pt-1.5 border-t border-border/50">
+                                <span className="font-semibold text-secondary text-[0.72rem] uppercase tracking-wider">
+                                  Recommended Project:
+                                </span>
+                                <p className="mt-0.5 text-foreground text-[0.72rem] leading-relaxed">
+                                  {item.recommendedProject}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   TAB 5: AI INTERVIEW COACH (INTERACTIVE MOCK INTERVIEW)
    ========================================================================== */
 interface InterviewMessage {
   role: "user" | "model";

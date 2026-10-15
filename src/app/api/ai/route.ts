@@ -116,6 +116,54 @@ export async function POST(request: Request) {
         break;
       }
 
+      case "generateRoadmap": {
+        const role = typeof data.role === "string" ? neutralize(data.role, 150) : "";
+        if (!role) {
+          return NextResponse.json({ error: "role is required" }, { status: 400 });
+        }
+        prompt = `
+          You are an expert Career Roadmap Architect (similar to roadmap.sh engineering standards).
+          Generate an exhaustive, highly structured developer/engineering learning roadmap for the role: "${role}".
+
+          Return a JSON object conforming strictly to this schema:
+          {
+            "roleId": "custom-${Date.now()}",
+            "roleTitle": "${role}",
+            "overview": "2 sentence high-impact summary of this career trajectory",
+            "targetTimeline": "6-8 Months",
+            "phases": [
+              {
+                "phaseTitle": "Phase 1: Foundations & Prerequisites",
+                "items": [
+                  {
+                    "id": "item-1",
+                    "title": "Title of fundamental concept",
+                    "description": "2 sentences explaining why it is critical and how to master it",
+                    "requiredSkills": ["Skill 1", "Skill 2"],
+                    "keyTopics": ["Topic A", "Topic B", "Topic C"],
+                    "recommendedProject": "A concrete, resume-worthy project to build demonstrating this skill",
+                    "estimatedWeeks": "3 Weeks"
+                  }
+                ]
+              },
+              {
+                "phaseTitle": "Phase 2: Core Domain Specialization & Frameworks",
+                "items": [...]
+              },
+              {
+                "phaseTitle": "Phase 3: Advanced Architectures, Production & Portfolio",
+                "items": [...]
+              }
+            ]
+          }
+
+          Ensure each phase has 2 to 3 detailed items with practical, real-world portfolio projects.
+          Return valid JSON only, no markdown wrapping, no prose.
+        `;
+        jsonMode = true;
+        break;
+      }
+
       default:
         return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
