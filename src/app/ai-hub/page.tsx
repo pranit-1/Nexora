@@ -2074,6 +2074,8 @@ function RoadmapTab() {
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const [scanningProfile, setScanningProfile] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<"all" | "role" | "skill">("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     if (!currentUser) return;
@@ -2227,28 +2229,153 @@ function RoadmapTab() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        {Object.entries(PRESET_ROADMAPS).map(([key, data]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => handleSelectPreset(key)}
-            className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-all ${
-              selectedPreset === key
-                ? "bg-secondary text-white shadow-sm"
-                : "border border-border bg-surface text-foreground-muted hover:border-secondary/40 hover:text-foreground"
-            }`}
-          >
-            {data.roleTitle}
-          </button>
-        ))}
+      {/* ── Category Filter Tabs ─────────────────────────────────────────── */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-1.5 rounded-xl border border-border bg-surface p-1">
+          {(["all", "role", "skill"] as const).map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => { setCategoryFilter(cat); setSearchQuery(""); }}
+              className={`rounded-lg px-4 py-1.5 text-xs font-semibold capitalize transition-all ${
+                categoryFilter === cat
+                  ? "bg-secondary text-white shadow-sm"
+                  : "text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              {cat === "all" ? "All Roadmaps" : cat === "role" ? "Role-Based" : "Skill-Based"}
+            </button>
+          ))}
+        </div>
 
-        {selectedPreset === "custom" && (
-          <span className="rounded-full bg-secondary/15 px-3 py-1 text-xs font-semibold text-secondary">
-            Custom: {activeRoadmap.roleTitle}
-          </span>
-        )}
+        {/* ── Search Input ─────────────────────────────────────────────────── */}
+        <div className="relative max-w-xs w-full">
+          <input
+            type="text"
+            placeholder="Search roadmaps…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="input w-full pl-8 text-xs"
+          />
+          <svg
+            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-subtle"
+            fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+          >
+            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+          </svg>
+        </div>
       </div>
+
+      {/* ── Roadmap Cards Grid ───────────────────────────────────────────── */}
+      {(() => {
+        const filteredEntries = Object.entries(PRESET_ROADMAPS).filter(([, data]) => {
+          const matchesCategory = categoryFilter === "all" || data.category === categoryFilter;
+          const q = searchQuery.toLowerCase();
+          const matchesSearch = !q
+            || data.roleTitle.toLowerCase().includes(q)
+            || data.overview.toLowerCase().includes(q)
+            || data.category.includes(q);
+          return matchesCategory && matchesSearch;
+        });
+
+        if (filteredEntries.length === 0) {
+          return (
+            <div className="rounded-xl border border-border bg-surface py-10 text-center text-sm text-foreground-muted">
+              No roadmaps match your search. Try a different keyword or clear the filter.
+            </div>
+          );
+        }
+
+        return (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredEntries.map(([key, data]) => {
+              const isActive = selectedPreset === key;
+              const allRoadmapItems = data.phases.flatMap((p) => p.items);
+              const doneCount = allRoadmapItems.filter((i) => completedItems[i.id]).length;
+              const pct = allRoadmapItems.length > 0 ? Math.round((doneCount / allRoadmapItems.length) * 100) : 0;
+
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleSelectPreset(key)}
+                  className={`group relative flex flex-col gap-3 rounded-xl border p-4 text-left transition-all ${
+                    isActive
+                      ? "border-secondary/60 bg-secondary/5 shadow-sm ring-1 ring-secondary/30"
+                      : "border-border bg-surface-raised hover:border-secondary/40 hover:bg-surface"
+                  }`}
+                >
+                  {/* Category badge */}
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${
+                        data.category === "role"
+                          ? "bg-info/10 text-info"
+                          : "bg-secondary/10 text-secondary"
+                      }`}
+                    >
+                      {data.category === "role" ? "Role-Based" : "Skill-Based"}
+                    </span>
+                    <span className="text-[0.65rem] text-foreground-subtle">{data.targetTimeline}</span>
+                  </div>
+
+                  {/* Title */}
+                  <div>
+                    <h4 className="font-display text-sm font-semibold text-foreground leading-snug">
+                      {data.roleTitle}
+                    </h4>
+                    <p className="mt-1 line-clamp-2 text-[0.72rem] leading-relaxed text-foreground-muted">
+                      {data.overview}
+                    </p>
+                  </div>
+
+                  {/* Mini progress bar (if any progress recorded) */}
+                  {pct > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between text-[0.65rem] text-foreground-subtle mb-1">
+                        <span>Progress</span>
+                        <span className="font-semibold text-foreground">{pct}%</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-ink/10">
+                        <div
+                          className="h-full rounded-full bg-secondary transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Phase count */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[0.68rem] text-foreground-subtle">
+                      {data.phases.length} phases · {allRoadmapItems.length} milestones
+                    </span>
+                    {isActive && (
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-secondary">
+                        <CheckCircle2 className="h-3 w-3 text-white" />
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+
+            {/* Custom roadmap card (shown only when active) */}
+            {selectedPreset === "custom" && (
+              <div className="relative flex flex-col gap-3 rounded-xl border border-secondary/60 bg-secondary/5 p-4 shadow-sm ring-1 ring-secondary/30">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-secondary/15 px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider text-secondary">
+                    AI-Generated
+                  </span>
+                  <CheckCircle2 className="h-4 w-4 text-secondary" />
+                </div>
+                <h4 className="font-display text-sm font-semibold text-foreground">{activeRoadmap.roleTitle}</h4>
+                <p className="line-clamp-2 text-[0.72rem] leading-relaxed text-foreground-muted">{activeRoadmap.overview}</p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <Card tone="raised" className="p-3.5">
         <form onSubmit={handleGenerateCustom} className="flex flex-col gap-2 sm:flex-row sm:items-center">
