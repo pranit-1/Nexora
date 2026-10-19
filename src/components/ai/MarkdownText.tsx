@@ -31,7 +31,7 @@ function renderInline(text: string, keySeed: string): ReactNode[] {
     const token = m[0];
     const key = `${keySeed}-i${k++}`;
     if (token.startsWith("**")) {
-      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+      nodes.push(<strong key={key} className="font-bold text-foreground">{token.slice(2, -2)}</strong>);
     } else if (token.startsWith("~~")) {
       nodes.push(<s key={key}>{token.slice(2, -2)}</s>);
     } else if (token.startsWith("[")) {
@@ -131,14 +131,14 @@ export function MarkdownText({ text, className }: { text: string; className?: st
       const Tag = (`h${level}`) as "h1";
       const sizeClass =
         level === 1
-          ? "mt-3 text-xl font-semibold"
+          ? "mt-4 mb-2 text-xl font-bold tracking-tight text-foreground"
           : level === 2
-            ? "mt-3 text-lg font-semibold"
+            ? "mt-3.5 mb-1.5 text-lg font-bold text-foreground"
             : level === 3
-              ? "mt-2 text-base font-semibold"
-              : "mt-2 text-sm font-semibold";
+              ? "mt-3 mb-1 text-base font-semibold text-foreground"
+              : "mt-2 mb-1 text-sm font-semibold text-foreground";
       blocks.push(
-        <Tag key={key++} className={`${sizeClass} text-foreground`}>
+        <Tag key={key++} className={sizeClass}>
           {renderInlineMarkup(match![2], `h${key}`)}
         </Tag>
       );
@@ -148,7 +148,7 @@ export function MarkdownText({ text, className }: { text: string; className?: st
 
     // Horizontal rule.
     if (/^-{3,}\s*$/.test(trimmed) && !raw.startsWith(" ")) {
-      blocks.push(<hr key={key++} className="my-3 border-border" />);
+      blocks.push(<hr key={key++} className="my-3.5 border-border/80" />);
       i++;
       continue;
     }
@@ -163,7 +163,7 @@ export function MarkdownText({ text, className }: { text: string; className?: st
       blocks.push(
         <blockquote
           key={key++}
-          className="mt-2 border-l-2 border-border pl-3 text-sm italic text-foreground-muted"
+          className="mt-2.5 rounded-r-lg border-l-4 border-secondary/60 bg-surface-raised/40 py-1.5 pl-3.5 pr-3 text-sm italic text-foreground-muted"
         >
           {renderInlineMarkup(quoteLines.join(" "), `bq${key}`)}
         </blockquote>

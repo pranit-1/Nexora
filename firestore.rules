@@ -94,7 +94,7 @@ service cloud.firestore {
         && subsetOfKeys(request.resource.data, [
              "username", "name", "email", "role", "authProvider",
              "bio", "education", "skills", "interests", "location",
-             "category", "income", "createdAt", "updatedAt",
+             "category", "categories", "income", "createdAt", "updatedAt",
              "performanceScore", "performanceBand", "performanceCoverage", "performanceDocCount",
              "studentLevel", "studentLevelDescription", "performanceUpdatedAt"
            ]);
@@ -107,7 +107,7 @@ service cloud.firestore {
             && subsetOfKeys(request.resource.data, [
                  "username", "name", "email", "role", "authProvider",
                  "bio", "education", "skills", "interests", "location",
-                 "category", "income", "createdAt", "updatedAt",
+                 "category", "categories", "income", "createdAt", "updatedAt",
                  "performanceScore", "performanceBand", "performanceCoverage", "performanceDocCount",
                  "studentLevel", "studentLevelDescription", "performanceUpdatedAt"
                ]));
@@ -395,6 +395,18 @@ service cloud.firestore {
       allow update: if isOwner(resource.data.uid)
         && request.resource.data.uid == resource.data.uid;
       allow delete: if isOwner(resource.data.uid);
+    }
+
+    // AI Career Roadmap progress tracking (docId format: `${uid}_${roleId}`)
+    match /roadmap_progress/{docId} {
+      allow read: if isSignedIn() && docId.matches('^' + request.auth.uid + '_.*');
+      allow create, update: if isSignedIn() && docId.matches('^' + request.auth.uid + '_.*');
+      allow delete: if isSignedIn() && docId.matches('^' + request.auth.uid + '_.*');
+    }
+
+    // AI Mock Interview history (one doc per uid)
+    match /interview_history/{uid} {
+      allow read, write: if isOwner(uid);
     }
 
     // ─────────────────────────── default deny ───────────────────────────

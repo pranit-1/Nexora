@@ -50,6 +50,9 @@ import {
   Square,
   Layers,
   Sparkle,
+  Copy,
+  Check,
+  Type,
 } from "lucide-react";
 import type { WalletDocument, ProfileLink } from "@/lib/types";
 import type { PerformanceAssessment, SavedOpportunityMatch } from "@/lib/performanceTypes";
@@ -204,8 +207,7 @@ const TABS = [
   { id: "performance", label: "Performance Tracker", icon: TrendingUp },
   { id: "resume", label: "ATS Resume Scan", icon: FileText },
   { id: "roadmap", label: "Career Roadmap", icon: Compass },
-  { id: "interview", label: "AI Interview Coach", icon: Mic },
-  { id: "chat", label: "Career Assistant", icon: MessageSquare },
+  { id: "advisor", label: "AI Assistant & Coach (Chatbot)", icon: MessageSquare },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -220,8 +222,7 @@ export default function AIHub() {
     if (tabParam === "performance") return "performance";
     if (tabParam === "resume") return "resume";
     if (tabParam === "roadmap") return "roadmap";
-    if (tabParam === "interview") return "interview";
-    if (tabParam === "chat") return "chat";
+    if (tabParam === "advisor" || tabParam === "interview" || tabParam === "chat") return "advisor";
     return "recommendations";
   });
 
@@ -233,10 +234,8 @@ export default function AIHub() {
       setActiveTab("resume");
     } else if (tabParam === "roadmap") {
       setActiveTab("roadmap");
-    } else if (tabParam === "interview") {
-      setActiveTab("interview");
-    } else if (tabParam === "chat") {
-      setActiveTab("chat");
+    } else if (tabParam === "advisor" || tabParam === "interview" || tabParam === "chat") {
+      setActiveTab("advisor");
     }
   }, [searchParams]);
 
@@ -314,8 +313,7 @@ export default function AIHub() {
                 {activeTab === "performance" && <PerformanceTab />}
                 {activeTab === "resume" && <ResumeTab />}
                 {activeTab === "roadmap" && <RoadmapTab />}
-                {activeTab === "interview" && <InterviewCoachTab />}
-                {activeTab === "chat" && <ChatTab />}
+                {activeTab === "advisor" && <AdvisorInterviewHubTab />}
               </motion.div>
             </div>
           </div>
@@ -2079,19 +2077,22 @@ function RoadmapTab() {
 
   useEffect(() => {
     if (!currentUser) return;
+    let isMounted = true;
     const fetchProgress = async () => {
       try {
         const snap = await getDoc(doc(db, "roadmap_progress", `${currentUser.uid}_${activeRoadmap.roleId}`));
-        if (snap.exists() && snap.data().completed) {
+        if (isMounted && snap.exists() && snap.data().completed) {
           setCompletedItems(snap.data().completed);
-        } else {
+        } else if (isMounted) {
           setCompletedItems({});
         }
-      } catch (err) {
-        console.error("Error fetching roadmap progress:", err);
+      } catch (err: any) {
+        // If security rules or network stream is temporarily warming up, fallback smoothly
+        if (isMounted) setCompletedItems({});
       }
     };
     fetchProgress();
+    return () => { isMounted = false; };
   }, [currentUser, activeRoadmap.roleId]);
 
   const toggleItem = async (itemId: string) => {
@@ -2551,273 +2552,13 @@ function RoadmapTab() {
 }
 
 /* ==========================================================================
-   TAB 5: AI INTERVIEW COACH (INTERACTIVE MOCK INTERVIEW)
+   TAB 5: COMBINED CAREER ADVISOR & AI INTERVIEW COACH (UNIFIED CHAT BOX)
+   One unified chat box with instant mode switcher inside the header!
    ========================================================================== */
-interface InterviewMessage {
+interface UnifiedChatMessage {
   role: "user" | "model";
   text: string;
-}
-
-function InterviewCoachTab() {
-  const { currentUser, profile } = useAuth();
-  const [targetJob, setTargetJob] = useState("");
-  const [interviewStarted, setInterviewStarted] = useState(false);
-  const [messages, setMessages] = useState<InterviewMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [coachError, setCoachError] = useState("");
-
-  const fetchInterviewHistory = async () => {
-    if (!currentUser) return;
-    try {
-      const snap = await getDoc(doc(db, "interview_history", currentUser.uid));
-      if (snap.exists() && snap.data().messages?.length > 0) {
-        setMessages(snap.data().messages || []);
-        setInterviewStarted(true);
-      } else {
-        setInterviewStarted(false);
-        setMessages([
-          {
-            role: "model",
-            text: `### 🎯 Welcome to your AI Technical & Behavioral Interview Coach!\n\nI am connected to your **NEXORA Profile & Document Wallet** (your verified resume, projects, and certifications).\n\n**How this works:**\n1. Paste your target Job Description / Role details above (e.g. *SDE-1 at Amazon, Data Analyst, Research Fellow*).\n2. Click **Start Mock Interview**.\n3. I will ask you **one tailored question at a time**.\n4. When you answer, I will evaluate it with a qualitative **Judgement** (strengths, missing elements, and ideal sample answer), then ask the next question.\n\nReady? Enter your target role and hit start!`,
-          },
-        ]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  useEffect(() => {
-    fetchInterviewHistory();
-  }, [currentUser]);
-
-  const resetInterview = async () => {
-    if (!currentUser) return;
-    setInterviewStarted(false);
-    const initialMsg: InterviewMessage[] = [
-      {
-        role: "model",
-        text: `### 🎯 Interview Session Reset\n\nEnter your new Target Role or Opportunity details above and click **Start Mock Interview** to begin a fresh round!`,
-      },
-    ];
-    setMessages(initialMsg);
-    try {
-      await setDoc(doc(db, "interview_history", currentUser.uid), { messages: initialMsg });
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const startInterview = async () => {
-    setInterviewStarted(true);
-    setLoading(true);
-    setCoachError("");
-
-    const initialPrompt = targetJob.trim()
-      ? `I am ready for the mock interview for this opportunity: "${targetJob.trim()}". Please review my profile and wallet documents, greet me briefly, and ask me QUESTION 1.`
-      : `I am ready for the mock interview for roles matching my profile and wallet. Please review my profile, greet me briefly, and ask me QUESTION 1.`;
-
-    const userMessage: InterviewMessage = { role: "user", text: `[Started Mock Interview: ${targetJob.trim() || "Profile-Matched Role"}]` };
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-
-    try {
-      const chatResponse = await AIServiceClient.chatWithFiles(
-        initialPrompt,
-        newMessages,
-        profile || {},
-        [],
-        { mode: "interview", targetJobDescription: targetJob.trim() }
-      );
-
-      const finalMessages: InterviewMessage[] = [
-        ...newMessages,
-        { role: "model", text: chatResponse.reply },
-      ];
-      setMessages(finalMessages);
-
-      if (currentUser) {
-        await setDoc(doc(db, "interview_history", currentUser.uid), { messages: finalMessages });
-      }
-    } catch (err) {
-      console.error(err);
-      setCoachError(
-        err instanceof AIServiceUnavailableError
-          ? err.message
-          : "The interview coach is unavailable right now. Please try again."
-      );
-      setMessages(newMessages);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const sendAnswer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
-
-    const userMsg = input.trim();
-    setInput("");
-
-    const userMessage: InterviewMessage = { role: "user", text: userMsg };
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-    setLoading(true);
-    setCoachError("");
-
-    try {
-      const chatResponse = await AIServiceClient.chatWithFiles(
-        userMsg,
-        newMessages,
-        profile || {},
-        [],
-        {
-          mode: "interview",
-          targetJobDescription: targetJob.trim(),
-        }
-      );
-
-      const finalMessages: InterviewMessage[] = [
-        ...newMessages,
-        { role: "model", text: chatResponse.reply },
-      ];
-      setMessages(finalMessages);
-
-      if (currentUser) {
-        await setDoc(doc(db, "interview_history", currentUser.uid), { messages: finalMessages });
-      }
-    } catch (err) {
-      console.error(err);
-      setCoachError(
-        err instanceof AIServiceUnavailableError
-          ? err.message
-          : "The interview coach is unavailable right now. Please try again."
-      );
-      setMessages(newMessages);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex h-[44rem] flex-col space-y-4">
-      <div>
-        <span className="eyebrow">Module 06</span>
-        <h2 className="mt-1 font-display text-2xl text-foreground">AI Interview Coach</h2>
-        <p className="mt-1 max-w-xl text-xs text-foreground-muted">
-          Live one-on-one technical & behavioral mock interview tailored to your resume, projects, and target role with instant qualitative judgement.
-        </p>
-      </div>
-
-      {/* Target Role Input Box */}
-      <Card tone="raised" className="p-3.5 border-secondary/30 bg-secondary/5">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center">
-          <div className="flex-1">
-            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-secondary">
-              <Briefcase className="h-3.5 w-3.5" /> Target Role / Job Description
-            </div>
-            <input
-              type="text"
-              placeholder="e.g. SDE-1 Intern at Google / AI Engineer at OpenAI / Frontend Specialist..."
-              value={targetJob}
-              onChange={(e) => setTargetJob(e.target.value)}
-              disabled={loading}
-              className="input mt-1.5 w-full text-xs"
-            />
-          </div>
-          <div className="flex items-center gap-2 pt-1 md:pt-4">
-            <Button
-              size="sm"
-              variant={interviewStarted ? "secondary" : "primary"}
-              onClick={startInterview}
-              disabled={loading}
-              leadingIcon={loading ? <Loader2 className="h-3.5 w-3.5 spin" /> : <Mic className="h-3.5 w-3.5" />}
-            >
-              {interviewStarted ? "Restart Interview" : "Start Mock Interview"}
-            </Button>
-            {interviewStarted && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={resetInterview}
-                disabled={loading}
-                leadingIcon={<RotateCcw className="h-3.5 w-3.5" />}
-              >
-                Clear Round
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      {/* Interview Chat Stream */}
-      <div className="card-inset flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
-          {messages.map((m, idx) => (
-            <motion.div
-              key={idx}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[85%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
-                  m.role === "user"
-                    ? "bg-surface-ink text-background"
-                    : "border border-border bg-surface text-foreground shadow-sm"
-                }`}
-              >
-                {m.role === "model" && m.text ? (
-                  <MarkdownText text={m.text} />
-                ) : (
-                  m.text
-                )}
-              </div>
-            </motion.div>
-          ))}
-          {loading && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-foreground-muted">
-                <Loader2 className="h-3.5 w-3.5 spin text-secondary" />
-                <span>AI Interview Coach is evaluating your answer and formulating the next question…</span>
-              </div>
-            </div>
-          )}
-          {coachError && <ErrorState description={coachError} className="items-start py-4 text-left" />}
-        </div>
-
-        <form onSubmit={sendAnswer} className="flex gap-2 border-t border-border p-4">
-          <input
-            type="text"
-            aria-label="Submit your interview response"
-            placeholder="Type your answer to the interviewer's question..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={loading}
-            className="input flex-1"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            aria-label="Send response"
-            disabled={loading || !input.trim()}
-          >
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-/* ==========================================================================
-   TAB 5: CAREER ASSISTANT (CHATBOT)
-   ========================================================================== */
-interface ChatMessage {
-  role: "user" | "model";
-  text: string;
+  mode?: "advisor" | "interview";
   attachments?: { name: string; kind: "doc" | "image" }[];
 }
 
@@ -2829,40 +2570,93 @@ interface ChatAttachment {
   file: File;
 }
 
-function ChatTab() {
+function AdvisorInterviewHubTab() {
+  const searchParams = useSearchParams();
   const { currentUser, profile } = useAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  const [chatMode, setChatMode] = useState<"advisor" | "interview">(() => {
+    const tabParam = searchParams.get("tab");
+    return tabParam === "interview" ? "interview" : "advisor";
+  });
+
+  // Separate conversation histories for clean isolation
+  const [advisorMessages, setAdvisorMessages] = useState<UnifiedChatMessage[]>([]);
+  const [interviewMessages, setInterviewMessages] = useState<UnifiedChatMessage[]>([]);
+
+  // Target job description for mock interview
+  const [targetJob, setTargetJob] = useState("");
+  const [interviewStarted, setInterviewStarted] = useState(false);
+
+  // Input & state
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [chatError, setChatError] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [fontSize, setFontSize] = useState<"sm" | "base" | "lg">("sm");
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const MAX_ATTACHMENTS = 5;
   const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
-  const fetchChatHistory = async () => {
-    if (!currentUser) return;
-    try {
-      const snap = await getDoc(doc(db, "chat_history", currentUser.uid));
-      if (snap.exists()) {
-        setMessages(snap.data().messages || []);
-      } else {
-        setMessages([
-          {
-            role: "model",
-            text: "Hello! I am your AI career advisor at NEXORA. How can I help you find target opportunities, optimize your resume, or prepare for applications today? You can also **paste multiple files** (PDF, DOCX, TXT, or images) and I will read them for you.",
-          },
-        ]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
+  const currentMessages = chatMode === "interview" ? interviewMessages : advisorMessages;
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
-    fetchChatHistory();
+    scrollToBottom();
+  }, [currentMessages, loading]);
+
+  // Initial load of both histories
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const loadAllHistories = async () => {
+      setLoading(true);
+      setErrorMessage("");
+      try {
+        // Load Interview history
+        const interviewSnap = await getDoc(doc(db, "interview_history", currentUser.uid));
+        if (interviewSnap.exists() && interviewSnap.data().messages?.length > 0) {
+          setInterviewMessages(interviewSnap.data().messages || []);
+          setInterviewStarted(true);
+        } else {
+          setInterviewStarted(false);
+          setInterviewMessages([
+            {
+              role: "model",
+              mode: "interview",
+              text: `### 🎯 Welcome to your AI Technical & Behavioral Interview Coach!\n\nI am connected to your **NEXORA Profile & Document Wallet** (your verified resume, projects, and certifications).\n\n**How this works:**\n1. Paste your target Job Description / Role details above (e.g. *SDE-1 at Amazon, Data Analyst, Research Fellow*).\n2. Click **Start Mock Interview**.\n3. I will ask you **one tailored question at a time**.\n4. When you answer, I will evaluate it with a qualitative **Judgement** (strengths, missing elements, and ideal sample answer), then ask the next question.\n\nReady? Enter your target role and hit start!`,
+            },
+          ]);
+        }
+
+        // Load Advisor history
+        const advisorSnap = await getDoc(doc(db, "chat_history", currentUser.uid));
+        if (advisorSnap.exists() && advisorSnap.data().messages?.length > 0) {
+          setAdvisorMessages(advisorSnap.data().messages || []);
+        } else {
+          setAdvisorMessages([
+            {
+              role: "model",
+              mode: "advisor",
+              text: "Hello! I am your **AI Career Assistant** at NEXORA. How can I help you find target opportunities, optimize your resume, plan learning roadmaps, or prepare for applications today? You can also **drag & drop or paste multiple files** (PDF, DOCX, TXT, or images) and I will analyze them for you.",
+            },
+          ]);
+        }
+      } catch (err) {
+        console.error("Failed to load chat history:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAllHistories();
   }, [currentUser]);
 
   const fileKind = (name: string): "doc" | "image" => {
@@ -2871,17 +2665,17 @@ function ChatTab() {
   };
 
   const attachFiles = (files: Iterable<File>) => {
-    setChatError("");
+    setErrorMessage("");
     const incoming = Array.from(files).filter((f) => f.size > 0);
     if (incoming.length === 0) return;
     const combined = [...attachments];
     for (const file of incoming) {
       if (combined.length >= MAX_ATTACHMENTS) {
-        setChatError(`You can attach up to ${MAX_ATTACHMENTS} files at a time.`);
+        setErrorMessage(`You can attach up to ${MAX_ATTACHMENTS} files at a time.`);
         break;
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        setChatError(`"${file.name}" is over 8 MB. Please attach a smaller file.`);
+        setErrorMessage(`"${file.name}" is over 8 MB. Please attach a smaller file.`);
         continue;
       }
       combined.push({
@@ -2895,14 +2689,107 @@ function ChatTab() {
     setAttachments(combined);
   };
 
+  // Clipboard Paste support for files & images
   const handlePaste = (e: React.ClipboardEvent) => {
-    if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+    if (chatMode === "advisor" && e.clipboardData?.files && e.clipboardData.files.length > 0) {
       e.preventDefault();
       attachFiles(e.clipboardData.files);
     }
   };
 
-  const sendMessage = async (e: React.FormEvent) => {
+  // Drag and Drop support
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (chatMode === "advisor") {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    if (chatMode === "advisor" && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      attachFiles(e.dataTransfer.files);
+    }
+  };
+
+  const copyMessage = (text: string, idx: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIdx(idx);
+    setTimeout(() => setCopiedIdx(null), 2000);
+  };
+
+  const resetInterview = async () => {
+    if (!currentUser) return;
+    setInterviewStarted(false);
+    const initialMsg: UnifiedChatMessage[] = [
+      {
+        role: "model",
+        mode: "interview",
+        text: `### 🎯 Interview Session Reset\n\nEnter your new Target Role or Opportunity details above and click **Start Mock Interview** to begin a fresh round!`,
+      },
+    ];
+    setInterviewMessages(initialMsg);
+    try {
+      await setDoc(doc(db, "interview_history", currentUser.uid), { messages: initialMsg });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const startInterview = async () => {
+    setInterviewStarted(true);
+    setLoading(true);
+    setErrorMessage("");
+
+    const initialPrompt = targetJob.trim()
+      ? `I am ready for the mock interview for this opportunity: "${targetJob.trim()}". Please review my profile and wallet documents, greet me briefly, and ask me QUESTION 1.`
+      : `I am ready for the mock interview for roles matching my profile and wallet. Please review my profile, greet me briefly, and ask me QUESTION 1.`;
+
+    const userMessage: UnifiedChatMessage = {
+      role: "user",
+      mode: "interview",
+      text: `[Started Mock Interview: ${targetJob.trim() || "Profile-Matched Role"}]`,
+    };
+    const newMessages = [...interviewMessages, userMessage];
+    setInterviewMessages(newMessages);
+
+    try {
+      const chatResponse = await AIServiceClient.chatWithFiles(
+        initialPrompt,
+        newMessages,
+        profile || {},
+        [],
+        { mode: "interview", targetJobDescription: targetJob.trim() }
+      );
+
+      const finalMessages: UnifiedChatMessage[] = [
+        ...newMessages,
+        { role: "model", mode: "interview", text: chatResponse.reply },
+      ];
+      setInterviewMessages(finalMessages);
+
+      if (currentUser) {
+        await setDoc(doc(db, "interview_history", currentUser.uid), { messages: finalMessages });
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorMessage(
+        err instanceof AIServiceUnavailableError
+          ? err.message
+          : "The interview coach is unavailable right now. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!input.trim() && attachments.length === 0) || loading) return;
 
@@ -2911,83 +2798,296 @@ function ChatTab() {
     const meta = attachments.map((a) => ({ name: a.name, kind: a.kind }));
     setInput("");
     setAttachments([]);
+    setErrorMessage("");
 
-    const userMessage: ChatMessage = { role: "user", text: userMsg };
-    if (meta.length > 0) userMessage.attachments = meta;
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-    setLoading(true);
-    setChatError("");
+    const userMessage: UnifiedChatMessage = {
+      role: "user",
+      mode: chatMode,
+      text: userMsg,
+      ...(meta.length > 0 ? { attachments: meta } : {}),
+    };
 
-    try {
-      const chatResponse = await AIServiceClient.chatWithFiles(
-        userMsg,
-        newMessages,
-        profile || {},
-        files,
-        { mode: "advisor" }
-      );
+    if (chatMode === "interview") {
+      const newMessages = [...interviewMessages, userMessage];
+      setInterviewMessages(newMessages);
+      setLoading(true);
 
-      const finalMessages: ChatMessage[] = [
-        ...newMessages,
-        { role: "model", text: chatResponse.reply },
-      ];
-      setMessages(finalMessages);
-
-      if (currentUser) {
-        await setDoc(doc(db, "chat_history", currentUser.uid), { messages: finalMessages });
+      try {
+        const chatResponse = await AIServiceClient.chatWithFiles(
+          userMsg,
+          newMessages,
+          profile || {},
+          [],
+          {
+            mode: "interview",
+            targetJobDescription: targetJob.trim(),
+          }
+        );
+        const finalMessages: UnifiedChatMessage[] = [
+          ...newMessages,
+          { role: "model", mode: "interview", text: chatResponse.reply },
+        ];
+        setInterviewMessages(finalMessages);
+        if (currentUser) {
+          await setDoc(doc(db, "interview_history", currentUser.uid), { messages: finalMessages });
+        }
+      } catch (err) {
+        console.error(err);
+        setErrorMessage(
+          err instanceof AIServiceUnavailableError
+            ? err.message
+            : "The AI assistant is temporarily unavailable. Please try again."
+        );
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error(err);
-      setChatError(
-        err instanceof AIServiceUnavailableError
-          ? err.message
-          : "The advisor is unavailable right now. Please try again."
-      );
-      setMessages(newMessages);
-    } finally {
-      setLoading(false);
+    } else {
+      const newMessages = [...advisorMessages, userMessage];
+      setAdvisorMessages(newMessages);
+      setLoading(true);
+
+      try {
+        const chatResponse = await AIServiceClient.chatWithFiles(
+          userMsg,
+          newMessages,
+          profile || {},
+          files,
+          { mode: "advisor" }
+        );
+        const finalMessages: UnifiedChatMessage[] = [
+          ...newMessages,
+          { role: "model", mode: "advisor", text: chatResponse.reply },
+        ];
+        setAdvisorMessages(finalMessages);
+        if (currentUser) {
+          await setDoc(doc(db, "chat_history", currentUser.uid), { messages: finalMessages });
+        }
+      } catch (err) {
+        console.error(err);
+        setErrorMessage(
+          err instanceof AIServiceUnavailableError
+            ? err.message
+            : "The AI assistant is temporarily unavailable. Please try again."
+        );
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
+  const fontSizeClass =
+    fontSize === "lg" ? "text-base" : fontSize === "base" ? "text-[0.925rem]" : "text-sm";
+
   return (
-    <div className="flex h-[38rem] flex-col space-y-6">
-      <div>
-        <span className="eyebrow">Module 05</span>
-        <h2 className="mt-2 font-display text-2xl text-foreground">AI Career Assistant</h2>
-        <p className="mt-2 max-w-xl text-sm text-foreground-muted">
-          Chat with a context-aware assistant loaded with your profile settings. Paste or attach
-          PDF, DOCX, TXT, or image files and the advisor will read them and reply in markdown.
-        </p>
+    <div className="flex h-[46rem] flex-col space-y-3">
+      {/* ── Mode Switcher & Status Bar (Integrated Directly on Top of Chat) ── */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface-raised p-3 sm:flex-row sm:items-center sm:justify-between shadow-xs">
+        <div className="flex items-center gap-3">
+          <div
+            className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors duration-base ${
+              chatMode === "interview" ? "bg-amber-500/15 text-amber-500" : "bg-secondary/15 text-secondary"
+            }`}
+          >
+            {chatMode === "interview" ? <Mic className="h-5 w-5" /> : <MessageSquare className="h-5 w-5" />}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-display text-sm font-bold text-foreground">
+                {chatMode === "interview" ? "AI Mock Interview Session" : "AI Career Assistant"}
+              </h2>
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${
+                  chatMode === "interview" ? "bg-amber-500/10 text-amber-500" : "bg-secondary/10 text-secondary"
+                }`}
+              >
+                {chatMode === "interview" ? "Evaluation Mode" : "Advisory Mode"}
+              </span>
+            </div>
+            <p className="text-[0.72rem] text-foreground-muted">
+              {chatMode === "interview"
+                ? "Simulated 1-on-1 interview round with instant qualitative scoring & answers"
+                : "Ask anything about opportunities, scholarships, resume improvements & advice"}
+            </p>
+          </div>
+        </div>
+
+        {/* ── Top Controls: Font Size & Interactive Switch Buttons ── */}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {/* Font Size Toggle */}
+          <div className="flex items-center rounded-lg border border-border bg-surface px-1.5 py-1 text-xs">
+            <Type className="mr-1 h-3 w-3 text-foreground-muted" />
+            <button
+              type="button"
+              onClick={() => setFontSize(fontSize === "sm" ? "base" : fontSize === "base" ? "lg" : "sm")}
+              className="text-[0.7rem] font-semibold text-foreground-muted hover:text-foreground transition-colors"
+              title="Change reading font size"
+            >
+              {fontSize === "sm" ? "1x" : fontSize === "base" ? "1.2x" : "1.4x"}
+            </button>
+          </div>
+
+          {/* Mode Switcher */}
+          <div className="flex items-center gap-1 rounded-xl border border-border bg-surface p-1 shadow-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setChatMode("advisor");
+                setErrorMessage("");
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-base ${
+                chatMode === "advisor"
+                  ? "bg-secondary text-white shadow-xs"
+                  : "text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              <span>Career Assistant</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setChatMode("interview");
+                setErrorMessage("");
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-base ${
+                chatMode === "interview"
+                  ? "bg-amber-500 text-white shadow-xs"
+                  : "text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              <Mic className="h-3.5 w-3.5" />
+              <span>AI Interview Coach</span>
+            </button>
+          </div>
+        </div>
       </div>
 
+      {/* ── Target Role Bar for Interview Mode ── */}
+      {chatMode === "interview" && (
+        <Card tone="raised" className="p-3 border-amber-500/30 bg-amber-500/5">
+          <div className="flex flex-col gap-2.5 md:flex-row md:items-center">
+            <div className="flex-1">
+              <div className="flex items-center gap-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-amber-500">
+                <Briefcase className="h-3.5 w-3.5" /> Target Role / Job Description
+              </div>
+              <input
+                type="text"
+                placeholder="e.g. SDE-1 Intern at Google / AI Engineer at OpenAI / Research Fellow..."
+                value={targetJob}
+                onChange={(e) => setTargetJob(e.target.value)}
+                disabled={loading}
+                className="input mt-1 w-full text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2 pt-1 md:pt-3">
+              <Button
+                size="sm"
+                variant={interviewStarted ? "secondary" : "primary"}
+                onClick={startInterview}
+                disabled={loading}
+                leadingIcon={loading ? <Loader2 className="h-3.5 w-3.5 spin" /> : <Mic className="h-3.5 w-3.5" />}
+              >
+                {interviewStarted ? "Restart Interview" : "Start Mock Interview"}
+              </Button>
+              {interviewStarted && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={resetInterview}
+                  disabled={loading}
+                  leadingIcon={<RotateCcw className="h-3.5 w-3.5" />}
+                >
+                  Reset Round
+                </Button>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* ── Single Unified Chat Box with Drag & Drop & Paste ── */}
       <div
-        className="card-inset flex min-h-0 flex-1 flex-col overflow-hidden"
+        className={`card-inset relative flex min-h-0 flex-1 flex-col overflow-hidden transition-colors ${
+          isDraggingOver ? "border-2 border-dashed border-secondary bg-secondary/5" : ""
+        }`}
         onPaste={handlePaste}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
-          {messages.map((m, idx) => (
+        {/* Drag Overlay visual cue */}
+        {isDraggingOver && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-background/80 backdrop-blur-xs pointer-events-none">
+            <UploadCloud className="h-10 w-10 text-secondary animate-bounce" />
+            <p className="mt-2 text-sm font-semibold text-foreground">Drop files here to attach to chat</p>
+            <p className="text-xs text-foreground-muted">PDF, DOCX, TXT, images up to 8 MB</p>
+          </div>
+        )}
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+          {currentMessages.map((m, idx) => (
             <motion.div
               key={idx}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+              className={`group flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[80%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
+                className={`relative max-w-[85%] rounded-xl px-4 py-3 leading-relaxed ${fontSizeClass} ${
                   m.role === "user"
                     ? "bg-surface-ink text-background"
-                    : "border border-border bg-surface text-foreground"
+                    : "border border-border bg-surface text-foreground shadow-xs"
                 }`}
               >
+                {/* Header indicator and copy button */}
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  {m.mode && (
+                    <div className="flex items-center gap-1.5 text-[0.65rem] font-semibold uppercase tracking-wider text-foreground-muted">
+                      {m.mode === "interview" ? (
+                        <span className="flex items-center gap-1 text-amber-500">
+                          <Mic className="h-3 w-3" /> Interview Coach
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-secondary">
+                          <Sparkles className="h-3 w-3" /> Career Advisor
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Copy button */}
+                  {m.text && (
+                    <button
+                      type="button"
+                      onClick={() => copyMessage(m.text, idx)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md text-foreground-muted hover:text-foreground hover:bg-muted text-[0.65rem] flex items-center gap-1"
+                      title="Copy response"
+                    >
+                      {copiedIdx === idx ? (
+                        <>
+                          <Check className="h-3 w-3 text-emerald-500" />
+                          <span className="text-emerald-500 font-medium">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3 w-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
                 {m.role === "model" && m.text ? (
                   <MarkdownText text={m.text} />
                 ) : (
-                  m.text
+                  <div className="whitespace-pre-wrap">{m.text}</div>
                 )}
+
                 {m.attachments && m.attachments.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
                     {m.attachments.map((a, ai) => (
                       <span
                         key={ai}
@@ -3003,18 +3103,26 @@ function ChatTab() {
               </div>
             </motion.div>
           ))}
+
           {loading && (
             <div className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-foreground-muted">
+              <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-foreground-muted shadow-xs">
                 <Loader2 className="h-3.5 w-3.5 spin text-secondary" />
-                <span>NEXORA Advisor is reading your files and formulating advice…</span>
+                <span>
+                  {chatMode === "interview"
+                    ? "AI Interview Coach is evaluating your answer and formulating the next question…"
+                    : "NEXORA Advisor is analyzing your query and formulating advice…"}
+                </span>
               </div>
             </div>
           )}
-          {chatError && <ErrorState description={chatError} className="items-start py-4 text-left" />}
+
+          {errorMessage && <ErrorState description={errorMessage} className="items-start py-4 text-left" />}
+          <div ref={messagesEndRef} />
         </div>
 
-        {attachments.length > 0 && (
+        {/* Attachment chips in Advisor Mode */}
+        {chatMode === "advisor" && attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 border-t border-border px-4 pt-3">
             {attachments.map((a) => (
               <span
@@ -3037,38 +3145,50 @@ function ChatTab() {
           </div>
         )}
 
-        <form onSubmit={sendMessage} className="flex gap-2 border-t border-border p-4">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.docx,.txt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp"
-            className="sr-only"
-            disabled={loading}
-            onChange={(e) => {
-              if (e.target.files) attachFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Attach files"
-            disabled={loading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Paperclip className="h-4 w-4" />
-          </Button>
+        {/* Unified Bottom Input Bar */}
+        <form onSubmit={handleSend} className="flex gap-2 border-t border-border p-3 sm:p-4">
+          {chatMode === "advisor" && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.docx,.txt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp"
+                className="sr-only"
+                disabled={loading}
+                onChange={(e) => {
+                  if (e.target.files) attachFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Attach files"
+                disabled={loading}
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach resume, portfolio, or documents (PDF, DOCX, Images, drag & drop supported)"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+
           <input
             type="text"
-            aria-label="Ask the career advisor"
-            placeholder="Ask anything about scholarships, resumes, careers…"
+            aria-label={chatMode === "interview" ? "Submit interview answer" : "Ask career assistant"}
+            placeholder={
+              chatMode === "interview"
+                ? "Type your answer to the interviewer's question..."
+                : "Ask about scholarships, resumes, careers (drag & drop or paste files)…"
+            }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={loading}
             className="input flex-1"
           />
+
           <Button
             type="submit"
             size="icon"
