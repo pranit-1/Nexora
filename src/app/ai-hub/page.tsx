@@ -2879,9 +2879,9 @@ function AdvisorInterviewHubTab() {
     fontSize === "lg" ? "text-base" : fontSize === "base" ? "text-[0.925rem]" : "text-sm";
 
   return (
-    <div className="flex h-[46rem] flex-col space-y-3">
+    <div className="flex h-[calc(100dvh-22rem)] min-h-[30rem] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xs">
       {/* ── Mode Switcher & Status Bar (Integrated Directly on Top of Chat) ── */}
-      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface-raised p-3 sm:flex-row sm:items-center sm:justify-between shadow-xs">
+      <div className="flex flex-col gap-3 border-b border-border bg-surface-raised p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <div
             className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors duration-base ${
@@ -2965,7 +2965,7 @@ function AdvisorInterviewHubTab() {
 
       {/* ── Target Role Bar for Interview Mode ── */}
       {chatMode === "interview" && (
-        <Card tone="raised" className="p-3 border-amber-500/30 bg-amber-500/5">
+        <div className="border-b border-amber-500/30 bg-amber-500/5 p-3">
           <div className="flex flex-col gap-2.5 md:flex-row md:items-center">
             <div className="flex-1">
               <div className="flex items-center gap-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-amber-500">
@@ -3003,7 +3003,7 @@ function AdvisorInterviewHubTab() {
               )}
             </div>
           </div>
-        </Card>
+        </div>
       )}
 
       {/* ── Single Unified Chat Box with Drag & Drop & Paste ── */}
